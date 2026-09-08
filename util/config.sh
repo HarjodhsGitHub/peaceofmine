@@ -22,6 +22,9 @@ main() {
     withdefault WORKSPACE       "/svea_ws"
     withdefault REPOSITORY_PATH "$(climb entrypoint)"
     withdefault REPOSITORY_NAME "$(basename "$REPOSITORY_PATH")"
+    # Docker image repository names must be lowercase. Keep the repository name
+    # unchanged for paths and container names, but derive a valid default tag.
+    REPOSITORY_IMAGE_NAME="$(printf '%s' "$REPOSITORY_NAME" | tr '[:upper:]' '[:lower:]')"
 
     ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
 
@@ -40,14 +43,14 @@ main() {
         withdefault BUILD_CONTEXT   "$REPOSITORY_PATH"
         withdefault BUILD_FILE      "docker/Dockerfile"
         withdefault BUILD_TAG       "ghcr.io/kth-sml/svea:latest"
-        withdefault IMAGE_TAG       "$REPOSITORY_NAME"
+        withdefault IMAGE_TAG       "$REPOSITORY_IMAGE_NAME"
         withdefault IMAGE_PUSH      "0"
     elif [ "$BUILD_CONFIG" = "arm64" ]; then
         withdefault BUILD_PLATFORM  "linux/arm64"
         withdefault BUILD_CONTEXT   "$REPOSITORY_PATH"
         withdefault BUILD_FILE      "docker/Dockerfile"
         withdefault BUILD_TAG       "ghcr.io/kth-sml/svea:latest"
-        withdefault IMAGE_TAG       "$REPOSITORY_NAME"
+        withdefault IMAGE_TAG       "$REPOSITORY_IMAGE_NAME"
         withdefault IMAGE_PUSH      "0"
     elif [ "$BUILD_CONFIG" = "base-amd64" ]; then
         # building for x86_64
