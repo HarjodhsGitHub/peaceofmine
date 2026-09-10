@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="950" viewBox="0 0 1600 950">
+  <title>SVEA and PeaceOfMine overall architecture</title>
+  <desc>Operator dashboard, Raspberry Pi 5 ROS computer, SVEA car, mine-detection sensor, and probe.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#2563eb"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Segoe UI", Arial, sans-serif; fill: #172033; }
+      .title { font-size: 34px; font-weight: 700; }
+      .subtitle { font-size: 17px; fill: #5b6474; }
+      .zone-title { font-size: 16px; font-weight: 700; letter-spacing: 1.3px; fill: #667085; }
+      .block-title { font-size: 21px; font-weight: 700; }
+      .block-subtitle { font-size: 15px; fill: #667085; }
+      .body { font-size: 16px; fill: #344054; }
+      .topic { font-size: 13px; fill: #344054; font-family: Consolas, monospace; }
+      .link-label { font-size: 14px; font-weight: 600; fill: #1d4ed8; }
+      .zone { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.5; }
+      .block { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.5; }
+      .accent { fill: #eff6ff; stroke: #2563eb; stroke-width: 2; }
+      .flow { fill: none; stroke: #2563eb; stroke-width: 2.25; marker-end: url(#arrow); }
+      .flow-bi { fill: none; stroke: #2563eb; stroke-width: 2.25; marker-start: url(#arrow); marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="950" fill="#ffffff"/>
+  <text x="60" y="58" class="title">SVEA + PeaceOfMine architecture</text>
+  <text x="60" y="88" class="subtitle">Physical view | Raspberry Pi 5 | RTK localization | Separate detector and probe blocks</text>
+
+  <!-- Operator station -->
+  <rect x="60" y="125" width="320" height="680" rx="14" class="zone"/>
+  <text x="84" y="160" class="zone-title">OPERATOR STATION</text>
+  <rect x="84" y="190" width="272" height="140" rx="10" class="block"/>
+  <text x="106" y="222" class="block-title">Operator</text>
+  <text x="106" y="246" class="block-subtitle">Human control and supervision</text>
+  <text x="106" y="276" class="body">- Gamepad or WASD keyboard</text>
+  <text x="106" y="301" class="body">- Arm, deadman, control lease</text>
+  <text x="106" y="326" class="body">- Drive, sweep, probe commands</text>
+  <path d="M220 330 L220 375" class="flow"/>
+  <rect x="84" y="377" width="272" height="195" rx="10" class="accent"/>
+  <text x="106" y="410" class="block-title">PeaceOfMine dashboard</text>
+  <text x="106" y="434" class="block-subtitle">Web browser</text>
+  <text x="106" y="464" class="body">- Vehicle position and telemetry</text>
+  <text x="106" y="489" class="body">- Detector signal and sweep state</text>
+  <text x="106" y="514" class="body">- Probe depth, pressure, fault</text>
+  <text x="106" y="539" class="body">- Forward camera surface</text>
+  <rect x="84" y="635" width="272" height="112" rx="10" class="block"/>
+  <text x="106" y="668" class="block-title">Operator network</text>
+  <text x="106" y="692" class="block-subtitle">Remote or local connection</text>
+  <text x="106" y="722" class="body">HTTPS + WebSocket (TLS remote)</text>
+
+  <!-- Pi 5 -->
+  <rect x="515" y="125" width="570" height="680" rx="14" class="zone"/>
+  <text x="539" y="160" class="zone-title">RASPBERRY PI 5 | ONBOARD ROS 2 COMPUTER</text>
+  <rect x="539" y="190" width="522" height="165" rx="10" class="accent"/>
+  <text x="563" y="222" class="block-title">PeaceOfMine operator gateway</text>
+  <text x="563" y="246" class="block-subtitle">Web-to-ROS boundary</text>
+  <text x="563" y="276" class="body">- Serves dashboard and broadcasts telemetry</text>
+  <text x="563" y="301" class="body">- Enforces lease, arm, deadman, timeout</text>
+  <text x="563" y="326" class="body">- Publishes drive, sweep, probe commands</text>
+
+  <path d="M670 355 L670 410" class="flow"/>
+  <text x="686" y="389" class="topic">cmd_vel</text>
+  <rect x="539" y="412" width="250" height="145" rx="10" class="block"/>
+  <text x="563" y="444" class="block-title">Teleop adapter</text>
+  <text x="563" y="468" class="block-subtitle">twist_consumer</text>
+  <text x="563" y="498" class="body">- Twist to Ackermann steering</text>
+  <text x="563" y="523" class="body">- Independent watchdog</text>
+  <text x="563" y="548" class="body">- ActuationInterface output</text>
+
+  <rect x="811" y="412" width="250" height="145" rx="10" class="block"/>
+  <text x="835" y="444" class="block-title">Localization</text>
+  <text x="835" y="468" class="block-subtitle">RTK-based sensor fusion</text>
+  <text x="835" y="498" class="body">- RTK-GPS + IMU</text>
+  <text x="835" y="523" class="body">- Wheel encoders + EKF</text>
+  <text x="835" y="548" class="body">- odometry/local</text>
+
+  <rect x="539" y="620" width="522" height="135" rx="10" class="block"/>
+  <text x="563" y="652" class="block-title">Payload hardware drivers</text>
+  <text x="563" y="676" class="block-subtitle">Separate detector and probe ROS adapters</text>
+  <text x="563" y="706" class="body">- Hardware commands, measurements, limits, and interlocks</text>
+  <text x="563" y="731" class="body">- Stable ROS topic contract with the gateway</text>
+
+  <!-- Vehicle -->
+  <rect x="1220" y="125" width="320" height="680" rx="14" class="zone"/>
+  <text x="1244" y="160" class="zone-title">SVEA VEHICLE + PAYLOAD</text>
+  <rect x="1244" y="190" width="272" height="165" rx="10" class="accent"/>
+  <text x="1268" y="222" class="block-title">SVEA car</text>
+  <text x="1268" y="246" class="block-subtitle">Mobility platform</text>
+  <text x="1268" y="276" class="body">- PX4 low-level controller</text>
+  <text x="1268" y="301" class="body">- Steering + ESC drivetrain</text>
+  <text x="1268" y="326" class="body">- IMU, encoders, RC override</text>
+
+  <rect x="1244" y="412" width="272" height="145" rx="10" class="block"/>
+  <text x="1268" y="444" class="block-title">Mine-detection sensor</text>
+  <text x="1268" y="468" class="block-subtitle">Independent payload block</text>
+  <text x="1268" y="498" class="body">- Detector head + sweep fixture</text>
+  <text x="1268" y="523" class="body">- Signal + measured angle</text>
+  <text x="1268" y="548" class="body">- Sweep enable + speed</text>
+
+  <rect x="1244" y="620" width="272" height="135" rx="10" class="block"/>
+  <text x="1268" y="652" class="block-title">Probe</text>
+  <text x="1268" y="676" class="block-subtitle">Independent payload block</text>
+  <text x="1268" y="706" class="body">- Linear insertion actuator</text>
+  <text x="1268" y="731" class="body">- Depth, pressure, fault feedback</text>
+
+  <!-- Connections are routed only through the empty gutters between boxes. -->
+  <path d="M356 475 H445 V270 H539" class="flow-bi"/>
+  <rect x="382" y="284" width="165" height="56" rx="7" fill="#ffffff"/>
+  <text x="388" y="306" class="link-label">HTTPS + WebSocket</text>
+  <text x="397" y="329" class="body">JSON both ways</text>
+
+  <path d="M664 557 V590 H1150 V272 H1244" class="flow"/>
+  <rect x="797" y="566" width="226" height="23" rx="5" fill="#ffffff"/>
+  <text x="804" y="583" class="topic">mavros/manual_control/send</text>
+  <path d="M1244 320 H1160 V485 H1061" class="flow"/>
+  <rect x="1087" y="403" width="142" height="50" rx="6" fill="#ffffff"/>
+  <text x="1095" y="424" class="topic">RTK-GPS + IMU</text>
+  <text x="1115" y="445" class="topic">+ encoders</text>
+  <path d="M936 412 C936 385 900 380 900 355" class="flow"/>
+  <text x="948" y="389" class="topic">odometry/local</text>
+  <path d="M1061 676 H1130 V485 H1244" class="flow-bi"/>
+  <rect x="1078" y="584" width="180" height="49" rx="6" fill="#ffffff"/>
+  <text x="1085" y="605" class="topic">fixture/*</text>
+  <text x="1085" y="626" class="topic">detector/signal_ratio</text>
+  <path d="M1061 720 H1160 V688 H1244" class="flow-bi"/>
+  <rect x="1088" y="728" width="74" height="23" rx="5" fill="#ffffff"/>
+  <text x="1095" y="747" class="topic">probe/*</text>
+
+  <!-- Simulation note -->
+  <rect x="60" y="842" width="1480" height="76" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="84" y="872" class="zone-title">SIMULATION REPLACEMENTS | SAME ROS CONTRACTS</text>
+  <text x="84" y="898" class="body"><tspan font-weight="700">sim_svea</tspan> replaces the physical car. <tspan font-weight="700">simulated_payload</tspan> replaces detector and probe drivers. Physical payload drivers and a PeaceOfMine hardware launch are not yet implemented.</text>
+</svg>

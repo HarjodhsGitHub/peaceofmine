@@ -11,6 +11,17 @@
 CMD="docker run"
 ARGS="$@"
 
+operator_dashboard_host_ip() {
+    if is_darwin; then
+        interface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}')"
+        if [ -n "$interface" ]; then
+            ipconfig getifaddr "$interface" 2>/dev/null || true
+        fi
+    else
+        hostname -I 2>/dev/null | awk '{print $1}'
+    fi
+}
+
 # Default docker arguments
 if isempty ARGS; then
     ARGS="--name $CONTAINER_NAME"
@@ -23,6 +34,11 @@ append ARGS \
     -e "TERM=xterm-256color" \
     --rm
 
+DASHBOARD_HOST_IP="$(operator_dashboard_host_ip)"
+if [ -n "$DASHBOARD_HOST_IP" ]; then
+    append ARGS -e "OPERATOR_DASHBOARD_HOST_IP=$DASHBOARD_HOST_IP"
+fi
+
 # Enable device access for non-dev / non-macOS hosts
 if ! (istrue DEV || is_darwin); then
     append ARGS \
@@ -30,9 +46,12 @@ if ! (istrue DEV || is_darwin); then
         --privileged \
         --network host
 else
+    # Browser operator dashboard (simulation and macOS development)
+    # :8080 (PeaceOfMine operator dashboard)
     # :7447 (Zenoh) 
     # :8765 (Foxglove)
     append ARGS \
+        -p 8080:8080 \
         -p 7447:7447 \
         -p 8765:8765
 fi

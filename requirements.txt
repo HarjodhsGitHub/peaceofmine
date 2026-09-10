@@ -19,3 +19,6 @@ pyserial
 pyubx2
 geopy
 utm
+
+# Operator dashboard server (peaceofmine_operator gateway)
+aiohttp>=3.9,<4
