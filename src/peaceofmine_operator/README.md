@@ -1,74 +1,86 @@
 # PeaceOfMine operator simulator
 
-This package provides the browser operator surface without bypassing SVEA's
-existing command stack. It is deliberately split into a narrow dashboard
-gateway and simulation-only sensor/payload nodes, so real hardware swaps in
-drivers while the browser protocol, operator safety boundary, and `cmd_vel`
-integration stay unchanged.
+A browser operator surface for the SVEA stack, split into two nodes:
+
+- `operator_gateway.py` serves the dashboard and translates a small WebSocket
+  protocol to and from ROS. It publishes `cmd_vel` and nothing else.
+- `simulated_payload.py` stands in for the detector and probe hardware. It is
+  the only source of simulated payload data.
+
+The gateway and the dashboard never compute detector, pressure, depth, or
+fixture values; they only display what arrives on ROS topics. Swapping in real
+drivers means replacing `simulated_payload.py` alone.
 
 ## Run the simulator
 
-Build the workspace in the normal SVEA container, source the overlay, then run:
+Build the workspace in the SVEA container, source the overlay, then run:
 
 ```bash
 ros2 launch peaceofmine_operator operator_sim.launch.py
 ```
 
-To set the centre angle of the shared forward fixture in simulation, pass (for
-example) `fixture_angle_offset_deg:=10.0`. The simulator sweeps its measured
-fixture angle through +/-45° around that value whenever the rover moves.
+Open the dashboard on port `8080`. The launch starts without TLS for local
+debugging; remote operation must supply both `tls_cert` and `tls_key`, because
+the browser Gamepad API requires a secure context on non-localhost origins.
 
-Open the robot computer's dashboard address from the remote operator computer.
-The default is port `8080`. The launch starts without TLS for local debugging;
-remote controller operation must provide both `tls_cert` and `tls_key` launch
-arguments. This is required for a dependable browser Gamepad API deployment.
+`fixture_angle_offset_deg` sets the centre angle of the forward fixture, for
+example `fixture_angle_offset_deg:=10.0`.
 
-The default controller mapping is the browser's `standard` mapping: left stick
-for steering, right trigger forward, left trigger reverse, and right bumper as
-the required deadman.
+## Coordinate convention
+
+The search lane runs along world **+X**, matching the ROS convention that a
+vehicle at yaw 0 faces +X. Cross-lane offsets are world Y, positive to the
+rover's left. The forward camera, the field map, and the two buried targets at
+(4.8, 0.8) and (9.2, -1.3) all use this frame.
+
+## Control
 
 Every connected browser receives the same telemetry. The header shows the
-viewer count and whether this browser owns the control lease. A viewer can use
-**Steal control** at any time: ownership transfers immediately, the previous
-operator becomes a spectator automatically, and the gateway disarms before
-the new owner can send motion. No previous-owner acknowledgement is required.
-For local keyboard driving, choose **WASD keyboard** in Settings, click the
-forward camera, then hold Shift while using WASD. Browser Gamepad input and
-keyboard input use the same short response smoothing before publishing drive
-commands.
+viewer count and whether this browser holds the control lease. Any viewer can
+take or steal control at any time; ownership transfers immediately, the
+previous owner becomes a spectator, and the gateway disarms so the new owner
+must arm before sending motion.
+
+The default controller mapping is the browser `standard` mapping: left stick
+steers, right trigger drives forward, left trigger reverses, and the right
+bumper is the deadman. For keyboard driving, choose **WASD keyboard** in
+Settings, click the forward camera to focus it, then hold Shift while using
+WASD. Both input paths share the same response smoothing and publish drive
+commands at 20 Hz.
+
+The gateway publishes `cmd_vel` only while a lease is held, armed, and the
+deadman is down. It publishes zeros for 0.5 s after that stops and then goes
+silent, so `twist_consumer`'s own command timeout stays an independent safety
+layer and an idle dashboard does not compete with other `cmd_vel` publishers.
 
 ## Hardware replacement points
 
-`simulated_payload.py` is the only source of simulated payload data. The
-gateway and website consume these ROS topics only; neither computes detector,
-pressure, depth, or fixture state. Replace that node with the hardware drivers
-when the vehicle is ready, keeping this interface:
+Replace `simulated_payload.py` with hardware drivers, keeping this interface:
 
-- `detector/signal_ratio` (`std_msgs/Float32`): measured calibrated detector
-  strength, normalized to `0.0`–`1.0`;
-- `fixture/angle_deg` (`std_msgs/Float32`): measured detector/probe fixture
-  angle relative to the vehicle forward axis. The simulator performs a +/-45°
-  scan when enabled; its centre offset is the
-  `fixture_angle_offset_deg` launch/node parameter;
-- `fixture/sweep_enabled_state` (`std_msgs/Bool`) and
-  `fixture/sweep_speed_deg_s_state` (`std_msgs/Float32`): measured scan
-  configuration; and subscribe to `fixture/sweep_enabled` and
-  `fixture/sweep_speed_deg_s` for the corresponding actuator requests;
-- `probe/depth_mm` (`std_msgs/Float32`): measured depth, never a requested
-  depth;
-- `probe/pressure_ratio` (`std_msgs/Float32`): measured contact pressure,
-  normalized to `0.0`–`1.0`;
-- `probe/fault` (`std_msgs/Bool`); and
-- subscribe to `probe/target_depth_mm` (`std_msgs/Float32`) only after
-  applying the hardware driver's own limits and interlocks.
+| Topic | Type | Direction | Meaning |
+| --- | --- | --- | --- |
+| `detector/signal_ratio` | `Float32` | published | Calibrated detector strength, 0.0-1.0 |
+| `fixture/angle_deg` | `Float32` | published | Measured fixture angle from the vehicle forward axis |
+| `fixture/sweep_enabled_state` | `Bool` | published | Measured scan state |
+| `fixture/sweep_speed_deg_s_state` | `Float32` | published | Measured scan speed |
+| `fixture/sweep_enabled` | `Bool` | subscribed | Operator scan request |
+| `fixture/sweep_speed_deg_s` | `Float32` | subscribed | Operator scan speed request |
+| `probe/depth_mm` | `Float32` | published | Measured depth, never a requested depth |
+| `probe/pressure_ratio` | `Float32` | published | Measured contact pressure, 0.0-1.0 |
+| `probe/fault` | `Bool` | published | Probe fault state |
+| `probe/target_depth_mm` | `Float32` | subscribed | Operator depth request, to be applied only after the driver's own limits and interlocks |
 
-The simulated probe increases pressure gradually with depth in soil and makes
-a sharp rise after contact with a buried target. This makes the 30-second
-pressure graph an actual view of the ROS measurement path rather than a UI
-animation.
+Actuator limits live in `operator_gateway.py` (`SWEEP_SPEED_MIN_DEG_S`,
+`SWEEP_SPEED_MAX_DEG_S`, and the `max_probe_depth_mm` parameter). The dashboard
+reads them from telemetry, so the browser holds no copy of its own.
 
-The gateway always commands `cmd_vel`, which is consumed by the existing
-`svea_examples/twist_consumer.py`. The simulator's `sim_svea.py` and real PX4
-path therefore retain the same drive interface. A real camera is a presentation
-source replacement: the virtual canvas can be replaced with a WebRTC
-`MediaStream` without changing the dashboard telemetry or controls.
+The gateway commands `cmd_vel`, which `svea_examples/twist_consumer.py`
+consumes, so the simulator's `sim_svea.py` and the real PX4 path share one
+drive interface. A real camera replaces the virtual canvas with a WebRTC
+`MediaStream` without changing telemetry or controls.
+
+## Known simulator artifacts
+
+`sim_svea.py` divides the incoming actuation percentage by
+`PERC_TO_LLI_COEFF = 1.27`, so a commanded 0.8 m/s settles near 0.63 m/s in
+simulation. The real vehicle does not have this scaling.

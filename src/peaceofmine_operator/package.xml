@@ -4,7 +4,7 @@
   <name>peaceofmine_operator</name>
   <version>0.1.0</version>
   <description>Safe browser operator interface and simulation payloads for PeaceOfMine.</description>
-  <maintainer email="nils@example.invalid">PeaceOfMine</maintainer>
+  <maintainer email="21311514+nilskiefer@users.noreply.github.com">Nils Kiefer</maintainer>
   <license>Apache-2.0</license>
 
   <depend>geometry_msgs</depend>
@@ -12,6 +12,8 @@
   <depend>nav_msgs</depend>
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
+
+  <exec_depend>python3-aiohttp</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

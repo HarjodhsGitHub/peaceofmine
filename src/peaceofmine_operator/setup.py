@@ -18,8 +18,8 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='PeaceOfMine',
-    maintainer_email='nils@example.invalid',
+    maintainer='Nils Kiefer',
+    maintainer_email='21311514+nilskiefer@users.noreply.github.com',
     description='Safe browser operator interface and simulation payloads for PeaceOfMine.',
     license='Apache-2.0',
 )

@@ -1,1 +1,627 @@
-:root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#09131a;color:#e8f1ed}*{box-sizing:border-box}body{height:100dvh;margin:0;overflow:hidden;background:radial-gradient(circle at 24% 0,#16313a 0,#09131a 42rem)}main{height:100%;max-width:none;margin:auto;padding:.65rem 1rem}.eyebrow{margin:0 0 .18rem;color:#93b7ae;font-size:.7rem;font-weight:750;letter-spacing:.12em;text-transform:uppercase}h1,h2,p{margin:0}h1{font-size:clamp(1.35rem,2.5vw,1.9rem);letter-spacing:-.04em}h2{font-size:.96rem}header{height:3.25rem;display:flex;align-items:center;justify-content:space-between;gap:1rem}.header-actions,.connection{display:flex;align-items:center;gap:.55rem}.connection{color:#bbcbc5;font-size:.82rem}#connection-dot{width:.54rem;height:.54rem;border-radius:50%;background:#d36458}.workspace{height:calc(100% - 3.25rem);display:grid;grid-template-columns:minmax(0,1fr) minmax(285px,340px);grid-template-rows:minmax(0,1fr) minmax(145px,.39fr);gap:.7rem}.panel{min-height:0;background:linear-gradient(145deg,#10232b,#0c1a20);border:1px solid #24404a;border-radius:.82rem;box-shadow:0 .7rem 1.8rem #0003}.viewport{position:relative;overflow:hidden}.viewport canvas{display:block;width:100%;height:100%;outline:none}.viewport:focus-within{border-color:#38b990;box-shadow:0 0 0 2px #38b99066}.camera-label,.speed-readout,.camera-notice,.input-lock{position:absolute;background:#071016bd;border:1px solid #65827b75;backdrop-filter:blur(8px);border-radius:.42rem}.camera-label{top:.7rem;left:.7rem;padding:.35rem .48rem;color:#b7d0c9;font-size:.61rem;font-weight:800;letter-spacing:.1em}.input-lock{top:.7rem;left:50%;transform:translateX(-50%);padding:.35rem .48rem;color:#c9ded7;font-size:.61rem;font-weight:800;letter-spacing:.08em}.input-lock.locked{border-color:#3dbd91;color:#c6f5de}.speed-readout{right:.7rem;top:.7rem;padding:.48rem .62rem;text-align:right}.speed-readout span{display:block;color:#a0b4af;font-size:.6rem;font-weight:700;letter-spacing:.1em}.speed-readout strong{font-size:1.12rem}.camera-notice{bottom:.7rem;left:.7rem;right:.7rem;padding:.56rem .68rem;color:#c4d1cd;font-size:.77rem}.control-column{grid-column:2;grid-row:1 / span 2;display:grid;grid-template-rows:.74fr 1fr 1.3fr;gap:.7rem;min-height:0}.status-panel,.detector-panel,.probe-panel,.map-panel{padding:.78rem;overflow:hidden}.panel-heading{display:flex;align-items:center;justify-content:space-between;gap:.8rem}.badge{border-radius:999px;padding:.23rem .42rem;font-size:.61rem;font-weight:850;letter-spacing:.06em}.neutral{background:#233940;color:#c3d5d0}.active{background:#b9473d;color:#fff}.safe{background:#22584a;color:#b4f3d3}.controller-text,.safety-note,.detector-panel p,.map-panel p{color:#9fb4ae;font-size:.72rem;line-height:1.35}.controller-text{margin:.62rem 0 .5rem}.buttons{display:grid;grid-template-columns:1fr 1fr;gap:.45rem}button{border:0;border-radius:.45rem;min-height:2.25rem;padding:.5rem .7rem;background:#29444d;color:#f2fbf7;font:inherit;font-size:.78rem;font-weight:780;cursor:pointer}button:disabled{cursor:not-allowed;opacity:.5}.quiet{min-height:auto;background:#1a3138;color:#bad0ca}.primary{background:#21866e}.danger{background:#733b3b}.safety-note{margin-top:.5rem}.signal-value{display:flex;align-items:baseline;gap:.16rem;margin:.35rem 0 .12rem}.signal-value strong{font-size:2.1rem;letter-spacing:-.07em}.signal-value span{font-size:.94rem;color:#92aca4}.meter{position:relative;height:.63rem;background:#183137;border-radius:999px;overflow:hidden;margin:.3rem 0}.meter span{display:block;width:0;height:100%;background:linear-gradient(90deg,#31a782,#e5b54a,#d5574e);transition:width .1s linear}.meter i{position:absolute;top:-.15rem;bottom:-.15rem;left:65%;border-left:2px solid #eff4e1}#radar-view{display:block;width:100%;height:5.4rem;margin-top:.15rem;border-radius:.42rem;background:#071316}.probe-graphic{height:2.8rem;position:relative;margin:.3rem 0 .2rem;border-bottom:2px solid #596a4d;background:linear-gradient(#12272c 60%,#263b2d 60%)}.probe-graphic i{position:absolute;bottom:-.15rem;left:50%;height:.8rem;border-left:3px solid #d4d6c5}.probe-graphic span{position:absolute;left:50%;top:.3rem;width:.32rem;height:0;background:#c9d6ce;transition:height .15s}.probe-numbers{display:flex;justify-content:space-between;color:#9eb5ae;font-size:.68rem}.probe-numbers strong{color:#e9f0eb;display:block;font-size:.86rem}.pressure-heading{display:flex;align-items:baseline;gap:.35rem;margin-top:.4rem;color:#b7c9c4;font-size:.7rem}.pressure-heading strong{color:#f0f6f2}.pressure-heading small{margin-left:auto;color:#80958f}#pressure-history{display:block;width:100%;height:4.2rem;border-radius:.38rem;background:#071316;margin:.2rem 0}.probe-panel label{display:block;margin-top:.3rem;color:#b7c9c4;font-size:.7rem}input[type=range]{width:100%;margin:.18rem 0;accent-color:#2aa586}.map-panel{grid-column:1;grid-row:2}.map-panel .panel-heading span{color:#96aea7;font-size:.64rem;font-weight:750;letter-spacing:.08em}.map-panel canvas{display:block;width:100%;height:calc(100% - 2.3rem);margin-top:.35rem;border-radius:.45rem;background:#0b171b}.map-panel p{position:absolute;opacity:0;pointer-events:none}dialog{width:min(28rem,calc(100vw - 2rem));border:1px solid #31515a;border-radius:.8rem;background:#102329;color:#e8f1ed;box-shadow:0 1rem 5rem #0009;padding:1rem}dialog::backdrop{background:#03080bb8}.dialog-heading{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem}dialog label{display:block;margin:.8rem 0 .3rem;color:#c4d5d0;font-size:.78rem}dialog select{width:100%;padding:.6rem;border-radius:.4rem;border:1px solid #385962;background:#0b171b;color:#e8f1ed}.dialog-help{margin-top:1rem;color:#a8bcb6;font-size:.78rem;line-height:1.45}@media(max-width:900px){body{height:auto;min-height:100dvh;overflow:auto}main{height:auto;padding:.7rem}.workspace{height:auto;grid-template-columns:1fr;grid-template-rows:25rem auto auto}.control-column{grid-column:auto;grid-row:auto;grid-template-rows:auto}.map-panel{grid-column:auto;grid-row:auto;height:15rem}.viewport{min-height:25rem}}@media(max-height:700px) and (min-width:901px){main{padding:.4rem .65rem}header{height:2.7rem}.workspace{height:calc(100% - 2.7rem);gap:.45rem}.control-column{gap:.45rem}.status-panel,.detector-panel,.probe-panel,.map-panel{padding:.58rem}#radar-view{height:3.8rem}#pressure-history{height:3rem}}
+/* ---------------------------------------------------------------- Base --- */
+
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #09131a;
+  color: #e8f1ed;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  height: 100dvh;
+  margin: 0;
+  overflow: hidden;
+  background: radial-gradient(circle at 24% 0, #16313a 0, #09131a 42rem);
+}
+
+main {
+  height: 100%;
+  padding: .65rem 1rem;
+}
+
+h1, h2, p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(1.35rem, 2.5vw, 1.9rem);
+  letter-spacing: -.04em;
+}
+
+h2 {
+  font-size: .96rem;
+}
+
+.eyebrow {
+  margin: 0 0 .18rem;
+  color: #93b7ae;
+  font-size: .7rem;
+  font-weight: 750;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+/* -------------------------------------------------------------- Header --- */
+
+header {
+  height: 3.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.header-actions,
+.connection {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+}
+
+.connection {
+  color: #bbcbc5;
+  font-size: .82rem;
+}
+
+#connection-dot {
+  width: .54rem;
+  height: .54rem;
+  border-radius: 50%;
+  background: #d36458;
+}
+
+.client-count {
+  color: #b8cbc5;
+  font-size: .72rem;
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------- Layout --- */
+
+.workspace {
+  height: calc(100% - 3.25rem);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(285px, 340px);
+  grid-template-rows: minmax(0, 1fr) minmax(145px, .39fr);
+  gap: .7rem;
+}
+
+.control-column {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: grid;
+  grid-template-rows: .74fr 1fr 1.3fr;
+  gap: .7rem;
+  min-height: 0;
+}
+
+.panel {
+  min-height: 0;
+  background: linear-gradient(145deg, #10232b, #0c1a20);
+  border: 1px solid #24404a;
+  border-radius: .82rem;
+  box-shadow: 0 .7rem 1.8rem #0003;
+}
+
+.status-panel,
+.detector-panel,
+.probe-panel,
+.map-panel {
+  padding: .78rem;
+  overflow: hidden;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+}
+
+/* ------------------------------------------------------ Camera viewport --- */
+
+.viewport {
+  position: relative;
+  overflow: hidden;
+}
+
+.viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.viewport:focus-within {
+  border-color: #38b990;
+  box-shadow: 0 0 0 2px #38b99066;
+}
+
+.camera-label,
+.speed-readout,
+.camera-notice,
+.input-lock {
+  position: absolute;
+  background: #071016bd;
+  border: 1px solid #65827b75;
+  backdrop-filter: blur(8px);
+  border-radius: .42rem;
+}
+
+.camera-label {
+  top: .7rem;
+  left: .7rem;
+  padding: .35rem .48rem;
+  color: #b7d0c9;
+  font-size: .61rem;
+  font-weight: 800;
+  letter-spacing: .1em;
+}
+
+.input-lock {
+  top: .7rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: .35rem .48rem;
+  color: #c9ded7;
+  font-size: .61rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.input-lock.locked {
+  border-color: #3dbd91;
+  color: #c6f5de;
+}
+
+.input-lock.hidden {
+  display: none;
+}
+
+.speed-readout {
+  right: .7rem;
+  top: .7rem;
+  padding: .48rem .62rem;
+  text-align: right;
+}
+
+.speed-readout span {
+  display: block;
+  color: #a0b4af;
+  font-size: .6rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+}
+
+.speed-readout strong {
+  font-size: 1.12rem;
+}
+
+.camera-notice {
+  bottom: .7rem;
+  left: .7rem;
+  right: .7rem;
+  padding: .56rem .68rem;
+  color: #c4d1cd;
+  font-size: .77rem;
+}
+
+/* Server-rejected commands land here and stay until superseded. */
+.notice {
+  position: absolute;
+  bottom: 3.1rem;
+  left: .7rem;
+  right: .7rem;
+  padding: .5rem .68rem;
+  border-radius: .42rem;
+  border: 1px solid #b9473d;
+  background: #2a1210e6;
+  backdrop-filter: blur(8px);
+  color: #f2cdc7;
+  font-size: .75rem;
+}
+
+.notice.hidden {
+  display: none;
+}
+
+/* ------------------------------------------------------------ Controls --- */
+
+button {
+  border: 0;
+  border-radius: .45rem;
+  min-height: 2.25rem;
+  padding: .5rem .7rem;
+  background: #29444d;
+  color: #f2fbf7;
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 780;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.primary {
+  background: #21866e;
+}
+
+.danger {
+  background: #733b3b;
+}
+
+.quiet {
+  min-height: auto;
+  background: #1a3138;
+  color: #bad0ca;
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .45rem;
+}
+
+.badge {
+  border-radius: 999px;
+  padding: .23rem .42rem;
+  font-size: .61rem;
+  font-weight: 850;
+  letter-spacing: .06em;
+}
+
+.neutral {
+  background: #233940;
+  color: #c3d5d0;
+}
+
+.active {
+  background: #b9473d;
+  color: #fff;
+}
+
+.safe {
+  background: #22584a;
+  color: #b4f3d3;
+}
+
+.controller-text,
+.safety-note,
+.detector-panel p,
+.map-panel p {
+  color: #9fb4ae;
+  font-size: .72rem;
+  line-height: 1.35;
+}
+
+.controller-text {
+  margin: .62rem 0 .5rem;
+}
+
+.safety-note {
+  margin-top: .5rem;
+}
+
+input[type=range] {
+  width: 100%;
+  margin: .18rem 0;
+  accent-color: #2aa586;
+}
+
+/* ------------------------------------------------------ Metal detector --- */
+
+.detector-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.signal-value {
+  display: flex;
+  align-items: baseline;
+  gap: .16rem;
+  margin: .35rem 0 .12rem;
+}
+
+.signal-value strong {
+  font-size: 2.1rem;
+  letter-spacing: -.07em;
+}
+
+.signal-value span {
+  font-size: .94rem;
+  color: #92aca4;
+}
+
+.meter {
+  position: relative;
+  height: .63rem;
+  background: #183137;
+  border-radius: 999px;
+  overflow: hidden;
+  margin: .3rem 0;
+}
+
+.meter span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #31a782, #e5b54a, #d5574e);
+  transition: width .1s linear;
+}
+
+.meter i {
+  position: absolute;
+  top: -.15rem;
+  bottom: -.15rem;
+  left: 65%;
+  border-left: 2px solid #eff4e1;
+}
+
+#radar-view {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 5rem;
+  flex: 1;
+  margin-top: .15rem;
+  border-radius: .42rem;
+  background: #071316;
+}
+
+.sweep-controls {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: .25rem .45rem;
+  align-items: center;
+  margin-top: .3rem;
+}
+
+.sweep-controls button {
+  min-height: 1.7rem;
+  grid-row: 1 / span 2;
+  font-size: .68rem;
+}
+
+.sweep-controls label {
+  display: flex;
+  justify-content: space-between;
+  color: #a9beb8;
+  font-size: .67rem;
+}
+
+.sweep-controls input {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------- Probe --- */
+
+.probe-graphic {
+  height: 2.8rem;
+  position: relative;
+  margin: .3rem 0 .2rem;
+  border-bottom: 2px solid #596a4d;
+  background: linear-gradient(#12272c 60%, #263b2d 60%);
+}
+
+.probe-graphic i {
+  position: absolute;
+  bottom: -.15rem;
+  left: 50%;
+  height: .8rem;
+  border-left: 3px solid #d4d6c5;
+}
+
+/* Capped so a full-depth probe stops at the ground line rather than
+   overflowing the 2.8rem graphic. */
+.probe-graphic span {
+  position: absolute;
+  left: 50%;
+  top: .3rem;
+  width: .32rem;
+  height: 0;
+  max-height: 2.4rem;
+  background: #c9d6ce;
+  transition: height .15s;
+}
+
+.probe-numbers {
+  display: flex;
+  justify-content: space-between;
+  color: #9eb5ae;
+  font-size: .68rem;
+}
+
+.probe-numbers strong {
+  color: #e9f0eb;
+  display: block;
+  font-size: .86rem;
+}
+
+.pressure-heading {
+  display: flex;
+  align-items: baseline;
+  gap: .35rem;
+  margin-top: .4rem;
+  color: #b7c9c4;
+  font-size: .7rem;
+}
+
+.pressure-heading strong {
+  color: #f0f6f2;
+}
+
+.pressure-heading small {
+  margin-left: auto;
+  color: #80958f;
+}
+
+#pressure-history {
+  display: block;
+  width: 100%;
+  height: 4.2rem;
+  border-radius: .38rem;
+  background: #071316;
+  margin: .2rem 0;
+}
+
+.probe-panel label {
+  display: block;
+  margin-top: .3rem;
+  color: #b7c9c4;
+  font-size: .7rem;
+}
+
+/* ------------------------------------------------------------ Field map --- */
+
+.map-panel {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-panel .panel-heading span {
+  color: #96aea7;
+  font-size: .64rem;
+  font-weight: 750;
+  letter-spacing: .08em;
+}
+
+.map-panel canvas {
+  display: block;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  margin-top: .35rem;
+  border-radius: .45rem;
+  background: #0b171b;
+}
+
+.map-panel p {
+  margin-top: .32rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------- Dialog --- */
+
+dialog {
+  width: min(28rem, calc(100vw - 2rem));
+  border: 1px solid #31515a;
+  border-radius: .8rem;
+  background: #102329;
+  color: #e8f1ed;
+  box-shadow: 0 1rem 5rem #0009;
+  padding: 1rem;
+}
+
+dialog::backdrop {
+  background: #03080bb8;
+}
+
+.dialog-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+dialog label {
+  display: block;
+  margin: .8rem 0 .3rem;
+  color: #c4d5d0;
+  font-size: .78rem;
+}
+
+dialog select {
+  width: 100%;
+  padding: .6rem;
+  border-radius: .4rem;
+  border: 1px solid #385962;
+  background: #0b171b;
+  color: #e8f1ed;
+}
+
+.dialog-help {
+  margin-top: 1rem;
+  color: #a8bcb6;
+  font-size: .78rem;
+  line-height: 1.45;
+}
+
+/* --------------------------------------------------------- Narrow / short --- */
+
+@media (max-width: 900px) {
+  body {
+    height: auto;
+    min-height: 100dvh;
+    overflow: auto;
+  }
+
+  main {
+    height: auto;
+    padding: .7rem;
+  }
+
+  .workspace {
+    height: auto;
+    grid-template-columns: 1fr;
+    grid-template-rows: 25rem auto auto;
+  }
+
+  .control-column {
+    grid-column: auto;
+    grid-row: auto;
+    grid-template-rows: auto;
+  }
+
+  .map-panel {
+    grid-column: auto;
+    grid-row: auto;
+    height: 15rem;
+  }
+
+  .viewport {
+    min-height: 25rem;
+  }
+}
+
+@media (max-height: 700px) and (min-width: 901px) {
+  main {
+    padding: .4rem .65rem;
+  }
+
+  header {
+    height: 2.7rem;
+  }
+
+  .workspace {
+    height: calc(100% - 2.7rem);
+    gap: .45rem;
+  }
+
+  .control-column {
+    gap: .45rem;
+  }
+
+  .status-panel,
+  .detector-panel,
+  .probe-panel,
+  .map-panel {
+    padding: .58rem;
+  }
+
+  #radar-view {
+    min-height: 3.8rem;
+  }
+
+  #pressure-history {
+    height: 3rem;
+  }
+}

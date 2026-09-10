@@ -17,9 +17,8 @@ def main(
     fixture_angle_offset_deg: float = 0.0,
 ):
     bl = BetterLaunch()
-    # svea.launch.py owns the SVEA namespace.  The nodes below are then placed
-    # in that same namespace so their relative topic names agree in simulation
-    # and with the hardware launch variant.
+    # svea.launch.py owns the SVEA namespace; the nodes below join it so their
+    # relative topic names match the hardware launch variant.
     bl.include('svea_core', 'svea.launch.py',
                name=name,
                is_sim=True,
@@ -30,7 +29,6 @@ def main(
                initial_pose_a=initial_pose_a)
 
     with bl.group(name):
-        # This is the normal SVEA command path, not a dashboard-only model.
         bl.node('svea_examples', 'twist_consumer.py',
                 name='operator_twist_consumer',
                 params=dict(twist_top='cmd_vel',

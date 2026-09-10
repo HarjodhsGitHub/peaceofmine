@@ -20,6 +20,5 @@ pyubx2
 geopy
 utm
 
-# Operator dashboard server. The browser is a separate machine; ROS remains on
-# the robot computer behind this deliberately narrow WebSocket gateway.
+# Operator dashboard server (peaceofmine_operator gateway)
 aiohttp>=3.9,<4

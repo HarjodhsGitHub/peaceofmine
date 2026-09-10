@@ -6,76 +6,131 @@
   <meta name="theme-color" content="#09131a">
   <title>PeaceOfMine Operator Simulator</title>
   <link rel="stylesheet" href="/assets/style.css">
-  <style>.client-count{color:#b8cbc5;font-size:.72rem;white-space:nowrap}.detector-panel{display:flex;flex-direction:column}.detector-panel #radar-view{height:auto;min-height:5rem;flex:1}.sweep-controls{display:grid;grid-template-columns:auto 1fr;gap:.25rem .45rem;align-items:center;margin-top:.3rem}.sweep-controls button{min-height:1.7rem;grid-row:1 / span 2;font-size:.68rem}.sweep-controls label{display:flex;justify-content:space-between;color:#a9beb8;font-size:.67rem}.sweep-controls input{margin:0}</style>
 </head>
 <body>
   <main>
     <header>
       <div>
-        <p class="eyebrow">PeaceOfMine · operator simulator</p>
+        <p class="eyebrow">PeaceOfMine &middot; operator simulator</p>
         <h1>Search lane</h1>
       </div>
-      <div class="header-actions"><div class="connection"><span id="connection-dot"></span><span id="connection">Connecting</span></div><div id="client-count" class="client-count">1 viewer</div><span id="control-owner" class="badge neutral">SPECTATING</span><button id="take-control" class="primary">Take control</button><button id="settings" class="quiet">Settings</button></div>
+      <div class="header-actions">
+        <div class="connection">
+          <span id="connection-dot"></span>
+          <span id="connection">Connecting</span>
+        </div>
+        <div id="client-count" class="client-count">1 viewer</div>
+        <span id="control-owner" class="badge neutral">SPECTATING</span>
+        <button id="take-control" class="primary">Take control</button>
+        <button id="settings" class="quiet">Settings</button>
+      </div>
     </header>
 
     <section class="workspace">
       <section id="camera-panel" class="viewport panel">
-        <canvas id="forward-view" tabindex="0" aria-label="Virtual rover camera view. Click to lock keyboard driving input."></canvas>
+        <canvas id="forward-view" tabindex="0" aria-label="Virtual rover camera view. Click to focus for keyboard driving input."></canvas>
         <div class="camera-label">VIRTUAL FORWARD CAMERA</div>
-        <div id="input-lock" class="input-lock">CLICK CAMERA FOR INPUT</div>
-        <div class="speed-readout"><span>ACTUAL SPEED</span><strong id="speed">0.00 m/s</strong></div>
+        <div id="input-lock" class="input-lock hidden">CLICK CAMERA FOR INPUT</div>
+        <div class="speed-readout">
+          <span>ACTUAL SPEED</span>
+          <strong id="speed">0.00 m/s</strong>
+        </div>
+        <div id="notice" class="notice hidden" role="alert"></div>
         <div class="camera-notice" id="camera-notice">Connect a controller, then arm when the lane is clear.</div>
       </section>
 
       <aside class="control-column">
         <section class="panel status-panel">
-          <div class="panel-heading"><h2>Drive</h2><span id="arm-state" class="badge neutral">DISARMED</span></div>
+          <div class="panel-heading">
+            <h2>Drive</h2>
+            <span id="arm-state" class="badge neutral">DISARMED</span>
+          </div>
           <p class="controller-text" id="controller">No controller connected</p>
           <div class="buttons">
-            <button id="arm" class="primary">Arm control</button>
+            <button id="arm" class="primary">Arm</button>
             <button id="estop" class="danger">Disarm / stop</button>
           </div>
           <p class="safety-note">Hold the right bumper to send throttle and steering. Releasing it stops the rover.</p>
         </section>
 
         <section class="panel detector-panel">
-          <div class="panel-heading"><h2>Metal detector</h2><span id="detector-status" class="badge neutral">CLEAR</span></div>
-          <div class="signal-value"><strong id="signal">0</strong><span>%</span></div>
-          <div class="meter" aria-label="Detector signal"><span id="meter-fill"></span><i id="threshold"></i></div>
+          <div class="panel-heading">
+            <h2>Metal detector</h2>
+            <span id="detector-status" class="badge neutral">CLEAR</span>
+          </div>
+          <div class="signal-value">
+            <strong id="signal">0</strong>
+            <span>%</span>
+          </div>
+          <div class="meter" aria-label="Detector signal">
+            <span id="meter-fill"></span>
+            <i id="threshold"></i>
+          </div>
           <canvas id="radar-view" aria-label="Forward metal detector scanning radar"></canvas>
-          <p id="detector-detail">Threshold 65% · fixture 0°</p>
-          <div class="sweep-controls"><button id="sweep-toggle" class="quiet">Start sweep</button><label for="sweep-speed">Sweep <output id="sweep-speed-value">60°/s</output></label><input id="sweep-speed" type="range" min="5" max="180" value="60" step="5"></div>
+          <p id="detector-detail">Threshold 65% &middot; fixture 0&deg;</p>
+          <div class="sweep-controls">
+            <button id="sweep-toggle" class="quiet">Start sweep</button>
+            <label for="sweep-speed">Sweep <output id="sweep-speed-value">60&deg;/s</output></label>
+            <input id="sweep-speed" type="range">
+          </div>
         </section>
 
         <section class="panel probe-panel">
-          <div class="panel-heading"><h2>Probe</h2><span id="probe-status" class="badge neutral">STOWED</span></div>
-          <div class="probe-graphic" aria-hidden="true"><span id="probe-arm"></span><i></i></div>
-          <div class="probe-numbers"><span>Actual <strong id="probe-depth">0 mm</strong></span><span>Target <strong id="probe-target">0 mm</strong></span></div>
-          <div class="pressure-heading"><span>Pressure</span><strong id="probe-pressure">0%</strong><small>last 30 s</small></div>
+          <div class="panel-heading">
+            <h2>Probe</h2>
+            <span id="probe-status" class="badge neutral">STOWED</span>
+          </div>
+          <div class="probe-graphic" aria-hidden="true">
+            <span id="probe-arm"></span>
+            <i></i>
+          </div>
+          <div class="probe-numbers">
+            <span>Actual <strong id="probe-depth">0 mm</strong></span>
+            <span>Target <strong id="probe-target">0 mm</strong></span>
+          </div>
+          <div class="pressure-heading">
+            <span>Pressure</span>
+            <strong id="probe-pressure">0%</strong>
+            <small>last 30 s</small>
+          </div>
           <canvas id="pressure-history" aria-label="Probe pressure history over the latest thirty seconds"></canvas>
           <label for="probe-slider">Target depth</label>
-          <input id="probe-slider" type="range" min="0" max="110" value="0" step="1">
+          <input id="probe-slider" type="range">
           <p class="safety-note">The gateway rejects probe motion while the rover is moving or the probe is faulted.</p>
         </section>
       </aside>
 
       <section class="panel map-panel">
-        <div class="panel-heading"><h2>Field map</h2><span>LOCAL GRID · m</span></div>
+        <div class="panel-heading">
+          <h2>Field map</h2>
+          <span>LOCAL GRID &middot; m</span>
+        </div>
         <canvas id="map-view" aria-label="Local field map"></canvas>
-        <p id="position">X 0.0 · Y 0.0 · heading 0°</p>
+        <p id="position">X 0.0 &middot; Y 0.0 &middot; heading 0&deg;</p>
       </section>
     </section>
   </main>
+
   <dialog id="settings-dialog">
     <form method="dialog">
-      <div class="dialog-heading"><div><p class="eyebrow">This operator client</p><h2>Control settings</h2></div><button value="close" class="quiet" aria-label="Close settings">Close</button></div>
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">This operator client</p>
+          <h2>Control settings</h2>
+        </div>
+        <button value="close" class="quiet" aria-label="Close settings">Close</button>
+      </div>
       <label for="control-source">Control source</label>
-      <select id="control-source"><option value="controller">Controller</option><option value="keyboard">WASD keyboard</option></select>
+      <select id="control-source">
+        <option value="controller">Controller</option>
+        <option value="keyboard">WASD keyboard</option>
+      </select>
       <label for="steering-sensitivity">Steering sensitivity <output id="sensitivity-value">100%</output></label>
       <input id="steering-sensitivity" type="range" min="50" max="150" value="100" step="5">
-      <p class="dialog-help">Controller: left stick, triggers, and right bumper deadman. Keyboard: click the forward camera, then use WASD while holding Shift as the deadman. Escape releases the camera input lock.</p>
+      <p class="dialog-help">Controller: left stick, triggers, and right bumper deadman. Keyboard: click the forward camera to focus it, then use WASD while holding Shift as the deadman. Clicking away releases the input.</p>
     </form>
   </dialog>
+
   <script src="/assets/app.js"></script>
 </body>
 </html>

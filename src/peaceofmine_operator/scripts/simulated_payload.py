@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Simulation-only detector and probe sources.
 
-The dashboard gateway consumes the topics created here exactly as it will
-consume real drivers later.  Keeping this node separate from the gateway is
-intentional: replacing it with hardware must not alter browser safety or UI
-contracts.
+Publishes the same topics the hardware drivers will publish, so swapping in
+real drivers does not touch the gateway or the dashboard.
 """
 
 from __future__ import annotations
@@ -95,10 +93,9 @@ class SimulatedPayload(Node):
         self._fixture_sweep_speed = max(5.0, min(180.0, float(message.data)))
 
     def _publish(self) -> None:
-        # The fixture is an actual simulated mechanism, not a browser effect.
-        # It scans +/- 45 degrees around the forward-arm offset only while the
-        # rover advances, and publishes its measured angle for the UI and later
-        # hardware replacement.
+        # The operator starts and stops the sweep; it scans +/- 45 degrees
+        # around the forward-arm offset whenever it is enabled, regardless of
+        # whether the rover is moving.
         if self._fixture_sweep_enabled:
             self._fixture_angle += self._fixture_sweep_direction * self._fixture_sweep_speed * 0.05
             lower, upper = self._fixture_offset - self._fixture_half_angle, self._fixture_offset + self._fixture_half_angle
@@ -108,9 +105,8 @@ class SimulatedPayload(Node):
                 self._fixture_angle, self._fixture_sweep_direction = lower, 1.0
         fixture_angle = self._fixture_angle
 
-        # Two hidden targets make detector behaviour repeatable. The detector
-        # response depends on its physical forward field of view, including the
-        # fixture's published angle, rather than on anything in the dashboard.
+        # Two buried targets along the +X search lane make detector behaviour
+        # repeatable. Response falls off with both bearing error and range.
         signal = 0.02
         detector_heading = self._yaw + math.radians(fixture_angle)
         for target_x, target_y, amplitude, radius in ((4.8, 0.8, 92.0, 1.2), (9.2, -1.3, 78.0, 0.9)):
@@ -124,8 +120,8 @@ class SimulatedPayload(Node):
         self._depth += max(-self._depth_rate * 0.05,
                            min(self._depth_rate * 0.05, self._target_depth - self._depth))
 
-        # Soil resistance rises gradually with depth. A probe that is close to a
-        # simulated target sees a distinctly steeper increase after contact.
+        # Soil resistance rises gradually with depth, and steeply once the
+        # probe makes contact with a buried target.
         soil_pressure = 0.04 + self._depth / self._max_depth * 0.30
         mine_distance = math.hypot(self._x - 4.8, self._y - 0.8)
         contact_pressure = max(0.0, self._depth - 38.0) / (self._max_depth - 38.0) * 0.66 if mine_distance < 0.55 else 0.0
