@@ -22,8 +22,7 @@ main() {
     withdefault WORKSPACE       "/svea_ws"
     withdefault REPOSITORY_PATH "$(climb entrypoint)"
     withdefault REPOSITORY_NAME "$(basename "$REPOSITORY_PATH")"
-    # Docker image repository names must be lowercase. Keep the repository name
-    # unchanged for paths and container names, but derive a valid default tag.
+    # Docker image/container names must be lowercase.
     REPOSITORY_IMAGE_NAME="$(printf '%s' "$REPOSITORY_NAME" | tr '[:upper:]' '[:lower:]')"
 
     ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
@@ -85,7 +84,7 @@ main() {
         withdefault USER_CREDENTIALS "root:SVEA-Pass!" # TODO: Setup regular user instead of root
     fi
 
-    withdefault CONTAINER_NAME "$REPOSITORY_NAME"
+    withdefault CONTAINER_NAME "$REPOSITORY_IMAGE_NAME"
     withdefault SHARED_VOLUME  "$BUILD_CONTEXT/src:$WORKSPACE/src"
     
     if istrue DEBUG; then
@@ -96,6 +95,7 @@ main() {
         echovar WORKSPACE
         echovar REPOSITORY_PATH
         echovar REPOSITORY_NAME
+        echovar REPOSITORY_IMAGE_NAME
         echovar BUILD_PLATFORM
         echovar BUILD_CONTEXT
         echovar BUILD_FILE
