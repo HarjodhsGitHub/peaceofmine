@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GNSS telemetry</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">ZED-F9P / live telemetry</p>
+      <h1>GNSS position</h1>
+    </div>
+    <div id="connection" class="connection offline"><span class="dot"></span>Waiting</div>
+  </header>
+  <main>
+    <section class="hero panel">
+      <div class="fix-row"><span id="fix-label" class="fix no-fix">NO FIX</span><span id="age">No data</span></div>
+      <div class="status-strip">
+        <div><span>RECEIVER</span><strong id="receiver-status">--</strong></div>
+        <div><span>POSITION</span><strong id="position-status">--</strong></div>
+        <div><span>RTK CORRECTIONS</span><strong id="corrections-status">--</strong></div>
+      </div>
+      <div class="coordinates"><div><span>LATITUDE</span><strong id="latitude">--</strong></div><div><span>LONGITUDE</span><strong id="longitude">--</strong></div></div>
+      <p id="message" class="message">Waiting for a valid NMEA sentence.</p>
+    </section>
+    <section class="metrics">
+      <article class="panel metric"><span>ALTITUDE</span><strong id="altitude">--</strong><small>metres</small></article>
+      <article class="panel metric"><span>SATELLITES</span><strong id="satellites">--</strong><small>in solution</small></article>
+      <article class="panel metric"><span>HDOP</span><strong id="hdop">--</strong><small>lower is better</small></article>
+      <article class="panel metric"><span>PDOP / VDOP</span><strong id="dop">--</strong><small>position / vertical dilution</small></article>
+      <article class="panel metric"><span>SPEED</span><strong id="speed">--</strong><small>m/s</small></article>
+      <article class="panel metric"><span>COURSE</span><strong id="course">--</strong><small>degrees</small></article>
+      <article class="panel metric"><span>UTC</span><strong id="utc">--</strong><small>receiver time</small></article>
+    </section>
+    <section class="panel details"><div><span>SATELLITE VIEW</span><strong id="satellite-view">--</strong></div><div><span>FIX MODE</span><strong id="fix-mode">--</strong></div><div><span>DEVICE</span><strong id="device">--</strong></div><div><span>BAUD</span><strong id="baud">--</strong></div><div><span>LAST MESSAGE</span><strong id="last-message">--</strong></div><div><span>RTCM / NTRIP</span><strong id="ntrip">--</strong></div></section>
+    <details class="panel raw-log"><summary>Raw receiver log <span>latest 200 readings</span></summary><pre id="raw-log-content">Waiting for serial data...</pre></details>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

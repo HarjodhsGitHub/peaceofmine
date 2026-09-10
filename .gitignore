@@ -17,6 +17,7 @@ __pycache__/
 *.pyc
 **/__pycache__/
 **/*.pyc
+DevTools/gnss_viewer/.env
 
 # mkdocs
 venv/
