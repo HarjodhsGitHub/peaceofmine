@@ -50,6 +50,15 @@ main { padding-bottom: 3rem; }
 .raw-log summary { cursor: pointer; padding: 1rem; color: #e9eee8; font: 700 .75rem sans-serif; letter-spacing: .08em; text-transform: uppercase; }
 .raw-log summary span { margin-left: .7rem; color: var(--muted); font-weight: 400; letter-spacing: 0; text-transform: none; }
 .raw-log pre { max-height: 22rem; margin: 0; padding: 0 1rem 1rem; overflow: auto; color: #b8c8be; font: .7rem/1.55 monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.event-log { margin-top: .7rem; }
+.event-log summary { cursor: pointer; padding: 1rem; color: #e9eee8; font: 700 .75rem sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+.event-log summary span { margin-left: .7rem; color: var(--muted); font-weight: 400; letter-spacing: 0; text-transform: none; }
+#event-log-content { max-height: 14rem; padding: 0 1rem 1rem; overflow: auto; }
+.event-row { display: grid; grid-template-columns: 5rem 1fr; gap: .8rem; padding: .35rem 0; border-top: 1px solid #33433f88; font: .72rem/1.4 monospace; }
+.event-row time { color: var(--muted); }
+.event-row.success span { color: var(--green); }
+.event-row.warning span { color: var(--yellow); }
+.event-row.error span { color: var(--red); }
 @media (max-width: 650px) {
   header { align-items: start; flex-direction: column; padding-top: 2rem; }
   .coordinates { grid-template-columns: 1fr; gap: 1.3rem; margin: 2rem 0 1.2rem; }

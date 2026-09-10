@@ -59,17 +59,32 @@ class GnssState:
         self.latest_gga: str | None = None
         self.log_lock = threading.Lock()
         self.raw_log: deque[str] = deque(maxlen=200)
+        self.event_log: deque[dict[str, str]] = deque(maxlen=100)
 
     def update(self, **values: Any) -> None:
         with self.lock:
+            was_connected = self.data["connected"]
+            old_fix = self.data["fix_label"]
+            old_fix_mode = self.data["fix_mode"]
             self.data.update(values)
             self.data["last_update"] = time.time()
             self.data["connected"] = True
+            new_fix = self.data["fix_label"]
+            new_fix_mode = self.data["fix_mode"]
+        if not was_connected:
+            self.add_event("Receiver UART connection restored", "success")
+        if new_fix != old_fix:
+            self.add_event(f"Position status changed: {old_fix} -> {new_fix}", "success" if new_fix != "NO FIX" else "warning")
+        if new_fix_mode != old_fix_mode and new_fix_mode != "NO FIX":
+            self.add_event(f"Fix mode changed: {old_fix_mode} -> {new_fix_mode}", "info")
 
     def connection_error(self, message: str) -> None:
         with self.lock:
+            was_connected = self.data["connected"]
             self.data["connected"] = False
             self.data["last_message"] = message
+        if was_connected:
+            self.add_event(f"Receiver UART connection lost: {message}", "error")
 
     def set_port(self, port: serial.Serial | None) -> None:
         with self.lock:
@@ -101,18 +116,31 @@ class GnssState:
         with self.log_lock:
             self.raw_log.append(f"{timestamp}  {text}")
 
+    def add_event(self, message: str, kind: str = "info") -> None:
+        with self.log_lock:
+            self.event_log.append({
+                "time": time.strftime("%H:%M:%S"),
+                "message": message,
+                "kind": kind,
+            })
+
     def set_ntrip(self, status: str, correction_bytes: int | None = None) -> None:
         with self.lock:
+            old_status = self.data["ntrip_status"]
             self.data["ntrip_status"] = status
             if correction_bytes is not None:
                 self.data["corrections_bytes"] += correction_bytes
                 self.data["last_correction"] = time.time()
+        if status != old_status and not status.startswith("Receiving RTCM"):
+            kind = "error" if "error" in status.lower() else "info"
+            self.add_event(f"RTK corrections: {status}", kind)
 
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
             result = dict(self.data)
         with self.log_lock:
             result["raw_log"] = list(self.raw_log)
+            result["event_log"] = list(self.event_log)
         if result["last_update"] is not None:
             result["age_s"] = round(max(0.0, time.time() - result["last_update"]), 1)
         else:

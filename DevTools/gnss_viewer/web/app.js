@@ -18,6 +18,7 @@ const fields = {
   positionStatus: document.querySelector('#position-status'),
   correctionsStatus: document.querySelector('#corrections-status'),
   rawLog: document.querySelector('#raw-log-content'),
+  eventLog: document.querySelector('#event-log-content'),
 };
 
 function value(value, suffix = '') {
@@ -42,6 +43,18 @@ function update(state) {
   fields.rawLog.textContent = state.raw_log.length
     ? state.raw_log.join('\n')
     : 'Waiting for serial data...';
+  fields.eventLog.replaceChildren(...(state.event_log.length ? state.event_log : [{
+    time: '--:--:--', message: 'Waiting for events...', kind: 'info',
+  }]).map(event => {
+    const row = document.createElement('div');
+    row.className = `event-row ${event.kind}`;
+    const time = document.createElement('time');
+    time.textContent = event.time;
+    const message = document.createElement('span');
+    message.textContent = event.message;
+    row.append(time, message);
+    return row;
+  }));
   fields.ntrip.textContent = state.ntrip_enabled
     ? `${state.ntrip_status} · ${state.corrections_bytes} B`
     : 'Not configured';
