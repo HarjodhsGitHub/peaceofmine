@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>peaceofmine_operator</name>
+  <version>0.1.0</version>
+  <description>Safe browser operator interface and simulation payloads for PeaceOfMine.</description>
+  <maintainer email="nils@example.invalid">PeaceOfMine</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>geometry_msgs</depend>
+  <depend>ament_index_python</depend>
+  <depend>nav_msgs</depend>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
