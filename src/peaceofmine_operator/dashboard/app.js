@@ -6,6 +6,8 @@ const LANE_HALF_WIDTH_M = 2;
 const CAMERA_RANGE_M = 26;
 
 const DRIVE_PERIOD_MS = 50;
+const LATENCY_PERIOD_MS = 1000;
+const LATENCY_HISTORY_LENGTH = 30;
 const MAX_LINEAR_MPS = 0.8;
 const MAX_ANGULAR_RAD_S = 1.4;
 
@@ -55,6 +57,9 @@ let gamepad = null;
 let cameraFocused = false;
 let lastDriveSent = 0;
 let noticeExpiry = 0;
+let latencyProbeId = 0;
+let latencyProbeStarted = 0;
+const latencyHistory = [];
 
 function throttle(periodMs, action) {
   let last = 0;
@@ -79,13 +84,59 @@ function setConnection(connected, label) {
   updateHud();
 }
 
+function drawLatencyGraph() {
+  const canvas = $('latency-graph');
+  const context = canvas.getContext('2d');
+  const width = canvas.width;
+  const height = canvas.height;
+  context.clearRect(0, 0, width, height);
+  if (latencyHistory.length < 2) return;
+
+  const maximum = Math.max(100, ...latencyHistory);
+  const sampleSpan = Math.max(1, latencyHistory.length - 1);
+  context.beginPath();
+  latencyHistory.forEach((latency, index) => {
+    const x = index / sampleSpan * width;
+    const y = height - Math.min(latency / maximum, 1) * (height - 3) - 1;
+    if (index === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  });
+  context.strokeStyle = '#55c9a1';
+  context.lineWidth = 2;
+  context.stroke();
+}
+
+function measureLatency() {
+  if (socket?.readyState !== WebSocket.OPEN || latencyProbeStarted) return;
+  latencyProbeId += 1;
+  latencyProbeStarted = performance.now();
+  send({type: 'latency_ping', probe_id: latencyProbeId});
+}
+
+function recordLatency(probeId) {
+  if (probeId !== latencyProbeId || !latencyProbeStarted) return;
+  const latency = Math.round(performance.now() - latencyProbeStarted);
+  latencyProbeStarted = 0;
+  latencyHistory.push(latency);
+  if (latencyHistory.length > LATENCY_HISTORY_LENGTH) latencyHistory.shift();
+  $('latency-value').textContent = `${latency} ms`;
+  drawLatencyGraph();
+}
+
 function connect() {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
   socket = new WebSocket(`${scheme}://${location.host}/ws`);
 
-  socket.onopen = () => setConnection(true, 'Dashboard linked');
+  socket.onopen = () => {
+    setConnection(true, 'Dashboard linked');
+    measureLatency();
+  };
 
   socket.onclose = () => {
+    latencyProbeStarted = 0;
+    latencyHistory.length = 0;
+    $('latency-value').textContent = '-- ms';
+    drawLatencyGraph();
     state.drive.armed = false;
     state.drive.deadman = false;
     state.drive.you_control_owner = false;
@@ -97,6 +148,10 @@ function connect() {
 
   socket.onmessage = event => {
     const message = JSON.parse(event.data);
+    if (message.type === 'latency_pong') {
+      recordLatency(message.probe_id);
+      return;
+    }
     if (message.type === 'error') {
       showNotice(message.message);
       return;
@@ -106,6 +161,8 @@ function connect() {
     updateHud();
   };
 }
+
+setInterval(measureLatency, LATENCY_PERIOD_MS);
 
 // The camera notice is rewritten on every telemetry tick, so rejected
 // commands need their own element to stay readable.

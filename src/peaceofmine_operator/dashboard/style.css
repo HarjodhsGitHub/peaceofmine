@@ -80,6 +80,38 @@ header {
   white-space: nowrap;
 }
 
+.latency {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  column-gap: .4rem;
+  min-width: 8.5rem;
+  color: #b8cbc5;
+  font-size: .68rem;
+}
+
+.latency-label {
+  grid-row: span 2;
+  color: #789b94;
+  font-size: .62rem;
+  font-weight: 750;
+  letter-spacing: .1em;
+}
+
+#latency-value {
+  color: #e8f1ed;
+  font-size: .78rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#latency-graph {
+  display: block;
+  width: 4.8rem;
+  height: 1.4rem;
+  opacity: .9;
+}
+
 /* -------------------------------------------------------------- Layout --- */
 
 .workspace {
@@ -567,6 +599,17 @@ dialog select {
   main {
     height: auto;
     padding: .7rem;
+  }
+
+  header {
+    height: auto;
+    min-height: 3.25rem;
+    align-items: flex-start;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .workspace {
