@@ -1,3 +1,4 @@
 pyserial>=3.5,<4
 pynmea2>=1.19,<2
 python-dotenv>=1.0,<2
+pyubx2>=1.2.50,<2

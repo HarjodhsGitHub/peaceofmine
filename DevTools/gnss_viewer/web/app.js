@@ -26,24 +26,25 @@ function value(value, suffix = '') {
 }
 
 function update(state) {
-  fields.latitude.textContent = state.latitude === null ? '--' : state.latitude.toFixed(7);
-  fields.longitude.textContent = state.longitude === null ? '--' : state.longitude.toFixed(7);
-  fields.altitude.textContent = value(state.altitude_m, ' m');
-  fields.satellites.textContent = value(state.satellites);
-  fields.hdop.textContent = value(state.hdop);
-  fields.dop.textContent = `${value(state.pdop)} / ${value(state.vdop)}`;
-  fields.speed.textContent = value(state.speed_mps);
-  fields.course.textContent = value(state.course_deg, '°');
+
+  fields.latitude.textContent = positionValid(state) ? state.latitude.toFixed(7) : '--';
+  fields.longitude.textContent = positionValid(state) ? state.longitude.toFixed(7) : '--';
+  fields.altitude.textContent = value(reading(state, 'altitude_m', true), ' m');
+  fields.satellites.textContent = value(reading(state, 'satellites'));
+  fields.hdop.textContent = value(reading(state, 'hdop'));
+  fields.dop.textContent = `${value(reading(state, 'pdop'))} / ${value(reading(state, 'vdop'))}`;
+  fields.speed.textContent = value(reading(state, 'speed_mps', true));
+  fields.course.textContent = value(reading(state, 'course_deg', true), '°');
   fields.utc.textContent = value(state.utc);
   fields.device.textContent = state.device;
   fields.baud.textContent = state.baud;
   fields.lastMessage.textContent = state.last_message;
-  fields.satelliteView.textContent = value(state.satellites_in_view);
-  fields.fixMode.textContent = state.fix_mode;
-  fields.rawLog.textContent = state.raw_log.length
+  fields.satelliteView.textContent = value(reading(state, 'satellites_in_view'));
+  fields.fixMode.textContent = fresh(state) && (!state.field_age_s || state.field_age_s.fix_mode < 5) ? state.fix_mode : '--';
+  fields.rawLog.textContent = (state.raw_log || []).length
     ? state.raw_log.join('\n')
     : 'Waiting for serial data...';
-  fields.eventLog.replaceChildren(...(state.event_log.length ? state.event_log : [{
+  fields.eventLog.replaceChildren(...((state.event_log || []).length ? state.event_log : [{
     time: '--:--:--', message: 'Waiting for events...', kind: 'info',
   }]).map(event => {
     const row = document.createElement('div');
@@ -60,8 +61,8 @@ function update(state) {
     : 'Not configured';
   fields.receiverStatus.textContent = state.connected ? 'UART connected' : 'UART offline';
   fields.receiverStatus.className = state.connected ? 'ok' : 'error';
-  fields.positionStatus.textContent = state.fix_quality > 0 ? state.fix_label : 'No fix yet';
-  fields.positionStatus.className = state.fix_quality > 0 ? 'ok' : 'waiting';
+  fields.positionStatus.textContent = positionValid(state) ? state.fix_label : fresh(state) ? 'No fix yet' : 'Position stale';
+  fields.positionStatus.className = positionValid(state) ? 'ok' : 'waiting';
   const correctionsWorking = state.ntrip_enabled && state.correction_age_s !== null && state.correction_age_s < 15;
   const correctionsError = state.ntrip_enabled && state.ntrip_status.startsWith('NTRIP error');
   fields.correctionsStatus.textContent = !state.ntrip_enabled
@@ -70,8 +71,8 @@ function update(state) {
   fields.correctionsStatus.className = correctionsWorking ? 'ok' : correctionsError ? 'error' : 'waiting';
 
   const fix = document.querySelector('#fix-label');
-  fix.textContent = state.fix_label;
-  fix.className = `fix ${state.fix_label.toLowerCase().replaceAll(' ', '-')}`;
+  fix.textContent = fresh(state) ? state.fix_label : 'STALE';
+  fix.className = `fix ${fresh(state) ? state.fix_label.toLowerCase().replaceAll(' ', '-') : 'stale'}`;
   document.querySelector('#age').textContent = state.age_s === null ? 'No data' : `${state.age_s}s ago`;
   document.querySelector('#message').textContent = state.connected
     ? `${state.last_message} · updates arrive from the receiver over UART`
@@ -82,17 +83,40 @@ function update(state) {
 }
 
 async function poll() {
+  let state = null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
   try {
-    const response = await fetch('/api/state', {cache: 'no-store'});
+    const response = await fetch('/api/state', {cache: 'no-store', signal: controller.signal});
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    update(await response.json());
+    state = await response.json();
   } catch (error) {
     const connection = document.querySelector('#connection');
     connection.className = 'connection offline';
     connection.innerHTML = '<span class="dot"></span>Viewer offline';
-    document.querySelector('#message').textContent = error.message;
+    document.querySelector('#message').textContent = `Cannot reach telemetry: ${error.message}. Retrying…`;
+    for (const key of ['latitude', 'longitude', 'altitude', 'satellites', 'hdop', 'dop', 'speed', 'course']) fields[key].textContent = '--';
+    fields.positionStatus.textContent = 'Position unavailable';
+    fields.positionStatus.className = 'waiting';
+    document.querySelector('#fix-label').textContent = 'OFFLINE';
+    document.querySelector('#fix-label').className = 'fix offline';
+    document.querySelector('#age').textContent = 'No live data';
+    fields.receiverStatus.textContent = 'Unknown';
+    fields.receiverStatus.className = 'waiting';
+    fields.correctionsStatus.textContent = 'Unknown';
+    fields.correctionsStatus.className = 'waiting';
+  } finally {
+    clearTimeout(timeout);
+  }
+  try {
+    if (state) update(state);
+    updateTrends(state);
+  } catch (error) {
+    document.querySelector('#message').textContent = `Display error: ${error.message}. Try reloading the page.`;
+    console.error(error);
+  } finally {
+    setTimeout(poll, 1000);
   }
 }
 
 poll();
-setInterval(poll, 1000);

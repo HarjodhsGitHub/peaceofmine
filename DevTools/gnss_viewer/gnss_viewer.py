@@ -19,6 +19,7 @@ import pynmea2
 import serial
 from dotenv import load_dotenv
 from serial import SerialException
+from pyubx2 import UBXReader
 
 
 WEB_ROOT = Path(__file__).with_name("web")
@@ -29,6 +30,7 @@ class GnssState:
         self.device = device
         self.baud = baud
         self.lock = threading.Lock()
+        self.field_updated: dict[str, float] = {}
         self.port: serial.Serial | None = None
         self.data: dict[str, Any] = {
             "connected": False,
@@ -57,6 +59,7 @@ class GnssState:
         }
         self.gga_lock = threading.Lock()
         self.latest_gga: str | None = None
+        self.gga_time = 0.0
         self.log_lock = threading.Lock()
         self.raw_log: deque[str] = deque(maxlen=200)
         self.event_log: deque[dict[str, str]] = deque(maxlen=100)
@@ -67,6 +70,7 @@ class GnssState:
             old_fix = self.data["fix_label"]
             old_fix_mode = self.data["fix_mode"]
             self.data.update(values)
+            self.field_updated.update({key: time.time() for key in values})
             self.data["last_update"] = time.time()
             self.data["connected"] = True
             new_fix = self.data["fix_label"]
@@ -89,21 +93,26 @@ class GnssState:
     def set_port(self, port: serial.Serial | None) -> None:
         with self.lock:
             self.port = port
+        if port is None:
+            with self.gga_lock:
+                self.latest_gga = None
 
     def write_corrections(self, data: bytes) -> bool:
         with self.lock:
             if self.port is None or not self.port.is_open:
                 return False
-            self.port.write(data)
+            if self.port.write(data) != len(data):
+                raise RuntimeError("Incomplete RTCM write to GNSS UART")
             return True
 
-    def set_gga(self, sentence: str) -> None:
+    def set_gga(self, sentence: str | None) -> None:
         with self.gga_lock:
-            self.latest_gga = sentence.strip()
+            self.latest_gga = sentence.strip() if sentence else None
+            self.gga_time = time.monotonic()
 
     def get_gga(self) -> str | None:
         with self.gga_lock:
-            return self.latest_gga
+            return self.latest_gga if time.monotonic() - self.gga_time < 15 else None
 
     def append_raw_log(self, raw_line: bytes) -> None:
         timestamp = time.strftime("%H:%M:%S")
@@ -138,6 +147,10 @@ class GnssState:
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
             result = dict(self.data)
+            result["field_age_s"] = {
+                key: round(max(0.0, time.time() - updated), 1)
+                for key, updated in self.field_updated.items()
+            }
         with self.log_lock:
             result["raw_log"] = list(self.raw_log)
             result["event_log"] = list(self.event_log)
@@ -166,17 +179,23 @@ def fix_label(quality: int) -> str:
 def serial_reader(state: GnssState) -> None:
     while True:
         try:
-            with serial.Serial(state.device, state.baud, timeout=1) as port:
+            with serial.Serial(state.device, state.baud, timeout=1,
+                               write_timeout=2, exclusive=True) as port:
                 state.set_port(port)
                 state.update(last_message="Serial connected")
-                for raw_line in port:
+                reader = UBXReader(port)
+                while True:
+                    raw_line, _ = reader.read()
+                    if not raw_line:
+                        continue
                     state.append_raw_log(raw_line)
+                    if not raw_line.startswith(b"$"):
+                        continue
                     try:
                         sentence = pynmea2.parse(raw_line.decode("ascii", errors="ignore"), check=True)
-                    except (pynmea2.ParseError, UnicodeError):
+                        process_sentence(state, sentence, raw_line.decode("ascii"))
+                    except (pynmea2.ParseError, UnicodeError, ValueError, TypeError):
                         continue
-                    process_sentence(state, sentence, raw_line.decode("ascii", errors="ignore"))
-                state.set_port(None)
         except (SerialException, OSError) as error:
             state.set_port(None)
             state.connection_error(f"Serial unavailable: {error}")
@@ -186,23 +205,23 @@ def serial_reader(state: GnssState) -> None:
 def process_sentence(state: GnssState, sentence: Any, raw_line: str = "") -> None:
     values: dict[str, Any] = {"last_message": sentence.sentence_type}
     if sentence.sentence_type == "GGA":
-        state.set_gga(raw_line)
         quality = int(sentence.gps_qual or 0)
+        state.set_gga(raw_line if quality and sentence.lat and sentence.lon else None)
         values.update(
-            latitude=sentence.latitude or None,
-            longitude=sentence.longitude or None,
+            latitude=sentence.latitude if sentence.lat else None,
+            longitude=sentence.longitude if sentence.lon else None,
             fix_quality=quality,
             fix_label=fix_label(quality),
             satellites=int(sentence.num_sats) if sentence.num_sats else None,
-            altitude_m=float(sentence.altitude) if sentence.altitude else None,
+            altitude_m=float(sentence.altitude) if sentence.altitude is not None else None,
             hdop=float(sentence.horizontal_dil) if sentence.horizontal_dil else None,
             utc=sentence.timestamp.isoformat() if sentence.timestamp else None,
         )
     elif sentence.sentence_type == "RMC":
         if sentence.status == "A":
             values.update(
-                latitude=sentence.latitude or None,
-                longitude=sentence.longitude or None,
+                latitude=sentence.latitude if sentence.lat else None,
+                longitude=sentence.longitude if sentence.lon else None,
                 speed_mps=round(float(sentence.spd_over_grnd or 0) * 0.514444, 2),
                 course_deg=float(sentence.true_course) if sentence.true_course else None,
                 utc=sentence.timestamp.isoformat() if sentence.timestamp else None,
@@ -223,8 +242,8 @@ def process_sentence(state: GnssState, sentence: Any, raw_line: str = "") -> Non
             values["satellites_in_view"] = int(satellites_in_view)
     elif sentence.sentence_type == "GLL" and sentence.status == "A":
         values.update(
-            latitude=sentence.latitude or None,
-            longitude=sentence.longitude or None,
+            latitude=sentence.latitude if sentence.lat else None,
+            longitude=sentence.longitude if sentence.lon else None,
             utc=sentence.timestamp.isoformat() if sentence.timestamp else None,
         )
     elif sentence.sentence_type == "VTG":
@@ -233,6 +252,70 @@ def process_sentence(state: GnssState, sentence: Any, raw_line: str = "") -> Non
             course_deg=float(sentence.true_track) if sentence.true_track else None,
         )
     state.update(**values)
+
+
+def read_ntrip_response(caster: socket.socket) -> bytes:
+    """Consume HTTP headers or the single-line NTRIP v1 ICY response.
+
+    Return any correction bytes already received with the response.
+    """
+    response = b""
+    while b"\r\n" not in response:
+        chunk = caster.recv(1024)
+        if not chunk:
+            raise RuntimeError("NTRIP caster closed during response")
+        response += chunk
+        if len(response) > 8192:
+            raise RuntimeError("NTRIP response headers too large")
+    first_line, remainder = response.split(b"\r\n", 1)
+    parts = first_line.split()
+    if len(parts) < 2 or parts[0] not in (b"ICY", b"HTTP/1.0", b"HTTP/1.1") or parts[1] != b"200":
+        if len(parts) > 1 and parts[1] in (b"401", b"403"):
+            raise RuntimeError("Caster rejected credentials or mountpoint access (check .env)")
+        raise RuntimeError("Caster rejected stream: " + first_line.decode("ascii", errors="replace"))
+    if parts[0] == b"ICY":
+        return remainder
+    while b"\r\n\r\n" not in response:
+        chunk = caster.recv(1024)
+        if not chunk:
+            raise RuntimeError("NTRIP caster closed during headers")
+        response += chunk
+        if len(response) > 8192:
+            raise RuntimeError("NTRIP response headers too large")
+    headers, remainder = response.split(b"\r\n\r\n", 1)
+    if b"transfer-encoding:" in headers.lower():
+        raise RuntimeError("Unsupported transfer encoding; caster must support NTRIP v1")
+    if b"sourcetable" in headers.lower() or b"text/html" in headers.lower():
+        raise RuntimeError("Caster returned a page or sourcetable; check NTRIP_MOUNTPOINT")
+    return remainder
+
+
+def stream_corrections(state: GnssState, caster: socket.socket, initial: bytes) -> None:
+    last_gga = 0.0
+    last_correction = time.monotonic()
+    corrections = initial
+    while True:
+        now = time.monotonic()
+        gga = state.get_gga()
+        if not gga:
+            raise RuntimeError("No fresh GNSS position for NTRIP; waiting for a valid GGA fix")
+        if now - last_gga >= 10:
+            caster.sendall((gga + "\r\n").encode("ascii"))
+            last_gga = now
+        if corrections:
+            if not state.write_corrections(corrections):
+                raise RuntimeError("GNSS UART is not available")
+            state.set_ntrip("Receiving RTCM corrections", len(corrections))
+            last_correction = now
+        if now - last_correction > 30:
+            raise RuntimeError("No RTCM received for 30 seconds")
+        try:
+            corrections = caster.recv(4096)
+        except socket.timeout:
+            corrections = b""
+            continue
+        if not corrections:
+            raise RuntimeError("NTRIP caster closed the connection")
 
 
 def ntrip_reader(state: GnssState, host: str, port: int, mountpoint: str,
@@ -244,39 +327,22 @@ def ntrip_reader(state: GnssState, host: str, port: int, mountpoint: str,
             state.set_ntrip("Waiting for GNSS UART")
             while state.port is None:
                 time.sleep(1)
+            state.set_ntrip("Waiting for valid GNSS position (GGA)")
+            while not state.get_gga():
+                time.sleep(1)
             with socket.create_connection((host, port), timeout=10) as caster:
-                caster.settimeout(1)
                 request = (
                     f"GET /{mountpoint.lstrip('/')} HTTP/1.0\r\n"
+                    f"Host: {host}:{port}\r\n"
                     "User-Agent: NTRIP PeaceOfMine/1.0\r\n"
                     f"Authorization: Basic {credentials}\r\n"
                     "Accept: */*\r\nConnection: close\r\n\r\n"
                 ).encode("ascii")
                 caster.sendall(request)
-                response = b""
-                while b"\r\n\r\n" not in response and len(response) < 8192:
-                    response += caster.recv(1024)
-                first_line = response.split(b"\r\n", 1)[0]
-                if b" 200 " not in first_line and not first_line.startswith(b"ICY 200"):
-                    raise RuntimeError(first_line.decode("ascii", errors="replace"))
-
+                initial = read_ntrip_response(caster)
+                caster.settimeout(1)
                 state.set_ntrip("Connected, waiting for RTCM")
-                last_gga = 0.0
-                while True:
-                    now = time.monotonic()
-                    gga = state.get_gga()
-                    if gga and now - last_gga >= 10:
-                        caster.sendall((gga + "\r\n").encode("ascii"))
-                        last_gga = now
-                    try:
-                        corrections = caster.recv(4096)
-                    except socket.timeout:
-                        continue
-                    if not corrections:
-                        raise RuntimeError("NTRIP caster closed the connection")
-                    if not state.write_corrections(corrections):
-                        raise RuntimeError("GNSS UART is not available")
-                    state.set_ntrip("Receiving RTCM corrections", len(corrections))
+                stream_corrections(state, caster, initial)
         except (OSError, RuntimeError) as error:
             state.set_ntrip(f"NTRIP error: {error}")
             time.sleep(5)
@@ -287,6 +353,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(WEB_ROOT), **kwargs)
+
+    def end_headers(self) -> None:
+        # Keep HTML and scripts in sync across viewer upgrades.
+        if self.path != "/api/state":
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
 
     def do_GET(self) -> None:
         if self.path == "/api/state":

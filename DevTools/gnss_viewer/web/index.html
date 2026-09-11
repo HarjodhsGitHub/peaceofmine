@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GNSS telemetry</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=20260911-2">
+  <link rel="stylesheet" href="style.css?v=20260911-2">
 </head>
 <body>
   <header>
@@ -15,6 +16,7 @@
     <div id="connection" class="connection offline"><span class="dot"></span>Waiting</div>
   </header>
   <main>
+    <div class="overview">
     <section class="hero panel">
       <div class="fix-row"><span id="fix-label" class="fix no-fix">NO FIX</span><span id="age">No data</span></div>
       <div class="status-strip">
@@ -25,6 +27,13 @@
       <div class="coordinates"><div><span>LATITUDE</span><strong id="latitude">--</strong></div><div><span>LONGITUDE</span><strong id="longitude">--</strong></div></div>
       <p id="message" class="message">Waiting for a valid NMEA sentence.</p>
     </section>
+    <section class="panel map-panel" aria-label="Receiver position map">
+      <div class="section-heading"><div><p class="eyebrow">POSITION / 30 SECOND TRAIL</p><h2>On the ground</h2></div><button id="follow-position" type="button" aria-pressed="true">Follow position: on</button></div>
+      <div id="map" aria-label="OpenStreetMap receiver location"></div>
+      <div class="map-footer"><span id="map-status" role="status">Waiting for a valid position. No marker placed yet.</span><span id="tile-status">Map tiles load after the first valid position.</span></div>
+    </section>
+    </div>
+    <div class="section-heading history-heading"><div><p class="eyebrow">LIVE TRENDS</p><h2>The last 30 seconds</h2></div><span>1 s samples · gaps mean unavailable data</span></div>
     <section class="metrics">
       <article class="panel metric"><span>ALTITUDE</span><strong id="altitude">--</strong><small>metres</small></article>
       <article class="panel metric"><span>SATELLITES</span><strong id="satellites">--</strong><small>in solution</small></article>
@@ -32,12 +41,17 @@
       <article class="panel metric"><span>PDOP / VDOP</span><strong id="dop">--</strong><small>position / vertical dilution</small></article>
       <article class="panel metric"><span>SPEED</span><strong id="speed">--</strong><small>m/s</small></article>
       <article class="panel metric"><span>COURSE</span><strong id="course">--</strong><small>degrees</small></article>
-      <article class="panel metric"><span>UTC</span><strong id="utc">--</strong><small>receiver time</small></article>
+      <article class="panel metric"><span>CORRECTION RATE</span><strong id="correction-rate">--</strong><small>RTCM bytes / second</small></article>
+      <article class="panel metric"><span>CORRECTION AGE</span><strong id="correction-age">--</strong><small>seconds since RTCM received</small></article>
+      <article class="panel metric"><span>DATA AGE</span><strong id="data-age">--</strong><small>seconds since receiver update</small></article>
     </section>
-    <section class="panel details"><div><span>SATELLITE VIEW</span><strong id="satellite-view">--</strong></div><div><span>FIX MODE</span><strong id="fix-mode">--</strong></div><div><span>DEVICE</span><strong id="device">--</strong></div><div><span>BAUD</span><strong id="baud">--</strong></div><div><span>LAST MESSAGE</span><strong id="last-message">--</strong></div><div><span>RTCM / NTRIP</span><strong id="ntrip">--</strong></div></section>
+    <section class="panel details"><div><span>UTC</span><strong id="utc">--</strong></div><div><span>SATELLITE VIEW</span><strong id="satellite-view">--</strong></div><div><span>FIX MODE</span><strong id="fix-mode">--</strong></div><div><span>DEVICE</span><strong id="device">--</strong></div><div><span>BAUD</span><strong id="baud">--</strong></div><div><span>LAST MESSAGE</span><strong id="last-message">--</strong></div><div><span>RTCM / NTRIP</span><strong id="ntrip">--</strong></div></section>
     <details class="panel raw-log"><summary>Raw receiver log <span>latest 200 readings</span></summary><pre id="raw-log-content">Waiting for serial data...</pre></details>
     <details class="panel event-log" open><summary>Event history <span>connection and fix changes</span></summary><div id="event-log-content">Waiting for events...</div></details>
   </main>
-  <script src="app.js"></script>
+  <script src="vendor/leaflet/leaflet.js?v=20260911-2"></script>
+  <script src="vendor/chartjs/chart.umd.min.js?v=20260911-2"></script>
+  <script src="history.js?v=20260911-2"></script>
+  <script src="app.js?v=20260911-2"></script>
 </body>
 </html>
