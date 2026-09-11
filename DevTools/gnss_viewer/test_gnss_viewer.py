@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pynmea2
 from pyubx2 import UBXMessage, UBXReader, GET
 
-from gnss_viewer import GnssState, process_sentence, read_ntrip_response, stream_corrections
+from gnss_viewer import process_ubx, GnssState, process_sentence, read_ntrip_response, stream_corrections
 
 GGA = str(pynmea2.GGA('GN', 'GGA', (
     '120000', '5920.0000', 'N', '01800.0000', 'E', '1', '12',
@@ -21,6 +21,20 @@ def caster_with(*chunks):
 
 
 class NtripTests(unittest.TestCase):
+    def test_accuracy_units_and_invalid_fix(self):
+        state = GnssState('fake', 115200)
+        msg = UBXMessage('NAV', 'NAV-PVT', GET, gnssFixOk=1, fixType=3, hAcc=1250)
+        process_ubx(state, UBXReader.parse(msg.serialize()))
+        self.assertEqual(state.snapshot()['horizontal_accuracy_m'], 1.25)
+        process_ubx(state, UBXMessage('NAV', 'NAV-PVT', GET, gnssFixOk=0, fixType=3, hAcc=100))
+        self.assertIsNone(state.snapshot()['horizontal_accuracy_m'])
+
+    def test_gst_horizontal_rms(self):
+        state = GnssState('fake', 115200)
+        msg = pynmea2.GST('GN', 'GST', ('120000', '1', '5', '3', '0', '3', '4', '6'))
+        process_sentence(state, msg)
+        self.assertEqual(state.snapshot()['horizontal_accuracy_m'], 5)
+
     def test_unrelated_messages_do_not_refresh_position(self):
         state = GnssState('fake', 115200)
         state.update(latitude=59.0, longitude=18.0)

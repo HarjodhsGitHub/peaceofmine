@@ -14,6 +14,7 @@ function reading(s, key, position = false) {
 const definitions = [
   ['latitude', 'Latitude (degrees)', s => reading(s, 'latitude', true)],
   ['longitude', 'Longitude (degrees)', s => reading(s, 'longitude', true)],
+  ['accuracy', 'Receiver-reported uncertainty (m)', s => reading(s, 'horizontal_accuracy_m', true)],
   ['altitude', 'Altitude (m)', s => reading(s, 'altitude_m', true)],
   ['satellites', 'Satellites in solution', s => reading(s, 'satellites')],
   ['hdop', 'HDOP', s => reading(s, 'hdop')],
@@ -25,7 +26,7 @@ const definitions = [
   ['data-age', 'Data age (s)', s => s?.age_s ?? null],
 ];
 const sourceMessages = {
-  latitude: 'GGA / RMC', longitude: 'GGA / RMC', altitude: 'GGA', satellites: 'GGA',
+  accuracy: 'UBX NAV-PVT / GST', latitude: 'GGA / RMC', longitude: 'GGA / RMC', altitude: 'GGA', satellites: 'GGA',
   hdop: 'GGA / GSA', dop: 'GSA', speed: 'RMC / VTG', course: 'RMC / VTG',
   'satellite-view': 'GSV', 'fix-mode': 'GSA',
 };
@@ -56,8 +57,8 @@ const charts = definitions.map(def => {
       type: 'line',
       data: {datasets: [2, 3].filter(i => def[i]).map((i, index) => ({
         label: index ? def[4] : def[1], data: [],
-        borderColor: index ? '#e4bd64' : '#6bd0a2',
-        backgroundColor: index ? '#e4bd64' : '#6bd0a2',
+        borderColor: def[0] === 'accuracy' ? '#69b9ff' : index ? '#e4bd64' : '#6bd0a2',
+        backgroundColor: def[0] === 'accuracy' ? '#69b9ff' : index ? '#e4bd64' : '#6bd0a2',
         borderWidth: 2, pointRadius: 2, pointHoverRadius: 5,
         stepped: Boolean(def[5]), spanGaps: false,
       }))},
@@ -70,7 +71,7 @@ const charts = definitions.map(def => {
         scales: {
           x: {type: 'linear', min: -30, max: 0, grid: {color: '#33433f66'},
             ticks: {stepSize: 15, color: '#9ba9a0', callback: n => n === 0 ? 'now' : `${n}s`}},
-          y: {min: def[5]?.[0], max: def[5]?.[1], grid: {color: '#33433f66'},
+          y: {title: {display: def[0] === 'accuracy', text: 'Uncertainty (m)', color: '#8fcaff'}, min: def[0] === 'accuracy' ? 0 : def[5]?.[0], max: def[5]?.[1], grid: {color: '#33433f66'},
             ticks: {maxTicksLimit: 3, color: '#9ba9a0'}},
         },
       },
@@ -112,6 +113,7 @@ function drawCharts(now) {
   }
 }
 
+let accuracyCircle;
 let map, marker, trail, lastPosition, following = true;
 const followButton = document.getElementById('follow-position');
 function setFollowing(enabled) {
@@ -131,6 +133,50 @@ if (window.L) {
   document.getElementById('tile-status').textContent = 'Map library unavailable; telemetry continues.';
   followButton.disabled = true;
 }
+let referencePoint = null;
+let referenceMarker, referenceLine;
+function updateReference(s) {
+  const status = document.getElementById('reference-status');
+  if (!map) return;
+  if (!referencePoint) {
+    if (referenceMarker) referenceMarker.remove();
+    if (referenceLine) referenceLine.remove();
+    referenceMarker = referenceLine = null;
+    status.textContent = 'No reference selected. Actual position error is unknown.';
+    return;
+  }
+  if (!referenceMarker) referenceMarker = L.circleMarker(referencePoint, {
+    radius: 7, color: '#ffb76b', fillColor: '#ffb76b', fillOpacity: 0.8,
+  }).bindTooltip('Approximate reference').addTo(map);
+  referenceMarker.setLatLng(referencePoint);
+  if (!positionValid(s)) {
+    if (referenceLine) referenceLine.remove();
+    referenceLine = null;
+    status.textContent = 'Approximate reference set · waiting for a fresh receiver position.';
+    return;
+  }
+  const point = [s.latitude, s.longitude];
+  const distance = L.latLng(point).distanceTo(referencePoint);
+  const radius = reading(s, 'horizontal_accuracy_m', true);
+  if (!referenceLine) referenceLine = L.polyline([], {color: '#ffb76b', weight: 2, dashArray: '5 6'}).addTo(map);
+  referenceLine.setLatLngs([point, referencePoint]);
+  status.textContent = `Offset to approximate reference: ${distance.toFixed(1)} m. ` +
+    (numeric(radius) && distance > radius ? 'Reference is OUTSIDE receiver uncertainty circle. ' : '') +
+    'Reference accuracy is unverified; offset includes any reference error.';
+}
+document.getElementById('reference-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const lat = document.getElementById('reference-lat').valueAsNumber;
+  const lon = document.getElementById('reference-lon').valueAsNumber;
+  if (!numeric(lat) || !numeric(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return;
+  referencePoint = [lat, lon];
+  updateReference(samples.at(-1)?.s);
+  if (map && lastPosition) { setFollowing(false); map.fitBounds([referencePoint, lastPosition], {padding: [35, 35], maxZoom: 19}); }
+});
+document.getElementById('clear-reference').addEventListener('click', () => {
+  referencePoint = null;
+  updateReference(samples.at(-1)?.s);
+});
 let tiles;
 function updateMap(s, now) {
   const valid = positionValid(s);
@@ -154,6 +200,23 @@ function updateMap(s, now) {
     status.textContent = lastPosition ? 'Position unavailable · marker shows last valid fix' : 'Waiting for a valid position. No marker placed yet.';
     if (marker) marker.setStyle({color: '#9ba9a0', fillColor: '#777'});
   }
+  const radius = reading(s, 'horizontal_accuracy_m', true);
+  const accuracyStatus = document.getElementById('accuracy-status');
+  if (valid && numeric(radius) && radius >= 0 && map) {
+    if (!accuracyCircle) accuracyCircle = L.circle([s.latitude, s.longitude], {
+      radius, color: '#69b9ff', fillColor: '#69b9ff', fillOpacity: 0.18,
+      weight: 2, interactive: false,
+    }).addTo(map);
+    accuracyCircle.setLatLng([s.latitude, s.longitude]).setRadius(radius);
+    accuracyCircle.bringToBack();
+    accuracyStatus.textContent = `Blue circle: ${formatNumber(radius)} m receiver-reported uncertainty · not measured position error · ${s.accuracy_source || 'receiver estimate'}`;
+  } else {
+    if (accuracyCircle) { accuracyCircle.remove(); accuracyCircle = null; }
+    accuracyStatus.textContent = !valid ? 'Accuracy unavailable without a fresh position fix.'
+      : !Object.hasOwn(s, 'horizontal_accuracy_m') ? 'Accuracy unavailable · restart the viewer service to request receiver accuracy.'
+      : 'Accuracy unavailable · waiting for receiver NAV-PVT or GST output.';
+  }
+  updateReference(s);
   if (trail) {
     const segments = []; let segment = []; let previousTime = null;
     for (const p of samples) {
@@ -182,6 +245,8 @@ function updateTrends(state) {
   document.getElementById('correction-rate').textContent = numeric(rate) ? rate.toFixed(0) : '--';
   document.getElementById('correction-age').textContent = numeric(s?.correction_age_s) ? s.correction_age_s.toFixed(1) : '--';
   document.getElementById('data-age').textContent = numeric(s?.age_s) ? s.age_s.toFixed(1) : '--';
+  const accuracy = reading(s, 'horizontal_accuracy_m', true);
+  document.getElementById('accuracy').textContent = numeric(accuracy) && accuracy >= 0 ? `${formatNumber(accuracy)} m` : '--';
   drawCharts(now);
   try { updateMap(s, now); } catch (error) {
     document.getElementById('map-status').textContent = `Map unavailable: ${error.message}`;

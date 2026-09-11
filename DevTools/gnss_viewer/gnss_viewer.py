@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import os
 import socket
 import threading
@@ -19,7 +20,7 @@ import pynmea2
 import serial
 from dotenv import load_dotenv
 from serial import SerialException
-from pyubx2 import UBXReader
+from pyubx2 import UBXReader, UBXMessage, POLL
 
 
 WEB_ROOT = Path(__file__).with_name("web")
@@ -46,6 +47,8 @@ class GnssState:
             "satellites_in_view": None,
             "fix_mode": "NO FIX",
             "altitude_m": None,
+            "horizontal_accuracy_m": None,
+            "accuracy_source": None,
             "hdop": None,
             "vdop": None,
             "pdop": None,
@@ -184,12 +187,20 @@ def serial_reader(state: GnssState) -> None:
                 state.set_port(port)
                 state.update(last_message="Serial connected")
                 reader = UBXReader(port)
+                last_accuracy_poll = 0.0
                 while True:
-                    raw_line, _ = reader.read()
+                    if time.monotonic() - last_accuracy_poll >= 1:
+                        # Poll only: do not change receiver configuration. Serialize
+                        # with RTCM writes so packets cannot interleave on the UART.
+                        with state.lock:
+                            port.write(UBXMessage('NAV', 'NAV-PVT', POLL).serialize())
+                        last_accuracy_poll = time.monotonic()
+                    raw_line, parsed = reader.read()
                     if not raw_line:
                         continue
                     state.append_raw_log(raw_line)
                     if not raw_line.startswith(b"$"):
+                        process_ubx(state, parsed)
                         continue
                     try:
                         sentence = pynmea2.parse(raw_line.decode("ascii", errors="ignore"), check=True)
@@ -200,6 +211,14 @@ def serial_reader(state: GnssState) -> None:
             state.set_port(None)
             state.connection_error(f"Serial unavailable: {error}")
             time.sleep(2)
+
+
+def process_ubx(state: GnssState, message: Any) -> None:
+    if getattr(message, 'identity', None) != 'NAV-PVT':
+        return
+    valid = message.gnssFixOk and message.fixType in (2, 3, 4)
+    radius = float(message.hAcc) / 1000 if valid else None
+    state.update(horizontal_accuracy_m=radius, accuracy_source='UBX NAV-PVT')
 
 
 def process_sentence(state: GnssState, sentence: Any, raw_line: str = "") -> None:
@@ -236,6 +255,12 @@ def process_sentence(state: GnssState, sentence: Any, raw_line: str = "") -> Non
             hdop=float(sentence.hdop) if getattr(sentence, "hdop", "") else None,
             vdop=float(sentence.vdop) if getattr(sentence, "vdop", "") else None,
         )
+    elif sentence.sentence_type == "GST":
+        lat = sentence.std_dev_latitude
+        lon = sentence.std_dev_longitude
+        radius = math.hypot(lat, lon) if lat is not None and lon is not None and lat >= 0 and lon >= 0 else None
+        values.update(horizontal_accuracy_m=radius if radius is not None and math.isfinite(radius) else None,
+                      accuracy_source='NMEA GST horizontal RMS')
     elif sentence.sentence_type == "GSV":
         satellites_in_view = getattr(sentence, "num_sv_in_view", "")
         if satellites_in_view:

@@ -59,16 +59,7 @@ function update(state) {
   fields.ntrip.textContent = state.ntrip_enabled
     ? `${state.ntrip_status} · ${state.corrections_bytes} B`
     : 'Not configured';
-  fields.receiverStatus.textContent = state.connected ? 'UART connected' : 'UART offline';
-  fields.receiverStatus.className = state.connected ? 'ok' : 'error';
-  fields.positionStatus.textContent = positionValid(state) ? state.fix_label : fresh(state) ? 'No fix yet' : 'Position stale';
-  fields.positionStatus.className = positionValid(state) ? 'ok' : 'waiting';
-  const correctionsWorking = state.ntrip_enabled && state.correction_age_s !== null && state.correction_age_s < 15;
-  const correctionsError = state.ntrip_enabled && state.ntrip_status.startsWith('NTRIP error');
-  fields.correctionsStatus.textContent = !state.ntrip_enabled
-    ? 'Not configured'
-    : correctionsWorking ? 'Receiving RTCM' : correctionsError ? 'Connection error' : 'Waiting';
-  fields.correctionsStatus.className = correctionsWorking ? 'ok' : correctionsError ? 'error' : 'waiting';
+  updateStatus(state);
 
   const fix = document.querySelector('#fix-label');
   fix.textContent = fresh(state) ? state.fix_label : 'STALE';
@@ -80,6 +71,45 @@ function update(state) {
   const connection = document.querySelector('#connection');
   connection.className = `connection ${state.connected ? 'online' : 'offline'}`;
   connection.innerHTML = `<span class="dot"></span>${state.connected ? 'UART connected' : 'UART disconnected'}`;
+}
+
+function updateStatus(state) {
+  function card(id, title, detail, tone = 'waiting') {
+    const label = document.getElementById(`${id}-status`);
+    label.textContent = title;
+    label.className = tone;
+    document.getElementById(`${id}-detail`).textContent = detail;
+  }
+  const valid = positionValid(state);
+  const quality = valid ? state.fix_quality : 0;
+  const modes = {
+    1: ['Regular GPS', 'Standalone satellite position. The receiver does not report a corrected solution.', 'waiting'],
+    2: ['Differential GPS', 'The receiver reports differential corrections in use. This is not an RTK fixed solution.', 'waiting'],
+    4: ['RTK fixed', 'The receiver has resolved carrier ambiguities. This is the highest RTK solution state, not a guarantee of true accuracy.', 'ok'],
+    5: ['RTK float', 'The receiver is using RTK corrections, but carrier ambiguities are not fixed. Position can still drift significantly.', 'waiting'],
+  };
+  const mode = !state ? ['Viewer offline', 'Cannot reach the viewer. Connection and fix states are unknown.', 'error']
+    : !state.connected ? ['Receiver disconnected', 'Check the receiver power and serial connection.', 'error']
+    : !fresh(state) ? ['Receiver data stale', 'Serial connection is open, but fresh receiver readings are missing.', 'error']
+    : !valid ? ['No position fix', 'Receiver is connected but has no fresh valid position. Check antenna sky view.', 'waiting']
+    : modes[quality] || [state.fix_label || 'Other fix', 'Receiver reports another position mode; RTK fixed is not confirmed.', 'waiting'];
+  document.getElementById('solution-title').textContent = mode[0];
+  document.getElementById('solution-detail').textContent = mode[1];
+  document.getElementById('solution-summary').className = `solution-summary ${mode[2]}`;
+  card('receiver', !state ? 'Unknown' : !state.connected ? 'Disconnected' : fresh(state) ? 'Live data' : 'Data stale',
+    !state ? 'Viewer unreachable' : state.connected ? `${state.device} · ${value(state.age_s, ' s since update')}` : 'Check UART and power',
+    fresh(state) ? 'ok' : 'error');
+  card('position', mode[0], quality === 4 ? 'Carrier ambiguities fixed' : quality === 5 ? 'Corrections in use · not fixed' : quality === 2 ? 'Differential corrections in use' : quality === 1 ? 'No corrected fix reported' : 'No confirmed live solution', mode[2]);
+  const ntrip = state?.ntrip_status || '';
+  const serviceError = /error/i.test(ntrip);
+  const serviceConnected = /^(Receiving RTCM|Connected)/.test(ntrip);
+  const receiving = Boolean(state?.ntrip_enabled && numeric(state.correction_age_s) && state.correction_age_s < 15);
+  card('service', !state ? 'Unknown' : !state.ntrip_enabled ? 'Not configured' : serviceError ? 'Connection error' : serviceConnected ? 'Connected' : 'Connecting / waiting',
+    !state ? 'Viewer unreachable' : !state.ntrip_enabled ? 'No NTRIP account configured' : ntrip,
+    serviceError ? 'error' : serviceConnected ? 'ok' : 'waiting');
+  card('corrections', !state ? 'Unknown' : !state.ntrip_enabled ? 'Not configured' : receiving ? 'Arriving at receiver' : 'No recent data',
+    !state ? 'Viewer unreachable' : receiving ? `${state.correction_age_s.toFixed(1)} s ago · ${(state.corrections_bytes / 1024).toFixed(1)} KiB forwarded` : 'Data delivery does not by itself confirm an RTK fix',
+    receiving ? 'ok' : 'waiting');
 }
 
 async function poll() {
@@ -110,6 +140,7 @@ async function poll() {
   }
   try {
     if (state) update(state);
+    else updateStatus(null);
     updateTrends(state);
   } catch (error) {
     document.querySelector('#message').textContent = `Display error: ${error.message}. Try reloading the page.`;

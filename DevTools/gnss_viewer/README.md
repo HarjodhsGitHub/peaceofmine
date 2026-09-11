@@ -131,3 +131,36 @@ python -m unittest -v test_dashboard.py
 This test uses a temporary localhost server and synthetic GGA data, blocks
 external tile requests, and checks charts, missing-message explanations, mobile
 layout, stale positions, HTTP failures, and recovery without real hardware.
+
+### Position accuracy circle
+
+The blue map circle uses the receiver's horizontal accuracy estimate as its
+radius in metres. A numeric readout and rolling chart accompany it. It is an
+estimate, not a guaranteed error bound; no 95% confidence is implied. Small RTK
+radii may be smaller than the position marker at the current map zoom.
+
+The viewer polls UBX NAV-PVT once per second over the existing UART without
+changing saved receiver configuration. UBX input/output must be available on
+that interface. NAV-PVT hAcc is converted from millimetres to metres following
+the [u-blox interface description](https://cdn.sparkfun.com/assets/learn_tutorials/8/5/6/ZED-F9P_UBX_NMEA_and_RTCM_protocols.pdf).
+NMEA GST is also supported: the radius is sqrt(latitude_stddev² + longitude_stddev²),
+labelled horizontal RMS. HDOP is never treated as metres. Missing or stale
+accuracy, a lost fix, or disconnection removes the circle.
+
+Restart the Python viewer after this update, then reload the browser to begin
+requesting accuracy data. Older running backends cannot supply this new field.
+
+The map also compares the receiver with an editable approximate reference,
+disabled by default; no fixed offset or coordinate correction is applied. Orange marks the reference
+and the connecting line; the displayed distance is an offset to that reference,
+not a surveyed error measurement. Clear the reference when moving the antenna
+or enter its new known position. Reference changes apply to the current page.
+A warning identifies references outside the receiver uncertainty circle; the
+circle is not enlarged to disguise an overconfident receiver estimate.
+
+The dashboard separates receiver connectivity, NTRIP service connection, recent
+RTCM delivery and the receiver's reported position solution. The large summary
+identifies Regular GPS, Differential GPS, RTK float, RTK fixed, missing fix or
+stale/offline data. Correction delivery is not proof of an RTK fixed solution;
+float remains amber and explicitly notes that position can drift. These status
+indicators use existing telemetry and need only a browser reload.
