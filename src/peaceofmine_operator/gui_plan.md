@@ -33,6 +33,13 @@ deadman, the 0.25 s command watchdog, and the 0.5 s zero-command stop tail in
 `_drive_watchdog`, backed independently by `twist_consumer`'s own
 `cmd_timeout`.
 
+**Xbox 360 / browser teleop** is implemented. The pad is on the GUI computer
+(Gamepad API), not SVEA USB. Auto mapping covers the browser `standard`
+layout and Linux xpad trigger axes; the Drive panel shows a live pad graphic
+and whether `/<ns>/cmd_vel` is actually publishing. Operator usage is in
+[`gui.md`](gui.md). Do not regress the localhost-only Gamepad API caveat
+(LAN `http://` needs TLS).
+
 ## Target architecture
 
 ```mermaid
