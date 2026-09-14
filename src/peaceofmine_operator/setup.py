@@ -12,7 +12,7 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', [f'resource/{package_name}']),
         (f'share/{package_name}', ['package.xml']),
-        (f'share/{package_name}/launch', glob('launch/*.py')),
+        (f'share/{package_name}/launch', glob('launch/*.py') + glob('launch/*.xml')),
         (f'share/{package_name}/dashboard', glob('dashboard/*')),
         (f'lib/{package_name}', glob('scripts/*.py')),
     ],

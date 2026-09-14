@@ -16,12 +16,39 @@ drivers means replacing `simulated_payload.py` alone.
 Build the workspace in the SVEA container, source the overlay, then run:
 
 ```bash
-ros2 launch peaceofmine_operator operator_sim.launch.py
+ros2 launch peaceofmine_operator operator.launch.xml
 ```
 
-Open the dashboard on port `8080`. The launch starts without TLS for local
+Open the dashboard on port `8080`. The XML file is the editable development
+configuration: its arguments and defaults select simulation or hardware
+without requiring a long command. The default profile is fully simulated.
+The launch starts without TLS for local
 debugging; remote operation must supply both `tls_cert` and `tls_key`, because
 the browser Gamepad API requires a secure context on non-localhost origins.
+
+For a persistent local setup, edit the defaults near the top of
+`launch/operator.launch.xml`. The main switches are `is_sim`,
+`simulate_payload`, and `use_camera`. A real vehicle should use
+`is_sim="false"`; this starts the SVEA low-level interface, so verify the serial
+device and keep the vehicle safe before launching it. A USB camera can be used
+with either vehicle mode by setting `use_camera="true"`; it requires the
+`usb_cam` ROS package and container access to `camera_device`. It publishes ROS
+images for onboard integration work.
+
+The Settings dialog is split into **Controls**, **Cameras**, and **Connection**
+tabs. The Cameras tab independently assigns either Raspberry Pi ROS camera to
+the main preview or optional inset preview. It can also use cameras connected
+to the computer running the browser; click **Allow laptop cameras** to grant
+access and populate those device names. Browser camera access and Gamepad input
+require HTTPS on a remote address; localhost is treated as secure by browsers.
+
+The default Raspberry Pi camera mapping is `/dev/video0` (Logitech C922) to
+`/self/camera_front/image_raw` and `/dev/video2` (H264 USB Camera) to
+`/self/camera_auxiliary/image_raw`. `web_video_server` converts those ROS image
+topics into browser streams, and the operator gateway proxies them on the same
+origin as the dashboard. If the desktop PipeWire service owns a video node,
+`usb_cam` cannot open it; close applications using that camera or stop its
+camera session before starting the ROS stack.
 
 `fixture_angle_offset_deg` sets the centre angle of the forward fixture, for
 example `fixture_angle_offset_deg:=10.0`.
@@ -84,3 +111,51 @@ drive interface. A real camera replaces the virtual canvas with a WebRTC
 `sim_svea.py` divides the incoming actuation percentage by
 `PERC_TO_LLI_COEFF = 1.27`, so a commanded 0.8 m/s settles near 0.63 m/s in
 simulation. The real vehicle does not have this scaling.
+
+## Client input settings and wheel setup
+
+Open **Settings** for the input lab. Opening it sends a stop and disarms this
+client's control lease; previews never drive the rover. Closing it requires
+arming again. Losing browser focus or hiding the page also stops and disarms.
+
+Choose one of three schemes:
+
+- **Xbox / standard gamepad**: explicitly select a browser device with the
+  `standard` mapping. Left stick steers, RT drives forward, LT reverses, RB is
+  the deadman. Non-standard mappings are blocked in this scheme.
+- **WASD keyboard**: focus the test button to preview keys, or close Settings
+  and focus the forward camera to drive while holding Shift.
+- **Steering wheel**: select the wheel, inspect raw axes and buttons, then set
+  steering, forward pedal, reverse pedal, and deadman indices. Invert axes as
+  needed. Defaults are starting points, not a verified G27 mapping. Pedals
+  must use distinct axes spanning -1 to +1; combined pedal axes are rejected.
+  The reverse pedal commands reverse motion, not a separate vehicle brake.
+
+Before arming, verify released pedals produce zero speed, steering is centered,
+full pedal travel reaches the expected signed speed, and only the chosen
+button activates the deadman. Preferences are stored locally in this browser;
+device selection is deliberately required again after a page reload.
+
+Connect the wheel to the Chrome client computer. Use HTTPS when accessing a
+remote gateway (localhost is also supported), focus the page, and press a
+controller button to expose the device through the Gamepad API. Seeing the
+G27 in USB tools as `046d:c294` does not establish browser compatibility:
+OS drivers and VM USB passthrough can affect what Chrome sees. There is no
+Gamepad API device permission picker. Raw WebHID driving and force feedback
+are not implemented.
+
+Useful upstream diagnostics and examples:
+
+- [Chrome Gamepad tester](https://googlechrome.github.io/samples/gamepad-demo/)
+- [Tester source on GitHub](https://github.com/GoogleChrome/samples/tree/gh-pages/gamepad-demo)
+- [Chrome WebHID documentation](https://developer.chrome.com/docs/capabilities/hid)
+
+Run browser regression checks with Chromium installed:
+
+```bash
+python3 -m unittest discover -s src/peaceofmine_operator/test -v
+```
+
+The test uses synthetic devices in headless Chromium; actual G27 enumeration,
+axis mapping, and ROS simulation still need verification in the deployment
+environment before hardware driving.

@@ -1,0 +1,106 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Edit these defaults for this setup, then run:
+       ros2 launch peaceofmine_operator operator.launch.xml
+       Stop the previous launch before switching vehicle modes. -->
+  <arg name="name" default="self"/>
+  <arg name="is_sim" default="true"/>
+  <!-- Payload simulation follows the vehicle by default. False means external
+       payload drivers must be launched separately; none are bundled here. -->
+  <arg name="simulate_payload" default="$(var is_sim)"/>
+  <arg name="host" default="0.0.0.0"/>
+  <arg name="port" default="8080"/>
+  <!-- HTTPS is required for browser controllers on a remote host. -->
+  <arg name="tls_cert" default=""/>
+  <arg name="tls_key" default=""/>
+  <arg name="initial_pose_x" default="0.0"/>
+  <arg name="initial_pose_y" default="0.0"/>
+  <arg name="initial_pose_a" default="0.0"/>
+  <arg name="fixture_angle_offset_deg" default="0.0"/>
+
+  <!-- Hardware configuration. Enable localization when its sensors are ready.
+       Alternatively supply odometry from an external localization launch. -->
+  <arg name="lli_serial_device" default="/dev/serial/by-id/usb-SVEA_PX4_AUTOPILOT_0-if00"/>
+  <arg name="lli_baud_rate" default="921600"/>
+  <arg name="use_localization" default="false"/>
+  <arg name="is_indoor" default="true"/>
+  <arg name="use_lidar" default="false"/>
+  <arg name="use_rtk" default="false"/>
+  <arg name="odometry_topic" default="odometry/local"/>
+  <arg name="max_velocity" default="0.8"/>
+
+  <!-- Raspberry Pi cameras. usb_cam 0.8.1 rejects the host's relative
+       /dev/v4l/by-id symlinks, so use the verified capture nodes here. -->
+  <arg name="use_cameras" default="true"/>
+  <arg name="front_camera_device" default="/dev/video0"/>
+  <arg name="auxiliary_camera_device" default="/dev/video2"/>
+  <arg name="camera_width" default="640"/>
+  <arg name="camera_height" default="480"/>
+  <arg name="front_camera_framerate" default="30.0"/>
+  <arg name="auxiliary_camera_framerate" default="30.0"/>
+  <arg name="front_camera_pixel_format" default="mjpeg2rgb"/>
+  <arg name="auxiliary_camera_pixel_format" default="yuyv2rgb"/>
+  <arg name="camera_stream_port" default="8081"/>
+
+  <include file="$(find-pkg-share svea_core)/launch/svea.launch.py">
+    <arg name="name" value="$(var name)"/>
+    <arg name="is_sim" value="$(var is_sim)"/>
+    <arg name="initial_pose_x" value="$(var initial_pose_x)"/>
+    <arg name="initial_pose_y" value="$(var initial_pose_y)"/>
+    <arg name="initial_pose_a" value="$(var initial_pose_a)"/>
+    <arg name="lli_serial_device" value="$(var lli_serial_device)"/>
+    <arg name="lli_baud_rate" value="$(var lli_baud_rate)"/>
+    <arg name="use_localization" value="$(var use_localization)"/>
+    <arg name="is_indoor" value="$(var is_indoor)"/>
+    <arg name="use_lidar" value="$(var use_lidar)"/>
+    <arg name="use_rtk" value="$(var use_rtk)"/>
+  </include>
+
+  <group>
+    <push_ros_namespace namespace="$(var name)"/>
+    <node pkg="svea_examples" exec="twist_consumer.py" name="operator_twist_consumer" output="screen">
+      <param name="twist_top" value="cmd_vel"/>
+      <param name="max_velocity" value="$(var max_velocity)"/>
+      <param name="cmd_timeout" value="0.25"/>
+    </node>
+    <node if="$(var simulate_payload)" pkg="peaceofmine_operator" exec="simulated_payload.py" name="simulated_payload" output="screen">
+      <param name="odometry_topic" value="$(var odometry_topic)"/>
+      <param name="fixture_angle_offset_deg" value="$(var fixture_angle_offset_deg)"/>
+    </node>
+    <node pkg="peaceofmine_operator" exec="operator_gateway.py" name="operator_gateway" output="screen">
+      <param name="host" value="$(var host)"/>
+      <param name="port" value="$(var port)"/>
+      <param name="tls_cert" value="$(var tls_cert)" type="str"/>
+      <param name="tls_key" value="$(var tls_key)" type="str"/>
+      <param name="cmd_vel_topic" value="cmd_vel"/>
+      <param name="odometry_topic" value="$(var odometry_topic)"/>
+      <param name="max_velocity_mps" value="$(var max_velocity)"/>
+      <param name="camera_stream_base_url" value="http://127.0.0.1:$(var camera_stream_port)"/>
+      <param name="front_camera_topic" value="/$(var name)/camera_front/image_raw"/>
+      <param name="auxiliary_camera_topic" value="/$(var name)/camera_auxiliary/image_raw"/>
+      <param name="front_camera_info_topic" value="/$(var name)/camera_front/camera_info"/>
+      <param name="auxiliary_camera_info_topic" value="/$(var name)/camera_auxiliary/camera_info"/>
+    </node>
+    <node if="$(var use_cameras)" pkg="usb_cam" exec="usb_cam_node_exe" name="usb_camera" namespace="camera_front" output="screen">
+      <param name="video_device" value="$(var front_camera_device)"/>
+      <param name="image_width" value="$(var camera_width)"/>
+      <param name="image_height" value="$(var camera_height)"/>
+      <param name="framerate" value="$(var front_camera_framerate)"/>
+      <param name="pixel_format" value="$(var front_camera_pixel_format)"/>
+      <param name="camera_name" value="logitech_c922"/>
+      <param name="frame_id" value="$(var name)/camera_front_link"/>
+    </node>
+    <node if="$(var use_cameras)" pkg="usb_cam" exec="usb_cam_node_exe" name="usb_camera" namespace="camera_auxiliary" output="screen">
+      <param name="video_device" value="$(var auxiliary_camera_device)"/>
+      <param name="image_width" value="$(var camera_width)"/>
+      <param name="image_height" value="$(var camera_height)"/>
+      <param name="framerate" value="$(var auxiliary_camera_framerate)"/>
+      <param name="pixel_format" value="$(var auxiliary_camera_pixel_format)"/>
+      <param name="camera_name" value="h264_usb_camera"/>
+      <param name="frame_id" value="$(var name)/camera_auxiliary_link"/>
+    </node>
+    <node if="$(var use_cameras)" pkg="web_video_server" exec="web_video_server" name="camera_stream_server" output="screen">
+      <param name="port" value="$(var camera_stream_port)"/>
+    </node>
+  </group>
+</launch>

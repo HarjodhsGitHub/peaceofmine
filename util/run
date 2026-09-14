@@ -27,6 +27,16 @@ if isempty ARGS; then
     ARGS="--name $CONTAINER_NAME"
 fi
 
+# A manually stopped container still reserves its name, even with --rm.
+if docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+    CONTAINER_STATUS="$(docker container inspect --format '{{.State.Status}}' "$CONTAINER_NAME")"
+    if [ "$CONTAINER_STATUS" = "running" ]; then
+        echo "Error: container \"$CONTAINER_NAME\" is already running"
+        exit 1
+    fi
+    docker container rm "$CONTAINER_NAME" >/dev/null
+fi
+
 # Other docker arguments
 append ARGS \
     -it \

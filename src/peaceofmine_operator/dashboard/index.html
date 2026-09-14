@@ -8,6 +8,18 @@
   <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
+  <section id="connection-overlay" class="connection-overlay" role="status" aria-live="polite">
+    <div class="connection-card">
+      <span class="connection-pulse" aria-hidden="true"></span>
+      <p class="eyebrow">PeaceOfMine link</p>
+      <h2 id="connection-title">Connecting to operator stack</h2>
+      <p id="connection-detail">Waiting for the gateway on this Raspberry Pi.</p>
+      <div class="connection-actions">
+        <button id="retry-connection" type="button" class="primary">Retry now</button>
+        <button id="offline-settings" type="button" class="quiet">Input settings</button>
+      </div>
+    </div>
+  </section>
   <main>
     <header>
       <div>
@@ -34,7 +46,14 @@
     <section class="workspace">
       <section id="camera-panel" class="viewport panel">
         <canvas id="forward-view" tabindex="0" aria-label="Virtual rover camera view. Click to focus for keyboard driving input."></canvas>
-        <div class="camera-label">VIRTUAL FORWARD CAMERA</div>
+        <video id="forward-video" tabindex="0" autoplay muted playsinline class="camera-feed hidden" aria-label="Selected forward camera"></video>
+        <img id="forward-network-camera" tabindex="0" class="camera-feed hidden" alt="Selected Raspberry Pi camera stream">
+        <video id="aux-video" autoplay muted playsinline class="aux-camera hidden" aria-label="Selected auxiliary camera"></video>
+        <img id="aux-network-camera" class="aux-camera hidden" alt="Selected Raspberry Pi auxiliary camera stream">
+        <div class="camera-label" id="forward-camera-label">VIRTUAL FORWARD CAMERA</div>
+        <div class="camera-latency hidden" id="forward-camera-latency">CAMERA --</div>
+        <div class="aux-camera-label hidden" id="aux-camera-label">AUX CAMERA</div>
+        <div class="aux-camera-latency hidden" id="aux-camera-latency">--</div>
         <div id="input-lock" class="input-lock hidden">CLICK CAMERA FOR INPUT</div>
         <div class="speed-readout">
           <span>ACTUAL SPEED</span>
@@ -55,7 +74,7 @@
             <button id="arm" class="primary">Arm</button>
             <button id="estop" class="danger">Disarm / stop</button>
           </div>
-          <p class="safety-note">Hold the right bumper to send throttle and steering. Releasing it stops the rover.</p>
+          <p id="drive-help" class="safety-note">Hold the right bumper to send throttle and steering. Releasing it stops the rover.</p>
         </section>
 
         <section class="panel detector-panel">
@@ -125,14 +144,77 @@
         </div>
         <button value="close" class="quiet" aria-label="Close settings">Close</button>
       </div>
+      <nav class="settings-tabs" aria-label="Settings sections" role="tablist">
+        <button type="button" class="settings-tab active" role="tab" aria-selected="true" aria-controls="settings-input" data-settings-tab="input">Controls</button>
+        <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-cameras" data-settings-tab="cameras">Cameras</button>
+        <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-connection" data-settings-tab="connection">Connection</button>
+      </nav>
+      <section id="settings-input" class="settings-panel active" role="tabpanel" data-settings-panel="input">
       <label for="control-source">Control source</label>
       <select id="control-source">
-        <option value="controller">Controller</option>
+        <option value="controller">Xbox / standard gamepad</option>
+        <option value="wheel">Steering wheel</option>
         <option value="keyboard">WASD keyboard</option>
       </select>
       <label for="steering-sensitivity">Steering sensitivity <output id="sensitivity-value">100%</output></label>
       <input id="steering-sensitivity" type="range" min="50" max="150" value="100" step="5">
-      <p class="dialog-help">Controller: left stick, triggers, and right bumper deadman. Keyboard: click the forward camera to focus it, then use WASD while holding Shift as the deadman. Clicking away releases the input.</p>
+      <p class="diagnostic-banner">INPUT LAB · Driving is stopped and disarmed while Settings is open. Re-arm after closing.</p>
+      <p id="browser-status" class="dialog-help"></p>
+      <section id="device-settings">
+        <label for="input-device">Browser device</label>
+        <select id="input-device"><option value="">Select a connected device</option></select>
+        <p id="device-info" class="dialog-help"></p>
+        <p class="dialog-help">Connect by USB or Bluetooth, then press a controller button with this page focused. Gamepad devices appear automatically; there is no Chrome pairing prompt for this API.</p>
+      </section>
+      <section id="wheel-settings" class="hidden">
+        <h3>Wheel mapping</h3>
+        <p class="dialog-help">Use the raw input monitor to find each axis and button. Indices start at 0. Pedals must have separate axes; check that each reads 0 released and 1 fully pressed.</p>
+        <div id="wheel-mapping" class="mapping-grid"></div>
+      </section>
+      <button type="button" id="keyboard-test">Click here, then test WASD + Shift</button>
+      <div id="key-preview" class="key-preview" aria-label="Keyboard input preview"></div>
+      <div class="input-preview">
+        <svg viewBox="0 0 160 160" role="img" aria-label="Steering input preview"><g id="steering-preview" transform="rotate(0 80 80)"><circle cx="80" cy="80" r="65"/><path d="M15 80 H145 M80 80 V145 M80 15 V35"/><circle cx="80" cy="80" r="16"/></g></svg>
+        <div><h3>Mapped input</h3><pre id="mapped-input"></pre><p class="dialog-help">Preview before drive gating and smoothing.</p></div>
+      </div>
+      <h3>Raw browser input</h3>
+      <div id="raw-axes" class="raw-axes"></div>
+      <div id="raw-buttons" class="raw-buttons"></div>
+      <details><summary>Chrome / G27 troubleshooting</summary>
+        <p class="dialog-help">Use HTTPS or localhost. For a remote rover, connect the wheel to the computer running Chrome. USB visibility (including 046d:c294) does not prove that the OS driver or browser exposes its controls. If no device appears, check the OS game-controller panel, USB passthrough if using a VM, and try another USB port. Non-standard wheels need manual mapping here. Force feedback and raw WebHID driving are not implemented.</p>
+        <p class="dialog-help"><a href="https://googlechrome.github.io/samples/gamepad-demo/" target="_blank" rel="noopener">Chrome Gamepad tester</a> · <a href="https://github.com/GoogleChrome/samples/tree/gh-pages/gamepad-demo" target="_blank" rel="noopener">GitHub sample</a> · <a href="https://developer.chrome.com/docs/capabilities/hid" target="_blank" rel="noopener">Chrome WebHID documentation</a></p>
+      </details>
+      </section>
+      <section id="settings-cameras" class="settings-panel" role="tabpanel" data-settings-panel="cameras" hidden>
+        <div class="settings-section-heading">
+          <div>
+            <h3>Camera previews</h3>
+            <p class="dialog-help">Assign a Raspberry Pi ROS camera or a camera connected directly to this browser.</p>
+          </div>
+          <button id="refresh-cameras" type="button" class="quiet">Allow laptop cameras</button>
+        </div>
+        <div class="mapping-grid">
+          <label for="forward-camera-source">Main preview
+            <select id="forward-camera-source"><option value="virtual">Virtual forward camera</option></select>
+          </label>
+          <label for="aux-camera-source">Inset preview
+            <select id="aux-camera-source"><option value="off">Off</option></select>
+          </label>
+        </div>
+        <p id="camera-source-status" class="dialog-help">Checking camera sources…</p>
+        <div class="source-help">
+          <strong>Raspberry Pi cameras</strong>
+          <span>Come through ROS and work across the network.</span>
+          <strong>Laptop cameras</strong>
+          <span>Require browser permission and HTTPS or localhost.</span>
+        </div>
+      </section>
+      <section id="settings-connection" class="settings-panel" role="tabpanel" data-settings-panel="connection" hidden>
+        <h3>Raspberry Pi connection</h3>
+        <p id="settings-connection-state" class="connection-summary">Connecting…</p>
+        <p class="dialog-help">The dashboard reconnects automatically. If the gateway or ROS launch stops, controls are disabled and a disconnect screen appears.</p>
+        <button id="settings-retry-connection" type="button" class="primary">Retry connection</button>
+      </section>
     </form>
   </dialog>
 

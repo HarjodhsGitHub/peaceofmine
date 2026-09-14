@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 try:
+    import aiohttp
     from aiohttp import WSMsgType, web
 except ImportError as error:  # pragma: no cover - depends on target image
     raise RuntimeError('aiohttp is required; install the workspace requirements first.') from error
@@ -30,6 +31,8 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import CameraInfo
 from std_msgs.msg import Bool, Float32
 
 # Authoritative actuator limits. The dashboard reads these from telemetry so
@@ -72,6 +75,11 @@ class OperatorGateway(Node):
         self.declare_parameter('fixture_sweep_speed_state_topic', 'fixture/sweep_speed_deg_s_state')
         self.declare_parameter('probe_fault_topic', 'probe/fault')
         self.declare_parameter('probe_target_topic', 'probe/target_depth_mm')
+        self.declare_parameter('camera_stream_base_url', 'http://127.0.0.1:8081')
+        self.declare_parameter('front_camera_topic', '/self/camera_front/image_raw')
+        self.declare_parameter('auxiliary_camera_topic', '/self/camera_auxiliary/image_raw')
+        self.declare_parameter('front_camera_info_topic', '/self/camera_front/camera_info')
+        self.declare_parameter('auxiliary_camera_info_topic', '/self/camera_auxiliary/camera_info')
         self.declare_parameter('command_timeout_s', 0.25)
         self.declare_parameter('max_velocity_mps', 0.8)
         self.declare_parameter('max_yaw_rate_rad_s', 1.4)
@@ -104,6 +112,10 @@ class OperatorGateway(Node):
         self._speed = 0.0
         self._was_detected = False
         self._detections: list[dict[str, float]] = []
+        self._camera_frames = {
+            'front': {'last_frame': 0.0, 'window_started': time.monotonic(), 'window_frames': 0, 'fps': 0.0},
+            'auxiliary': {'last_frame': 0.0, 'window_started': time.monotonic(), 'window_frames': 0, 'fps': 0.0},
+        }
 
         self._max_velocity = float(self.get_parameter('max_velocity_mps').value)
         self._max_yaw_rate = float(self.get_parameter('max_yaw_rate_rad_s').value)
@@ -124,6 +136,13 @@ class OperatorGateway(Node):
         self.create_subscription(Bool, str(self.get_parameter('fixture_sweep_enabled_state_topic').value), self._sweep_enabled_cb, 10)
         self.create_subscription(Float32, str(self.get_parameter('fixture_sweep_speed_state_topic').value), self._sweep_speed_cb, 10)
         self.create_subscription(Bool, str(self.get_parameter('probe_fault_topic').value), self._probe_fault_cb, 10)
+        # CameraInfo arrives once per captured frame but is tiny. Subscribing
+        # this Python gateway to raw RGB images caused costly full-frame DDS
+        # copies and starved both the dashboard and MJPEG proxy.
+        self.create_subscription(CameraInfo, str(self.get_parameter('front_camera_info_topic').value),
+                                 lambda _: self._camera_frame_cb('front'), qos_profile_sensor_data)
+        self.create_subscription(CameraInfo, str(self.get_parameter('auxiliary_camera_info_topic').value),
+                                 lambda _: self._camera_frame_cb('auxiliary'), qos_profile_sensor_data)
         self.create_timer(0.05, self._drive_watchdog)
 
     ## ROS callbacks ##
@@ -185,6 +204,18 @@ class OperatorGateway(Node):
         with self._lock:
             self._probe_fault = bool(message.data)
 
+    def _camera_frame_cb(self, camera: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            sample = self._camera_frames[camera]
+            sample['last_frame'] = now
+            sample['window_frames'] += 1
+            elapsed = now - sample['window_started']
+            if elapsed >= 1.0:
+                sample['fps'] = sample['window_frames'] / elapsed
+                sample['window_frames'] = 0
+                sample['window_started'] = now
+
     def _drive_watchdog(self) -> None:
         now = time.monotonic()
         with self._lock:
@@ -208,7 +239,15 @@ class OperatorGateway(Node):
 
     def snapshot(self) -> dict[str, Any]:
         """Telemetry shared by every client, without the per-client lease flag."""
+        now = time.monotonic()
         with self._lock:
+            cameras = {}
+            for name, sample in self._camera_frames.items():
+                if sample['last_frame']:
+                    cameras[name] = {
+                        'frame_age_ms': round((now - sample['last_frame']) * 1000),
+                        'fps': round(sample['fps'], 1),
+                    }
             return {
                 'type': 'state',
                 'drive': {
@@ -243,6 +282,7 @@ class OperatorGateway(Node):
                     'fault': self._probe_fault,
                 },
                 'detections': list(self._detections),
+                'cameras': cameras,
             }
 
     def connected_sockets(self) -> list[web.WebSocketResponse]:
@@ -359,7 +399,7 @@ def build_app(node: OperatorGateway) -> web.Application:
     dashboard = dashboard_directory()
 
     async def index_handler(_: web.Request) -> web.FileResponse:
-        return web.FileResponse(dashboard / 'index.html')
+        return web.FileResponse(dashboard / 'index.html', headers={'Cache-Control': 'no-store'})
 
     async def asset_handler(request: web.Request) -> web.FileResponse:
         # ament's symlink install makes the packaged assets symlinks during
@@ -368,7 +408,43 @@ def build_app(node: OperatorGateway) -> web.Application:
         filename = request.match_info['filename']
         if filename not in {'app.js', 'style.css'}:
             raise web.HTTPNotFound()
-        return web.FileResponse(dashboard / filename)
+        return web.FileResponse(dashboard / filename, headers={'Cache-Control': 'no-store'})
+
+    async def camera_handler(request: web.Request) -> web.StreamResponse:
+        topics = {
+            'front': str(node.get_parameter('front_camera_topic').value),
+            'auxiliary': str(node.get_parameter('auxiliary_camera_topic').value),
+        }
+        topic = topics.get(request.match_info['camera'])
+        if topic is None:
+            raise web.HTTPNotFound()
+        base_url = str(node.get_parameter('camera_stream_base_url').value).rstrip('/')
+        timeout = aiohttp.ClientTimeout(total=None, sock_connect=4.0, sock_read=None)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    f'{base_url}/stream',
+                    params={
+                        'topic': topic,
+                        'type': 'mjpeg',
+                        'quality': '60',
+                        'qos_profile': 'default',
+                    },
+                ) as upstream:
+                    if upstream.status != 200:
+                        raise web.HTTPBadGateway(text=f'Camera stream returned HTTP {upstream.status}.')
+                    response = web.StreamResponse(
+                        headers={
+                            'Content-Type': upstream.headers.get('Content-Type', 'multipart/x-mixed-replace'),
+                            'Cache-Control': 'no-store',
+                            'X-Accel-Buffering': 'no',
+                        })
+                    await response.prepare(request)
+                    async for chunk in upstream.content.iter_any():
+                        await response.write(chunk)
+                    return response
+        except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+            raise web.HTTPBadGateway(text=f'Camera streaming service unavailable: {error}') from error
 
     async def socket_handler(request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=10.0)
@@ -400,6 +476,7 @@ def build_app(node: OperatorGateway) -> web.Application:
 
     app.router.add_get('/', index_handler)
     app.router.add_get('/assets/{filename}', asset_handler)
+    app.router.add_get('/camera/{camera}', camera_handler)
     app.router.add_get('/ws', socket_handler)
     return app
 

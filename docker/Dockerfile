@@ -33,6 +33,7 @@ RUN --mount=type=bind,source=./requirements.txt,target=/tmp/requirements.txt,rea
 RUN --mount=type=bind,source=./src,target=./src,readonly /bin/bash <<EOF
 set -e
 source /opt/svea/$ROSDISTRO/setup.bash
+apt-get update -y
 rosdep install \
     --rosdistro $ROSDISTRO \
     --from-paths src \
@@ -40,4 +41,3 @@ rosdep install \
     -qry
 colcon build --symlink-install
 EOF
-
