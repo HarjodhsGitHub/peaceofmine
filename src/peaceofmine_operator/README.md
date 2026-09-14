@@ -42,8 +42,11 @@ to the computer running the browser; click **Allow laptop cameras** to grant
 access and populate those device names. Browser camera access and Gamepad input
 require HTTPS on a remote address; localhost is treated as secure by browsers.
 
-The default Raspberry Pi camera mapping is `/dev/video0` (Logitech C922) to
-`/self/camera_front/image_raw` and `/dev/video2` (H264 USB Camera) to
+The default camera mapping discovers the Logitech C922 (`046d:085c`) and H264
+USB Camera (`05a3:9422`) through libudev, so Linux may renumber their
+`/dev/video*` nodes without breaking the launch. Set `front_camera_device` or
+`auxiliary_camera_device` to an explicit capture node to override discovery.
+Their topics are `/self/camera_front/image_raw` and
 `/self/camera_auxiliary/image_raw`. `web_video_server` converts those ROS image
 topics into browser streams, and the operator gateway proxies them on the same
 origin as the dashboard. If the desktop PipeWire service owns a video node,

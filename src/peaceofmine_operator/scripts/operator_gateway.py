@@ -9,6 +9,7 @@ independent safety layers.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import os
@@ -500,7 +501,7 @@ async def broadcast_telemetry(node: OperatorGateway) -> None:
 
 
 async def start_server(node: OperatorGateway) -> None:
-    runner = web.AppRunner(build_app(node))
+    runner = web.AppRunner(build_app(node), shutdown_timeout=1.0)
     await runner.setup()
 
     cert = str(node.get_parameter('tls_cert').value)
@@ -521,6 +522,8 @@ async def start_server(node: OperatorGateway) -> None:
             await asyncio.sleep(0.5)
     finally:
         broadcaster.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await broadcaster
         await runner.cleanup()
 
 
@@ -534,9 +537,10 @@ def main() -> None:
     try:
         asyncio.run(start_server(node))
     finally:
-        executor.shutdown()
+        executor.shutdown(timeout_sec=2.0)
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

@@ -32,8 +32,8 @@
   <!-- Raspberry Pi cameras. usb_cam 0.8.1 rejects the host's relative
        /dev/v4l/by-id symlinks, so use the verified capture nodes here. -->
   <arg name="use_cameras" default="true"/>
-  <arg name="front_camera_device" default="/dev/video0"/>
-  <arg name="auxiliary_camera_device" default="/dev/video2"/>
+  <arg name="front_camera_device" default="auto"/>
+  <arg name="auxiliary_camera_device" default="auto"/>
   <arg name="camera_width" default="640"/>
   <arg name="camera_height" default="480"/>
   <arg name="front_camera_framerate" default="30.0"/>
@@ -81,7 +81,10 @@
       <param name="front_camera_info_topic" value="/$(var name)/camera_front/camera_info"/>
       <param name="auxiliary_camera_info_topic" value="/$(var name)/camera_auxiliary/camera_info"/>
     </node>
-    <node if="$(var use_cameras)" pkg="usb_cam" exec="usb_cam_node_exe" name="usb_camera" namespace="camera_front" output="screen">
+    <node if="$(var use_cameras)" pkg="peaceofmine_operator" exec="usb_camera_auto.py" name="usb_camera" namespace="camera_front" output="screen">
+      <env name="POM_CAMERA_VENDOR_ID" value="046d"/>
+      <env name="POM_CAMERA_PRODUCT_ID" value="085c"/>
+      <env name="POM_CAMERA_DEVICE" value="$(var front_camera_device)"/>
       <param name="video_device" value="$(var front_camera_device)"/>
       <param name="image_width" value="$(var camera_width)"/>
       <param name="image_height" value="$(var camera_height)"/>
@@ -90,7 +93,10 @@
       <param name="camera_name" value="logitech_c922"/>
       <param name="frame_id" value="$(var name)/camera_front_link"/>
     </node>
-    <node if="$(var use_cameras)" pkg="usb_cam" exec="usb_cam_node_exe" name="usb_camera" namespace="camera_auxiliary" output="screen">
+    <node if="$(var use_cameras)" pkg="peaceofmine_operator" exec="usb_camera_auto.py" name="usb_camera" namespace="camera_auxiliary" output="screen">
+      <env name="POM_CAMERA_VENDOR_ID" value="05a3"/>
+      <env name="POM_CAMERA_PRODUCT_ID" value="9422"/>
+      <env name="POM_CAMERA_DEVICE" value="$(var auxiliary_camera_device)"/>
       <param name="video_device" value="$(var auxiliary_camera_device)"/>
       <param name="image_width" value="$(var camera_width)"/>
       <param name="image_height" value="$(var camera_height)"/>
