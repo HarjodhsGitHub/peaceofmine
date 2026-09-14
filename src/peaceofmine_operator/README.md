@@ -46,6 +46,18 @@ The default camera mapping discovers the Logitech C922 (`046d:085c`) and H264
 USB Camera (`05a3:9422`) through libudev, so Linux may renumber their
 `/dev/video*` nodes without breaking the launch. Set `front_camera_device` or
 `auxiliary_camera_device` to an explicit capture node to override discovery.
+For a vehicle with only one camera, disable the missing camera with
+`use_front_camera:=false` or `use_auxiliary_camera:=false`. For example, the
+H264 camera visible on the PeaceOfMine vehicle can be launched as:
+
+```bash
+ros2 launch peaceofmine_operator operator.launch.xml is_sim:=false \
+  use_front_camera:=false \
+  auxiliary_camera_device:=/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._H264_USB_Camera_SN0001-video-index0
+```
+
+The resolver converts that stable link to its capture node before starting
+`usb_cam`.
 Their topics are `/self/camera_front/image_raw` and
 `/self/camera_auxiliary/image_raw`. `web_video_server` converts those ROS image
 topics into browser streams, and the operator gateway proxies them on the same

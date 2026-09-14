@@ -32,6 +32,8 @@
   <!-- Raspberry Pi cameras. usb_cam 0.8.1 rejects the host's relative
        /dev/v4l/by-id symlinks, so use the verified capture nodes here. -->
   <arg name="use_cameras" default="true"/>
+    <arg name="use_front_camera" default="true"/>
+    <arg name="use_auxiliary_camera" default="true"/>
   <arg name="front_camera_device" default="auto"/>
   <arg name="auxiliary_camera_device" default="auto"/>
   <arg name="camera_width" default="640"/>
@@ -81,7 +83,8 @@
       <param name="front_camera_info_topic" value="/$(var name)/camera_front/camera_info"/>
       <param name="auxiliary_camera_info_topic" value="/$(var name)/camera_auxiliary/camera_info"/>
     </node>
-    <node if="$(var use_cameras)" pkg="peaceofmine_operator" exec="usb_camera_auto.py" name="usb_camera" namespace="camera_front" output="screen">
+    <group if="$(var use_cameras)">
+    <node if="$(var use_front_camera)" pkg="peaceofmine_operator" exec="usb_camera_auto.py" name="usb_camera" namespace="camera_front" output="screen">
       <env name="POM_CAMERA_VENDOR_ID" value="046d"/>
       <env name="POM_CAMERA_PRODUCT_ID" value="085c"/>
       <env name="POM_CAMERA_DEVICE" value="$(var front_camera_device)"/>
@@ -93,7 +96,7 @@
       <param name="camera_name" value="logitech_c922"/>
       <param name="frame_id" value="$(var name)/camera_front_link"/>
     </node>
-    <node if="$(var use_cameras)" pkg="peaceofmine_operator" exec="usb_camera_auto.py" name="usb_camera" namespace="camera_auxiliary" output="screen">
+    <node if="$(var use_auxiliary_camera)" pkg="peaceofmine_operator" exec="usb_camera_auto.py" name="usb_camera" namespace="camera_auxiliary" output="screen">
       <env name="POM_CAMERA_VENDOR_ID" value="05a3"/>
       <env name="POM_CAMERA_PRODUCT_ID" value="9422"/>
       <env name="POM_CAMERA_DEVICE" value="$(var auxiliary_camera_device)"/>
@@ -108,5 +111,6 @@
     <node if="$(var use_cameras)" pkg="web_video_server" exec="web_video_server" name="camera_stream_server" output="screen">
       <param name="port" value="$(var camera_stream_port)"/>
     </node>
+    </group>
   </group>
 </launch>
