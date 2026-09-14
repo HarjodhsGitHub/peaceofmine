@@ -47,13 +47,14 @@ is connected. Chrome often ignores a pad until that first press.
 
 The default **Auto** mapping uses the browser `standard` layout when the pad
 reports it: left stick steers, right trigger drives forward, left trigger
-reverses, and the right bumper is the deadman. An Xbox 360 on Linux often
+reverses, and a trigger or bumper is the deadman. An Xbox 360 on Linux often
 reports an empty mapping and puts the triggers on axes; Auto then uses that
 Xbox 360 layout. Settings → **Controller mapping** can force Standard or
 Xbox 360 (Linux) if the steer/throttle meters do not follow the pad. For
 keyboard driving, choose **WASD keyboard** in Settings, click the forward
-camera to focus it, then hold Shift while using WASD. Both input paths share
-the same response smoothing and publish drive commands at 20 Hz.
+camera to focus it, then hold Shift while using WASD. Both input paths map
+sticks linearly (0.12 deadzone, no extra smoothing) and send a drive command
+as soon as the pad changes, plus a 20 Hz keepalive while moving.
 
 Gamepad input on a non-localhost URL requires HTTPS (`tls_cert` and
 `tls_key`). Opening `http://<host-ip>:8080` from another computer will not

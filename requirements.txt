@@ -22,3 +22,6 @@ utm
 
 # Operator dashboard server (peaceofmine_operator gateway)
 aiohttp>=3.9,<4
+# Install the resolver alongside aiohttp; the base image's system copy may
+# be incomplete and can otherwise prevent aiohttp (and the GUI) importing.
+aiodns>=3.2,<5

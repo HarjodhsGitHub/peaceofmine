@@ -22,9 +22,12 @@ Xbox on the laptop
   → PX4
 ```
 
-`cmd_vel` is published only while you hold the control lease, the GUI is
-armed, a deadman is true (RT, LT, LB, or RB), and commands are newer than
-0.25 s. After that the gateway sends zeros for 0.5 s and goes silent.
+`cmd_vel` is published as soon as a valid drive command arrives (browser
+WebSocket or `/joy`), not on the next watchdog tick. Publishing continues
+only while you hold the control lease, the GUI is armed, a deadman is true
+(RT, LT, LB, or RB), and commands are newer than 0.25 s. After that the
+gateway sends zeros for 0.5 s and goes silent. Stick mapping is linear
+with a 0.12 deadzone; there is no extra command smoothing.
 
 Optional second input: plug the Xbox into the **SVEA USB** and pass
 `use_joy:=true`. Then `joy_node` publishes `/self/joy` and the gateway
@@ -71,50 +74,55 @@ source /opt/svea/jazzy/setup.bash
 source /svea_ws/install/setup.bash
 ```
 
+If that fails with `can't copy '.../usb_camera_auto.py': doesn't exist or not a regular file`, the build tree still lists a script that is no longer in the package. Wipe that package and rebuild, then source again in the **same** shell (do not launch on a failed overlay):
+
+```bash
+rm -rf build/peaceofmine_operator install/peaceofmine_operator
+colcon build --symlink-install --packages-select peaceofmine_operator
+source /opt/ros/jazzy/setup.bash
+source /opt/svea/jazzy/setup.bash
+source /svea_ws/install/setup.bash
+```
+
 Confirm the PX4 is present:
 
 ```bash
 ls /dev/serial/by-id/usb-SVEA_PX4_AUTOPILOT_0-if00
 ```
 
-### 2. HTTPS cert (required for the laptop Gamepad API)
+### 2. Launch hardware (not sim)
 
-Put the SVEA Wi‑Fi address you will type in the browser into the
-certificate. Example for `10.0.8.246`:
+Still inside the container, after sourcing:
 
 ```bash
-mkdir -p /tmp/operator-tls
-openssl req -x509 -newkey rsa:2048 -nodes \
-  -keyout /tmp/operator-tls/key.pem \
-  -out /tmp/operator-tls/cert.pem \
-  -days 30 \
-  -subj "/CN=svea-mine" \
-  -addext "subjectAltName=DNS:localhost,DNS:svea-mine,IP:127.0.0.1,IP:10.0.8.246"
+ros2 launch peaceofmine_operator operator.launch.py
 ```
 
-Add a Tailscale IP to `subjectAltName` if you will use that instead.
+This creates `/tmp/operator-tls` if needed (SAN includes localhost and the
+machine's IPv4 addresses), starts MAVROS/LLI (`is_sim:=false`),
+`twist_consumer`, and the gateway. If 8080 is busy it tries 8082, 8084,
+8086, then 8090. Watch the log for `Operator dashboard port:` and
+`Open https://<ip>:<port>`.
 
-### 3. Launch hardware (not sim)
+It does **not** start `sim_svea`. Payload simulation and `joy_node` stay
+off unless you pass `simulate_payload:=true` or `use_joy:=true`.
+
+Force a port or your own certs if you need to:
 
 ```bash
+ros2 launch peaceofmine_operator operator.launch.py port:=8082
 ros2 launch peaceofmine_operator operator.launch.py \
-  port:=8080 \
   tls_cert:=/tmp/operator-tls/cert.pem \
   tls_key:=/tmp/operator-tls/key.pem
 ```
 
-This starts MAVROS/LLI (`is_sim:=false`), `twist_consumer`, and the
-gateway. It does **not** start `sim_svea`. Payload simulation and
-`joy_node` stay off unless you pass `simulate_payload:=true` or
-`use_joy:=true`.
+If the Wi‑Fi address changed since the last auto-cert, delete
+`/tmp/operator-tls` and launch again.
 
-If 8080 is already taken, use another port (`port:=8082`) and open that
-port in the browser.
-
-### 4. On the laptop
+### 3. On the laptop
 
 1. Plug in the Xbox 360 and press a button.
-2. Open `https://<svea-ip>:8080` (same IP as in the certificate).
+2. Open `https://<svea-ip>:<port>` from the launch log (same IP as in the certificate).
 3. Accept the certificate warning.
 4. Confirm the Drive panel shows the pad and the graphic moves.
 5. **Take control**, then **Arm** (or press **A**).
@@ -124,7 +132,7 @@ The status line must read `ROS cmd_vel …`. Stick lights alone are not
 enough. The virtual forward camera is first-person, so the car will not
 slide across that view; watch the vehicle and the speed readout.
 
-### 5. Stop
+### 4. Stop
 
 Disarm / stop in the GUI, then `Ctrl+C` the launch. Physical RC still
 overrides.

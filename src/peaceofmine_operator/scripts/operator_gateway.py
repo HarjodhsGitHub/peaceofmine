@@ -206,7 +206,7 @@ class OperatorGateway(Node):
         with self._lock:
             self._probe_fault = bool(message.data)
 
-    def _axis_trigger(self, key: str, axes: list[float], index: int) -> float:
+    def _axis_trigger(self, key: str, axes: Any, index: int) -> float:
         if index >= len(axes):
             return 0.0
         value = float(axes[index])
@@ -214,38 +214,31 @@ class OperatorGateway(Node):
             if value == 0.0:
                 return 0.0
             self._trigger_seen[key] = True
-        return max(0.0, min(1.0, (value + 1.0) / 2.0))
+        # joy_node inverts SDL axes: released is +1, pressed is -1.
+        return max(0.0, min(1.0, (1.0 - value) / 2.0))
 
     @staticmethod
     def _deadzone(value: float) -> float:
         return 0.0 if abs(value) < 0.12 else value
 
     @staticmethod
-    def _response_curve(value: float) -> float:
-        return math.copysign(abs(value) ** 1.65, value)
+    def _finite(value: float) -> float:
+        return value if math.isfinite(value) else 0.0
 
     def _parse_xbox_joy(self, message: Joy) -> dict[str, Any]:
-        axes = list(message.axes)
-        buttons = list(message.buttons)
+        axes = message.axes
+        buttons = message.buttons
 
         def pressed(index: int) -> bool:
             return index < len(buttons) and bool(buttons[index])
 
-        def button_value(index: int) -> float:
-            return float(buttons[index]) if index < len(buttons) else 0.0
-
-        std_lt = button_value(6)
-        std_rt = button_value(7)
-        axis_lt = self._axis_trigger('lt', axes, 2)
-        axis_rt = self._axis_trigger('rt', axes, 5)
-        if std_lt + std_rt > 0.2 and axis_lt + axis_rt < 0.05:
-            left_trigger, right_trigger = std_lt, std_rt
-        else:
-            left_trigger, right_trigger = axis_lt, axis_rt
+        # ROS Xbox buttons 6/7 are Back/Start, not browser triggers.
+        left_trigger = self._axis_trigger('lt', axes, 2)
+        right_trigger = self._axis_trigger('rt', axes, 5)
         stick_x = float(axes[0]) if axes else 0.0
         stick_y = float(axes[1]) if len(axes) > 1 else 0.0
-        steering = self._response_curve(self._deadzone(stick_x))
-        throttle = self._response_curve(right_trigger - left_trigger)
+        steering = self._deadzone(stick_x)
+        throttle = right_trigger - left_trigger
         left_bumper = pressed(4)
         right_bumper = pressed(5)
         return {
@@ -269,30 +262,18 @@ class OperatorGateway(Node):
     def _apply_drive_locked(self, linear: float, angular: float, deadman: bool) -> None:
         self._deadman = deadman
         self._command = (
-            max(-self._max_velocity, min(self._max_velocity, linear)),
-            max(-self._max_yaw_rate, min(self._max_yaw_rate, angular)),
+            max(-self._max_velocity, min(self._max_velocity, self._finite(linear))),
+            max(-self._max_yaw_rate, min(self._max_yaw_rate, self._finite(angular))),
         )
         self._last_command = time.monotonic()
 
-    def _joy_cb(self, message: Joy) -> None:
-        parsed = self._parse_xbox_joy(message)
-        with self._lock:
-            self._joy = parsed
-            self._last_joy = time.monotonic()
-            if self._lease is None:
-                self._joy_prev_a = bool(parsed['a'])
-                return
-            if parsed['a'] and not self._joy_prev_a and not self._armed:
-                self._armed = True
-            self._joy_prev_a = bool(parsed['a'])
-            if not self._armed:
-                return
-            self._apply_drive_locked(float(parsed['linear']), float(parsed['angular']), bool(parsed['deadman']))
+    def _publish_twist(self, linear: float, angular: float) -> None:
+        command = Twist()
+        command.linear.x = linear
+        command.angular.z = angular
+        self._cmd_pub.publish(command)
 
-    def _joy_live(self, now: float) -> bool:
-        return self._last_joy > 0.0 and now - self._last_joy < 0.4
-
-    def _drive_watchdog(self) -> None:
+    def _emit_cmd_vel(self) -> None:
         now = time.monotonic()
         with self._lock:
             active = (self._lease is not None
@@ -306,10 +287,32 @@ class OperatorGateway(Node):
                 linear, angular = 0.0, 0.0
             else:
                 return
-        command = Twist()
-        command.linear.x = linear
-        command.angular.z = angular
-        self._cmd_pub.publish(command)
+        self._publish_twist(linear, angular)
+
+    def _joy_cb(self, message: Joy) -> None:
+        flush = False
+        with self._lock:
+            parsed = self._parse_xbox_joy(message)
+            self._joy = parsed
+            self._last_joy = time.monotonic()
+            if self._lease is None:
+                self._joy_prev_a = bool(parsed['a'])
+                return
+            if parsed['a'] and not self._joy_prev_a and not self._armed:
+                self._armed = True
+            self._joy_prev_a = bool(parsed['a'])
+            if not self._armed:
+                return
+            self._apply_drive_locked(float(parsed['linear']), float(parsed['angular']), bool(parsed['deadman']))
+            flush = True
+        if flush:
+            self._emit_cmd_vel()
+
+    def _joy_live(self, now: float) -> bool:
+        return self._last_joy > 0.0 and now - self._last_joy < 0.4
+
+    def _drive_watchdog(self) -> None:
+        self._emit_cmd_vel()
 
     ## Dashboard protocol ##
 
@@ -380,17 +383,23 @@ class OperatorGateway(Node):
             self._connected_sockets.add(ws)
 
     def release(self, ws: web.WebSocketResponse) -> None:
+        dropped = False
         with self._lock:
             self._connected_sockets.discard(ws)
             if self._lease is ws:
+                dropped = True
                 self._lease = None
                 self._armed = False
                 self._deadman = False
                 self._command = (0.0, 0.0)
                 self._joy_prev_a = False
+        if dropped:
+            self._emit_cmd_vel()
 
     def handle_command(self, ws: web.WebSocketResponse, payload: dict[str, Any]) -> dict[str, Any] | None:
         message_type = payload.get('type')
+        error: dict[str, Any] | None = None
+        flush_drive = False
         with self._lock:
             if message_type == 'take_control':
                 # Transferring a lease stops the rover; the new operator must
@@ -399,33 +408,36 @@ class OperatorGateway(Node):
                 self._armed = False
                 self._deadman = False
                 self._command = (0.0, 0.0)
-                return None
-            if self._lease is not ws:
-                return {'type': 'error', 'message': 'Spectator mode: take control before sending commands.'}
-            if message_type == 'arm':
+                flush_drive = True
+            elif self._lease is not ws:
+                error = {'type': 'error', 'message': 'Spectator mode: take control before sending commands.'}
+            elif message_type == 'arm':
                 self._armed = True
+                flush_drive = True
             elif message_type in ('disarm', 'estop'):
                 self._armed = False
                 self._deadman = False
                 self._command = (0.0, 0.0)
+                flush_drive = True
             elif message_type == 'drive':
                 # A live ROS pad on the SVEA owns the sticks so the browser
                 # Gamepad API is not required on http://<lan-ip>.
-                if self._joy_live(time.monotonic()):
-                    return None
-                self._apply_drive_locked(
-                    float(payload.get('linear_x', 0.0)),
-                    float(payload.get('angular_z', 0.0)),
-                    bool(payload.get('deadman', False)),
-                )
+                if not self._joy_live(time.monotonic()):
+                    self._apply_drive_locked(
+                        float(payload.get('linear_x', 0.0)),
+                        float(payload.get('angular_z', 0.0)),
+                        bool(payload.get('deadman', False)),
+                    )
+                    flush_drive = True
             elif message_type == 'probe_target':
                 requested = float(payload.get('depth_mm', 0.0))
                 if abs(self._speed) > self._probe_speed_limit:
-                    return {'type': 'error', 'message': 'Probe motion is blocked while the rover is moving.'}
-                if self._probe_fault:
-                    return {'type': 'error', 'message': 'Probe motion is blocked by a probe fault.'}
-                self._probe_target = max(0.0, min(self._max_probe_depth, requested))
-                self._probe_pub.publish(Float32(data=self._probe_target))
+                    error = {'type': 'error', 'message': 'Probe motion is blocked while the rover is moving.'}
+                elif self._probe_fault:
+                    error = {'type': 'error', 'message': 'Probe motion is blocked by a probe fault.'}
+                else:
+                    self._probe_target = max(0.0, min(self._max_probe_depth, requested))
+                    self._probe_pub.publish(Float32(data=self._probe_target))
             elif message_type == 'sweep_enabled':
                 self._sweep_enabled_pub.publish(Bool(data=bool(payload.get('enabled', False))))
             elif message_type == 'sweep_speed':
@@ -433,8 +445,10 @@ class OperatorGateway(Node):
                             min(SWEEP_SPEED_MAX_DEG_S, float(payload.get('deg_s', 60.0))))
                 self._sweep_speed_pub.publish(Float32(data=speed))
             else:
-                return {'type': 'error', 'message': 'Unsupported operator command.'}
-        return None
+                error = {'type': 'error', 'message': 'Unsupported operator command.'}
+        if flush_drive:
+            self._emit_cmd_vel()
+        return error
 
 
 def dashboard_directory() -> Path:
@@ -495,7 +509,10 @@ def build_app(node: OperatorGateway) -> web.Application:
         return web.FileResponse(dashboard / filename)
 
     async def socket_handler(request: web.Request) -> web.WebSocketResponse:
-        ws = web.WebSocketResponse(heartbeat=10.0)
+        # Per-message deflate on the same socket as 20+ Hz drive commands
+        # costs CPU on the Pi and delays the event loop. LAN bandwidth is
+        # cheap; leave the frames uncompressed.
+        ws = web.WebSocketResponse(heartbeat=10.0, compress=False)
         await ws.prepare(request)
         node.connect_client(ws)
         try:
@@ -536,12 +553,13 @@ async def broadcast_telemetry(node: OperatorGateway) -> None:
         if not sockets:
             continue
         shared = node.snapshot()
+        drive = shared['drive']
         for ws in sockets:
             if ws.closed:
                 continue
-            message = {**shared, 'drive': {**shared['drive'], 'you_control_owner': node.owns_lease(ws)}}
+            drive['you_control_owner'] = node.owns_lease(ws)
             try:
-                await ws.send_json(message)
+                await ws.send_str(json.dumps(shared, separators=(',', ':')))
             except (ConnectionResetError, RuntimeError):
                 pass
 
