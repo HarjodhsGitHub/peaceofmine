@@ -11,11 +11,6 @@ const LATENCY_HISTORY_LENGTH = 30;
 const TELEMETRY_TIMEOUT_MS = 3000;
 const MAX_LINEAR_MPS = 0.8;
 const MAX_ANGULAR_RAD_S = 1.4;
-const RASPBERRY_CAMERAS = [
-  {value: 'raspberry:front', label: 'Raspberry Pi · Logitech C922'},
-  {value: 'raspberry:auxiliary', label: 'Raspberry Pi · H264 USB Camera'},
-];
-
 const state = {
   connected: false,
   drive: {
@@ -47,6 +42,7 @@ const state = {
     fault: false,
   },
   detections: [],
+  cameras: {},
 };
 
 const $ = id => document.getElementById(id);
@@ -78,6 +74,7 @@ let lastTelemetryAt = 0;
 let reconnectTimer = null;
 const latencyHistory = [];
 const cameraStreams = {forward: null, auxiliary: null};
+let networkCameraSignature = '';
 
 function throttle(periodMs, action) {
   let last = 0;
@@ -191,6 +188,7 @@ function connect() {
     lastTelemetryAt = performance.now();
     if (!state.connected) setConnection(true, 'Raspberry Pi connected');
     Object.assign(state, message);
+    updateNetworkCameraOptions();
     updateCameraLatency();
     updateHud();
   };
@@ -802,8 +800,42 @@ function updateCameraLatency() {
     element.textContent = `${fps} FPS · ROS ${age} ms · LINK ${linkLatencyMs ?? '--'} ms`;
     element.classList.toggle('stale', age > 500);
   };
-  render($('forward-camera-latency'), state.cameras?.front);
-  render($('aux-camera-latency'), state.cameras?.auxiliary);
+  const selected = source => source.startsWith('raspberry:') ? state.cameras?.[source.slice(10)] : null;
+  render($('forward-camera-latency'), selected(preferences.cameras.forward));
+  render($('aux-camera-latency'), selected(preferences.cameras.auxiliary));
+}
+
+function updateNetworkCameraOptions() {
+  const networkCameras = Object.entries(state.cameras || {});
+  const signature = networkCameras.map(([id, camera]) => `${id}:${camera.topic}`).join('|');
+  if (signature === networkCameraSignature) return;
+  networkCameraSignature = signature;
+
+  const selections = [
+    [$('forward-camera-source'), 'virtual', 'Virtual forward camera'],
+    [$('aux-camera-source'), 'off', 'Off'],
+  ];
+  for (const [select, defaultValue, defaultLabel] of selections) {
+    const current = select.value || (select === $('forward-camera-source') ? preferences.cameras.forward : preferences.cameras.auxiliary);
+    select.replaceChildren(new Option(defaultLabel, defaultValue));
+    Object.entries(state.cameras || {}).forEach(([id, camera]) =>
+      select.add(new Option(`Raspberry Pi · ${camera.label}`, `raspberry:${id}`)));
+    const firstNetworkSource = networkCameras.length ? `raspberry:${networkCameras[0][0]}` : defaultValue;
+    const shouldAutoSelect = select === $('forward-camera-source')
+      && preferences.cameras.forward === 'virtual'
+      && networkCameras.length > 0;
+    select.value = shouldAutoSelect ? firstNetworkSource
+      : [...select.options].some(option => option.value === current) ? current : defaultValue;
+  }
+  const forward = $('forward-camera-source').value;
+  const auxiliary = $('aux-camera-source').value;
+  if (preferences.cameras.forward !== forward || preferences.cameras.auxiliary !== auxiliary) {
+    preferences.cameras.forward = forward;
+    preferences.cameras.auxiliary = auxiliary;
+    savePreferences();
+    startCamera('forward', forward);
+    startCamera('auxiliary', auxiliary);
+  }
 }
 
 async function refreshCameraDevices(requestPermission = false) {
@@ -811,10 +843,7 @@ async function refreshCameraDevices(requestPermission = false) {
     [$('forward-camera-source'), 'virtual', 'Virtual forward camera'],
     [$('aux-camera-source'), 'off', 'Off'],
   ];
-  for (const [select, defaultValue, defaultLabel] of selections) {
-    select.replaceChildren(new Option(defaultLabel, defaultValue));
-    RASPBERRY_CAMERAS.forEach(camera => select.add(new Option(camera.label, camera.value)));
-  }
+  updateNetworkCameraOptions();
   if (!navigator.mediaDevices?.enumerateDevices) {
     const restore = (select, source, fallback) => {
       select.value = source.startsWith('raspberry:') ? source : fallback;
@@ -822,7 +851,7 @@ async function refreshCameraDevices(requestPermission = false) {
     };
     preferences.cameras.forward = restore($('forward-camera-source'), preferences.cameras.forward, 'virtual');
     preferences.cameras.auxiliary = restore($('aux-camera-source'), preferences.cameras.auxiliary, 'off');
-    $('camera-source-status').textContent = '2 Raspberry Pi cameras configured. Laptop camera access needs HTTPS or localhost.';
+    $('camera-source-status').textContent = `${Object.keys(state.cameras || {}).length} live Raspberry Pi camera source(s). Laptop camera access needs HTTPS or localhost.`;
     savePreferences();
     if (preferences.cameras.forward.startsWith('raspberry:')) await startCamera('forward', preferences.cameras.forward);
     if (preferences.cameras.auxiliary.startsWith('raspberry:')) await startCamera('auxiliary', preferences.cameras.auxiliary);
@@ -842,7 +871,7 @@ async function refreshCameraDevices(requestPermission = false) {
       ? preferences.cameras.auxiliary : 'off';
     preferences.cameras.forward = $('forward-camera-source').value;
     preferences.cameras.auxiliary = $('aux-camera-source').value;
-    $('camera-source-status').textContent = `2 Raspberry Pi camera sources configured · ${cameras.length} laptop camera${cameras.length === 1 ? '' : 's'} available.`;
+    $('camera-source-status').textContent = `${Object.keys(state.cameras || {}).length} live Raspberry Pi camera source(s) · ${cameras.length} laptop camera${cameras.length === 1 ? '' : 's'} available.`;
     savePreferences();
     if (preferences.cameras.forward.startsWith('raspberry:') ||
         (cameras.some(camera => camera.label) && preferences.cameras.forward !== 'virtual')) {

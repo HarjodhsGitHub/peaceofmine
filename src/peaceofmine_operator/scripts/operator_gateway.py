@@ -17,6 +17,7 @@ import socket
 import ssl
 import threading
 import time
+import re
 from pathlib import Path
 from typing import Any
 
@@ -113,10 +114,8 @@ class OperatorGateway(Node):
         self._speed = 0.0
         self._was_detected = False
         self._detections: list[dict[str, float]] = []
-        self._camera_frames = {
-            'front': {'last_frame': 0.0, 'window_started': time.monotonic(), 'window_frames': 0, 'fps': 0.0},
-            'auxiliary': {'last_frame': 0.0, 'window_started': time.monotonic(), 'window_frames': 0, 'fps': 0.0},
-        }
+        self._camera_frames: dict[str, dict[str, Any]] = {}
+        self._camera_subscriptions: dict[str, Any] = {}
 
         self._max_velocity = float(self.get_parameter('max_velocity_mps').value)
         self._max_yaw_rate = float(self.get_parameter('max_yaw_rate_rad_s').value)
@@ -140,11 +139,9 @@ class OperatorGateway(Node):
         # CameraInfo arrives once per captured frame but is tiny. Subscribing
         # this Python gateway to raw RGB images caused costly full-frame DDS
         # copies and starved both the dashboard and MJPEG proxy.
-        self.create_subscription(CameraInfo, str(self.get_parameter('front_camera_info_topic').value),
-                                 lambda _: self._camera_frame_cb('front'), qos_profile_sensor_data)
-        self.create_subscription(CameraInfo, str(self.get_parameter('auxiliary_camera_info_topic').value),
-                                 lambda _: self._camera_frame_cb('auxiliary'), qos_profile_sensor_data)
+        self.create_timer(1.0, self._discover_cameras)
         self.create_timer(0.05, self._drive_watchdog)
+        self._discover_cameras()
 
     ## ROS callbacks ##
 
@@ -217,6 +214,27 @@ class OperatorGateway(Node):
                 sample['window_frames'] = 0
                 sample['window_started'] = now
 
+    def _discover_cameras(self) -> None:
+        for topic, types in self.get_topic_names_and_types():
+            if 'sensor_msgs/msg/CameraInfo' not in types or not topic.endswith('/camera_info'):
+                continue
+            camera_id = re.sub(r'[^a-zA-Z0-9_-]+', '_', topic.strip('/')).strip('_')
+            if not camera_id:
+                continue
+            if camera_id not in self._camera_frames:
+                self._camera_frames[camera_id] = {
+                    'topic': topic,
+                    'label': topic.strip('/').replace('/', ' / '),
+                    'last_frame': 0.0,
+                    'window_started': time.monotonic(),
+                    'window_frames': 0,
+                    'fps': 0.0,
+                }
+            if camera_id not in self._camera_subscriptions:
+                self._camera_subscriptions[camera_id] = self.create_subscription(
+                    CameraInfo, topic, lambda _, camera=camera_id: self._camera_frame_cb(camera),
+                    qos_profile_sensor_data)
+
     def _drive_watchdog(self) -> None:
         now = time.monotonic()
         with self._lock:
@@ -246,6 +264,8 @@ class OperatorGateway(Node):
             for name, sample in self._camera_frames.items():
                 if sample['last_frame']:
                     cameras[name] = {
+                        'label': sample['label'],
+                        'topic': sample['topic'],
                         'frame_age_ms': round((now - sample['last_frame']) * 1000),
                         'fps': round(sample['fps'], 1),
                     }
@@ -412,13 +432,10 @@ def build_app(node: OperatorGateway) -> web.Application:
         return web.FileResponse(dashboard / filename, headers={'Cache-Control': 'no-store'})
 
     async def camera_handler(request: web.Request) -> web.StreamResponse:
-        topics = {
-            'front': str(node.get_parameter('front_camera_topic').value),
-            'auxiliary': str(node.get_parameter('auxiliary_camera_topic').value),
-        }
-        topic = topics.get(request.match_info['camera'])
-        if topic is None:
+        camera = node._camera_frames.get(request.match_info['camera'])
+        if camera is None:
             raise web.HTTPNotFound()
+        topic = camera['topic'].replace('/camera_info', '/image_raw')
         base_url = str(node.get_parameter('camera_stream_base_url').value).rstrip('/')
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=4.0, sock_read=None)
         try:

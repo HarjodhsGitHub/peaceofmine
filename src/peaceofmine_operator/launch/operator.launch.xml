@@ -29,11 +29,10 @@
   <arg name="odometry_topic" default="odometry/local"/>
   <arg name="max_velocity" default="0.8"/>
 
-  <!-- Raspberry Pi cameras. usb_cam 0.8.1 rejects the host's relative
-       /dev/v4l/by-id symlinks, so use the verified capture nodes here. -->
+  <!-- Cameras are discovered by usb_camera_auto.py from /dev/v4l/by-id. -->
   <arg name="use_cameras" default="true"/>
-    <arg name="use_front_camera" default="true"/>
-    <arg name="use_auxiliary_camera" default="true"/>
+  <arg name="use_front_camera" default="true"/>
+  <arg name="use_auxiliary_camera" default="false"/>
   <arg name="front_camera_device" default="auto"/>
   <arg name="auxiliary_camera_device" default="auto"/>
   <arg name="camera_width" default="640"/>
@@ -85,27 +84,25 @@
     </node>
     <group if="$(var use_cameras)">
     <node if="$(var use_front_camera)" pkg="peaceofmine_operator" exec="usb_camera_auto.py" name="usb_camera" namespace="camera_front" output="screen">
-      <env name="POM_CAMERA_VENDOR_ID" value="046d"/>
-      <env name="POM_CAMERA_PRODUCT_ID" value="085c"/>
+      <env name="POM_CAMERA_INDEX" value="0"/>
       <env name="POM_CAMERA_DEVICE" value="$(var front_camera_device)"/>
       <param name="video_device" value="$(var front_camera_device)"/>
       <param name="image_width" value="$(var camera_width)"/>
       <param name="image_height" value="$(var camera_height)"/>
       <param name="framerate" value="$(var front_camera_framerate)"/>
       <param name="pixel_format" value="$(var front_camera_pixel_format)"/>
-      <param name="camera_name" value="logitech_c922"/>
+      <param name="camera_name" value="camera_front"/>
       <param name="frame_id" value="$(var name)/camera_front_link"/>
     </node>
     <node if="$(var use_auxiliary_camera)" pkg="peaceofmine_operator" exec="usb_camera_auto.py" name="usb_camera" namespace="camera_auxiliary" output="screen">
-      <env name="POM_CAMERA_VENDOR_ID" value="05a3"/>
-      <env name="POM_CAMERA_PRODUCT_ID" value="9422"/>
+      <env name="POM_CAMERA_INDEX" value="1"/>
       <env name="POM_CAMERA_DEVICE" value="$(var auxiliary_camera_device)"/>
       <param name="video_device" value="$(var auxiliary_camera_device)"/>
       <param name="image_width" value="$(var camera_width)"/>
       <param name="image_height" value="$(var camera_height)"/>
       <param name="framerate" value="$(var auxiliary_camera_framerate)"/>
       <param name="pixel_format" value="$(var auxiliary_camera_pixel_format)"/>
-      <param name="camera_name" value="h264_usb_camera"/>
+      <param name="camera_name" value="camera_auxiliary"/>
       <param name="frame_id" value="$(var name)/camera_auxiliary_link"/>
     </node>
     <node if="$(var use_cameras)" pkg="web_video_server" exec="web_video_server" name="camera_stream_server" output="screen">

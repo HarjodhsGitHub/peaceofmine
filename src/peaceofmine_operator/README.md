@@ -42,22 +42,25 @@ to the computer running the browser; click **Allow laptop cameras** to grant
 access and populate those device names. Browser camera access and Gamepad input
 require HTTPS on a remote address; localhost is treated as secure by browsers.
 
-The default camera mapping discovers the Logitech C922 (`046d:085c`) and H264
-USB Camera (`05a3:9422`) through libudev, so Linux may renumber their
-`/dev/video*` nodes without breaking the launch. Set `front_camera_device` or
-`auxiliary_camera_device` to an explicit capture node to override discovery.
-For a vehicle with only one camera, disable the missing camera with
-`use_front_camera:=false` or `use_auxiliary_camera:=false`. For example, the
-H264 camera visible on the PeaceOfMine vehicle can be launched as:
+The camera resolver discovers available V4L2 capture devices through
+`/dev/v4l/by-id` and does not require a vendor or model configured in the
+launch file. The first discovered camera is used for the front stream. The
+auxiliary stream is optional and disabled by default; enable it when a second
+capture device is connected with `use_auxiliary_camera:=true`.
+
+For a vehicle with no front camera, disable it with
+`use_front_camera:=false`. To override discovery for a specific device, set
+`front_camera_device` or `auxiliary_camera_device` to an explicit capture node.
+For example:
 
 ```bash
 ros2 launch peaceofmine_operator operator.launch.xml is_sim:=false \
-  use_front_camera:=false \
-  auxiliary_camera_device:=/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._H264_USB_Camera_SN0001-video-index0
+  front_camera_device:=/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._H264_USB_Camera_SN0001-video-index0
 ```
 
 The resolver converts that stable link to its capture node before starting
-`usb_cam`.
+`usb_cam`. Live ROS camera topics are discovered by the gateway and are the
+only Raspberry Pi camera sources shown in the dashboard settings.
 Their topics are `/self/camera_front/image_raw` and
 `/self/camera_auxiliary/image_raw`. `web_video_server` converts those ROS image
 topics into browser streams, and the operator gateway proxies them on the same
