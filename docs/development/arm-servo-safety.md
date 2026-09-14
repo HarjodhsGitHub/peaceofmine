@@ -6,8 +6,8 @@ This describes source behavior, not verification of the firmware currently flash
 **Current hardware status:** position telemetry updates when the arm is moved by
 hand, but the operator reports no movement while holding the dashboard jog
 buttons. Physical jogging remains unresolved. Passing fake-bus and simulation
-tests does not establish that the servo moves. Use the
-[standalone servo demo](../../DevTools/servodemo/README.md) to compare behavior.
+tests does not establish that the servo moves. Use the standalone servo demo
+described in the repository's `DevTools/servodemo/README.md` to compare behavior.
 
 ## What ROS mode actually means
 

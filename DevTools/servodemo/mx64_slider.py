@@ -36,7 +36,8 @@ class State:
 
 
 class Worker:
-    def __init__(self, initial):
+    def __init__(self, initial, port=PORT):
+        self.port = port
         self.state, self.lock, self.stop = State(selected=initial), threading.Lock(), threading.Event()
         self.commands: queue.SimpleQueue[tuple[str, object]] = queue.SimpleQueue()
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -142,10 +143,10 @@ class Worker:
             if k in latest: self.setting(p,h,k,latest[k])
     def run(self):
         while not self.stop.is_set():
-            h,p=PortHandler(PORT),PacketHandler(PROTOCOL)
+            h,p=PortHandler(self.port),PacketHandler(PROTOCOL)
             try:
-                self.update(connected=False,detail=f"Opening {PORT} at {HOST_BAUD:,} baud...")
-                if not h.setBaudRate(HOST_BAUD): raise RuntimeError(f"Could not open {PORT}")
+                self.update(connected=False,detail=f"Opening {self.port} at {HOST_BAUD:,} baud...")
+                if not h.setBaudRate(HOST_BAUD): raise RuntimeError(f"Could not open {self.port}")
                 self.update(detail="Waiting for ArbotiX ROS firmware..."); self.ready(p,h); self.scan(p,h); self.update(connected=True,detail="Connected")
                 due=0.
                 while not self.stop.is_set():
@@ -170,8 +171,9 @@ def rail(s,r,f,c):
 def main():
     global FONT,SMALL
     parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("--id",type=int,choices=range(253),action="append",help="initially select an ID; repeat to select several")
+    parser.add_argument("--port", default=PORT, help="ArbotiX FTDI serial device (default: %(default)s)")
     args=parser.parse_args(); pygame.init(); window=pygame.display.set_mode((1280,820)); pygame.display.set_caption("ArbotiX-M MX-64 Controller")
-    TITLE=pygame.font.Font(None,42); FONT=pygame.font.Font(None,25); LARGE=pygame.font.Font(None,34); SMALL=pygame.font.Font(None,20); clock=pygame.time.Clock(); worker=Worker(set(args.id or [])); worker.start()
+    TITLE=pygame.font.Font(None,42); FONT=pygame.font.Font(None,25); LARGE=pygame.font.Font(None,34); SMALL=pygame.font.Font(None,20); clock=pygame.time.Clock(); worker=Worker(set(args.id or []), args.port); worker.start()
     rail_target,rail_speed=pygame.Rect(340,240,870,28),pygame.Rect(340,580,510,28); cards={}; dragging=None; pending=None; last=0.; running=True
     try:
       while running:
