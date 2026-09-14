@@ -57,10 +57,16 @@ preferences.sensitivity = Math.max(50, Math.min(150, preferences.sensitivity));
 preferences.wheel = Object.assign({steering: 0, throttle: 1, brake: 2, deadman: 0,
   invertSteering: false, invertThrottle: true, invertBrake: true, deadzone: 0.05}, preferences.wheel);
 preferences.cameras = Object.assign({forward: 'virtual', auxiliary: 'off'}, preferences.cameras);
+for (const slot of ['forward', 'auxiliary']) {
+  if (typeof preferences.cameras[slot] !== 'string' || !preferences.cameras[slot]) {
+    preferences.cameras[slot] = slot === 'forward' ? 'virtual' : 'off';
+  }
+}
 let selectedPadIndex = null;
 let selectedPadId = null;
 
 const keys = new Set();
+const activeSliders = new Set();
 const smoothedDrive = {linear: 0, angular: 0, updatedAt: performance.now()};
 let socket;
 let gamepad = null;
@@ -75,6 +81,12 @@ let reconnectTimer = null;
 const latencyHistory = [];
 const cameraStreams = {forward: null, auxiliary: null};
 let networkCameraSignature = '';
+let localCameras = [];
+let cameraDeviceRefresh = 0;
+const cameraGeneration = {forward: 0, auxiliary: 0};
+const cameraSources = {forward: null, auxiliary: null};
+const cameraRetries = {forward: null, auxiliary: null};
+const cameraErrors = {forward: '', auxiliary: ''};
 
 function throttle(periodMs, action) {
   let last = 0;
@@ -126,7 +138,8 @@ function drawLatencyGraph() {
 }
 
 function measureLatency() {
-  if (socket?.readyState !== WebSocket.OPEN || latencyProbeStarted) return;
+  if (socket?.readyState !== WebSocket.OPEN) return;
+  if (latencyProbeStarted && performance.now() - latencyProbeStarted < TELEMETRY_TIMEOUT_MS) return;
   latencyProbeId += 1;
   latencyProbeStarted = performance.now();
   send({type: 'latency_ping', probe_id: latencyProbeId});
@@ -145,14 +158,18 @@ function recordLatency(probeId) {
 
 function connect() {
   clearTimeout(reconnectTimer);
+  stopInput();
+  state.drive.armed = state.drive.deadman = state.drive.you_control_owner = false;
+  latencyProbeStarted = 0;
   if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
   const connectingSocket = new WebSocket(`${scheme}://${location.host}/ws`);
   socket = connectingSocket;
-  lastTelemetryAt = 0;
+  lastTelemetryAt = performance.now();
   setConnection(false, 'Connecting to operator stack', 'The dashboard is loaded. Waiting for telemetry from the Raspberry Pi gateway.');
 
   connectingSocket.onopen = () => {
+    if (socket !== connectingSocket) return;
     $('connection').textContent = 'Gateway linked · waiting for telemetry';
     measureLatency();
   };
@@ -175,7 +192,10 @@ function connect() {
   connectingSocket.onerror = () => connectingSocket.close();
 
   connectingSocket.onmessage = event => {
-    const message = JSON.parse(event.data);
+    if (socket !== connectingSocket) return;
+    let message;
+    try { message = JSON.parse(event.data); } catch { return; }
+    if (!message || typeof message !== 'object') return;
     if (message.type === 'latency_pong') {
       recordLatency(message.probe_id);
       return;
@@ -188,6 +208,7 @@ function connect() {
     lastTelemetryAt = performance.now();
     if (!state.connected) setConnection(true, 'Raspberry Pi connected');
     Object.assign(state, message);
+    state.connected = true;
     updateNetworkCameraOptions();
     updateCameraLatency();
     updateHud();
@@ -196,7 +217,7 @@ function connect() {
 
 setInterval(measureLatency, LATENCY_PERIOD_MS);
 setInterval(() => {
-  if (socket?.readyState === WebSocket.OPEN && lastTelemetryAt &&
+  if (socket && socket.readyState < WebSocket.CLOSING &&
       performance.now() - lastTelemetryAt > TELEMETRY_TIMEOUT_MS) {
     setConnection(false, 'Telemetry stalled', 'The gateway connection is open, but rover telemetry stopped. Controls are disabled while reconnecting.');
     socket.close();
@@ -252,20 +273,20 @@ function updateHud() {
 
   $('sweep-toggle').textContent = detector.sweep_enabled ? 'Stop sweep' : 'Start sweep';
   setRange($('sweep-speed'), detector.sweep_speed_min, detector.sweep_speed_max, 5);
-  if (document.activeElement !== $('sweep-speed')) $('sweep-speed').value = detector.sweep_speed_deg_s;
+  if (!activeSliders.has('sweep-speed')) $('sweep-speed').value = detector.sweep_speed_deg_s;
   $('sweep-speed-value').textContent = `${Math.round(detector.sweep_speed_deg_s)}°/s`;
 
   $('probe-depth').textContent = `${Math.round(probe.depth_mm)} mm`;
   $('probe-target').textContent = `${Math.round(probe.target_mm)} mm`;
   $('probe-pressure').textContent = `${Math.round(probe.pressure_ratio * 100)}%`;
   setRange($('probe-slider'), 0, probe.max_depth_mm, 1);
-  if (document.activeElement !== $('probe-slider')) $('probe-slider').value = probe.target_mm;
+  if (!activeSliders.has('probe-slider')) $('probe-slider').value = probe.target_mm;
   $('probe-arm').style.height = `${probe.depth_mm / probe.max_depth_mm * 2.4}rem`;
   $('probe-status').textContent = probe.fault ? 'FAULT' : probe.depth_mm > 2 ? 'DEPLOYED' : 'STOWED';
   $('probe-status').className = `badge ${probe.fault ? 'active' : probe.depth_mm > 2 ? 'safe' : 'neutral'}`;
 
   $('arm-state').textContent = !owner ? 'SPECTATOR' : (drive.armed ? (drive.deadman ? 'DRIVING' : 'ARMED') : 'DISARMED');
-  $('arm-state').className = `badge ${drive.armed ? 'active' : 'neutral'}`;
+  $('arm-state').className = `badge ${owner && drive.armed ? 'active' : 'neutral'}`;
   $('camera-notice').textContent = !owner
     ? 'Spectator mode · take control to arm or actuate.'
     : drive.armed
@@ -296,7 +317,9 @@ function updateInputHint() {
       ? 'WASD active · hold Shift to drive'
       : 'Click the forward camera to use WASD';
   } else {
-    $('controller').textContent = 'No controller connected';
+    $('controller').textContent = window.isSecureContext
+      ? 'No controller selected · choose a device in Settings'
+      : 'Gamepads need HTTPS · choose WASD in Settings';
   }
 }
 
@@ -321,14 +344,14 @@ function readGamepad() {
   const throttle = responseCurve(buttonValue(pad.buttons[7]) - buttonValue(pad.buttons[6]));
   return {
     linear: throttle * MAX_LINEAR_MPS,
-    angular: steering * MAX_ANGULAR_RAD_S * preferences.sensitivity / 100,
+    angular: -steering * MAX_ANGULAR_RAD_S * preferences.sensitivity / 100,
     deadman: Boolean(pad.buttons[5]?.pressed),
   };
 }
 
 function readKeyboard() {
   const linear = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
-  const angular = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+  const angular = (keys.has('KeyA') ? 1 : 0) - (keys.has('KeyD') ? 1 : 0);
   return {
     linear: linear * MAX_LINEAR_MPS,
     angular: angular * MAX_ANGULAR_RAD_S * preferences.sensitivity / 100,
@@ -349,7 +372,7 @@ function inputLoop() {
     target = readWheel(gamepad, preferences.wheel);
   }
   renderInputs(pads, target);
-  if ($('settings-dialog').open || document.hidden || !document.hasFocus()) target = {linear: 0, angular: 0, deadman: false};
+  if (!state.connected || !state.drive.you_control_owner || !state.drive.armed || $('settings-dialog').open || document.hidden || !document.hasFocus()) target = {linear: 0, angular: 0, deadman: false};
   if (!target.deadman) {
     target.linear = target.angular = 0;
     smoothedDrive.linear = smoothedDrive.angular = 0;
@@ -382,6 +405,7 @@ function inputLoop() {
 
 function stopLocalInput() {
   keys.clear();
+  activeSliders.clear();
   smoothedDrive.linear = smoothedDrive.angular = 0;
 }
 
@@ -389,8 +413,18 @@ $('take-control').onclick = () => send({type: 'take_control'});
 $('arm').onclick = () => send({type: 'arm'});
 $('estop').onclick = () => send({type: 'estop'});
 
-$('probe-slider').oninput = throttle(70, event => send({type: 'probe_target', depth_mm: Number(event.target.value)}));
-$('sweep-speed').oninput = throttle(70, event => send({type: 'sweep_speed', deg_s: Number(event.target.value)}));
+for (const [id, type, field] of [['probe-slider', 'probe_target', 'depth_mm'], ['sweep-speed', 'sweep_speed', 'deg_s']]) {
+  const commit = event => {
+    if (state.connected && state.drive.you_control_owner) send({type, [field]: Number(event.target.value)});
+  };
+  $(id).addEventListener('pointerdown', () => activeSliders.add(id));
+  $(id).addEventListener('keydown', () => activeSliders.add(id));
+  $(id).addEventListener('blur', () => activeSliders.delete(id));
+  $(id).addEventListener('pointercancel', () => activeSliders.delete(id));
+  $(id).oninput = throttle(70, commit);
+  // Always deliver the released value, even inside the throttle window.
+  $(id).onchange = event => { activeSliders.delete(id); commit(event); };
+}
 $('sweep-toggle').onclick = () => send({type: 'sweep_enabled', enabled: !state.detector.sweep_enabled});
 
 function savePreferences() {
@@ -425,7 +459,7 @@ function activateKeyboardInput() {
 
 function deactivateKeyboardInput() {
   cameraFocused = false;
-  keys.clear();
+  stopInput();
   updateInputHint();
 }
 
@@ -494,6 +528,7 @@ function drawSegment(context, from, to) {
 }
 
 function drawForwardView() {
+  if (forward.classList.contains('hidden')) return;
   const context = resize(forward);
   const width = forward.clientWidth;
   const height = forward.clientHeight;
@@ -547,7 +582,6 @@ function drawForwardView() {
   context.closePath();
   context.fill();
 
-  requestAnimationFrame(drawForwardView);
 }
 
 function drawMap() {
@@ -557,7 +591,10 @@ function drawMap() {
   const crossHalf = 6;
   const scale = Math.min(width / (LANE_END_M - LANE_START_M), height / (2 * crossHalf));
   // +X runs left to right, +Y runs up the screen.
-  const toScreen = (x, y) => ({x: (x - LANE_START_M) * scale, y: height / 2 - y * scale});
+  const centreX = (LANE_START_M + LANE_END_M) / 2;
+  const toScreen = (x, y) => ({x: width / 2 + (x - centreX) * scale, y: height / 2 - y * scale});
+  const leftX = Math.floor(centreX - width / (2 * scale));
+  const rightX = Math.ceil(centreX + width / (2 * scale));
 
   context.clearRect(0, 0, width, height);
   context.fillStyle = '#101f20';
@@ -565,11 +602,11 @@ function drawMap() {
 
   context.strokeStyle = '#244244';
   context.lineWidth = 1;
-  for (let x = LANE_START_M; x <= LANE_END_M; x += 1) {
+  for (let x = leftX; x <= rightX; x += 1) {
     drawSegment(context, toScreen(x, -crossHalf), toScreen(x, crossHalf));
   }
   for (let y = -crossHalf; y <= crossHalf; y += 1) {
-    drawSegment(context, toScreen(LANE_START_M, y), toScreen(LANE_END_M, y));
+    drawSegment(context, toScreen(leftX, y), toScreen(rightX, y));
   }
 
   const laneTopLeft = toScreen(LANE_START_M, LANE_HALF_WIDTH_M);
@@ -607,7 +644,6 @@ function drawMap() {
   context.fill();
   context.restore();
 
-  requestAnimationFrame(drawMap);
 }
 
 function drawPressureHistory() {
@@ -638,7 +674,6 @@ function drawPressureHistory() {
     context.stroke();
   }
 
-  requestAnimationFrame(drawPressureHistory);
 }
 
 // Fixture angles are counter-clockwise in the world, which is counter-clockwise
@@ -695,7 +730,6 @@ function drawRadar() {
     context.fill();
   }
 
-  requestAnimationFrame(drawRadar);
 }
 
 // Browser input acquisition and diagnostics. No device output reports are sent.
@@ -716,55 +750,82 @@ function readWheel(pad, mapping) {
   const raw = pad.axes[mapping.steering] * (mapping.invertSteering ? -1 : 1);
   const steering = Math.sign(raw) * Math.max(0, Math.min(1, (Math.abs(raw) - mapping.deadzone) / (1 - mapping.deadzone)));
   return {linear: (pedal('throttle', mapping.invertThrottle) - pedal('brake', mapping.invertBrake)) * MAX_LINEAR_MPS,
-    angular: steering * MAX_ANGULAR_RAD_S * preferences.sensitivity / 100,
+    angular: -steering * MAX_ANGULAR_RAD_S * preferences.sensitivity / 100,
     deadman: Boolean(pad.buttons[mapping.deadman].pressed)};
 }
 
 function stopInput() {
   stopLocalInput();
-  send({type: 'drive', linear_x: 0, angular_z: 0, deadman: false});
-  if (state.drive.you_control_owner) send({type: 'estop'});
+  if (state.drive.you_control_owner) {
+    send({type: 'drive', linear_x: 0, angular_z: 0, deadman: false});
+    send({type: 'estop'});
+  }
 }
 
 function stopCameraStream(slot) {
+  cameraGeneration[slot] += 1;
+  clearTimeout(cameraRetries[slot]);
+  cameraRetries[slot] = null;
+  cameraSources[slot] = null;
   cameraStreams[slot]?.getTracks().forEach(track => track.stop());
   cameraStreams[slot] = null;
   const video = slot === 'forward' ? $('forward-video') : $('aux-video');
   video.srcObject = null;
   const networkImage = slot === 'forward' ? $('forward-network-camera') : $('aux-network-camera');
+  networkImage.onload = networkImage.onerror = null;
   networkImage.removeAttribute('src');
 }
 
-async function startCamera(slot, source) {
+async function startCamera(slot, source, force = false) {
+  if (!force && cameraSources[slot] === source) return;
   stopCameraStream(slot);
-  if (source === 'virtual' || source === 'off') {
-    updateCameraVisibility();
-    return;
-  }
+  cameraSources[slot] = source;
+  cameraErrors[slot] = '';
+  const generation = cameraGeneration[slot];
+  const current = () => generation === cameraGeneration[slot];
+  updateCameraVisibility();
+  if (source === 'virtual' || source === 'off') return;
   if (source.startsWith('raspberry:')) {
-    const camera = source.split(':')[1];
     const networkImage = slot === 'forward' ? $('forward-network-camera') : $('aux-network-camera');
-    networkImage.src = `/camera/${camera}?t=${Date.now()}`;
     networkImage.onerror = () => {
-      $('camera-source-status').textContent = 'The Raspberry Pi camera stream is unavailable. Check the ROS launch log.';
+      if (!current()) return;
+      cameraErrors[slot] = 'STREAM OFFLINE · retrying';
+      $('camera-source-status').textContent = 'Camera stream unavailable. Retrying automatically…';
+      updateCameraLatency();
+      clearTimeout(cameraRetries[slot]);
+      cameraRetries[slot] = setTimeout(() => startCamera(slot, source, true), 1500);
     };
     networkImage.onload = () => {
-      $('camera-source-status').textContent = 'Raspberry Pi camera stream connected.';
+      if (!current()) return;
+      cameraErrors[slot] = '';
+      updateCameraLatency();
     };
-    updateCameraVisibility();
+    networkImage.src = `/camera/${encodeURIComponent(source.slice(10))}?t=${Date.now()}`;
     return;
   }
   try {
+    if (!navigator.mediaDevices?.getUserMedia) throw Error('Laptop cameras need HTTPS or localhost.');
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: {deviceId: {exact: source}},
+      video: {deviceId: {exact: source}, width: {ideal: 640}, height: {ideal: 480}, frameRate: {ideal: 30}},
     });
+    if (!current()) {
+      stream.getTracks().forEach(track => track.stop());
+      return;
+    }
     cameraStreams[slot] = stream;
     const video = slot === 'forward' ? $('forward-video') : $('aux-video');
     video.srcObject = stream;
     await video.play();
+    if (!current()) return;
+    stream.getVideoTracks().forEach(track => track.addEventListener('ended', () => {
+      if (current()) startCamera(slot, source, true);
+    }));
     $('camera-source-status').textContent = 'Camera previews are live on this browser.';
   } catch (error) {
+    if (!current()) return;
+    stopCameraStream(slot);
+    cameraErrors[slot] = 'LOCAL CAMERA UNAVAILABLE';
     $('camera-source-status').textContent = `Could not open camera: ${error.message}`;
   }
   updateCameraVisibility();
@@ -772,24 +833,28 @@ async function startCamera(slot, source) {
 
 function updateCameraVisibility() {
   const forwardIsNetwork = preferences.cameras.forward.startsWith('raspberry:');
-  const forwardIsVirtual = preferences.cameras.forward === 'virtual' ||
-    (!forwardIsNetwork && !cameraStreams.forward);
+  const forwardIsVirtual = preferences.cameras.forward === 'virtual';
   forward.classList.toggle('hidden', !forwardIsVirtual);
   $('forward-video').classList.toggle('hidden', forwardIsVirtual || forwardIsNetwork);
   $('forward-network-camera').classList.toggle('hidden', !forwardIsNetwork);
   $('forward-camera-label').textContent = forwardIsVirtual ? 'VIRTUAL FORWARD CAMERA' : forwardIsNetwork ? 'RASPBERRY PI CAMERA' : 'LOCAL CAMERA';
-  $('forward-camera-latency').classList.toggle('hidden', !forwardIsNetwork);
+  $('forward-camera-latency').classList.toggle('hidden', !forwardIsNetwork && !cameraErrors.forward);
   const auxiliaryIsNetwork = preferences.cameras.auxiliary.startsWith('raspberry:');
   const auxiliaryIsLocal = preferences.cameras.auxiliary !== 'off' && Boolean(cameraStreams.auxiliary);
   $('aux-video').classList.toggle('hidden', !auxiliaryIsLocal || auxiliaryIsNetwork);
   $('aux-network-camera').classList.toggle('hidden', !auxiliaryIsNetwork);
   $('aux-camera-label').classList.toggle('hidden', !auxiliaryIsNetwork && !auxiliaryIsLocal);
-  $('aux-camera-latency').classList.toggle('hidden', !auxiliaryIsNetwork);
+  $('aux-camera-latency').classList.toggle('hidden', !auxiliaryIsNetwork && !cameraErrors.auxiliary);
   updateCameraLatency();
 }
 
 function updateCameraLatency() {
-  const render = (element, camera) => {
+  const render = (element, camera, slot) => {
+    if (cameraErrors[slot]) {
+      element.textContent = cameraErrors[slot];
+      element.classList.add('stale');
+      return;
+    }
     if (!camera) {
       element.textContent = `NO FRAMES · LINK ${linkLatencyMs ?? '--'} ms`;
       element.classList.add('stale');
@@ -797,92 +862,69 @@ function updateCameraLatency() {
     }
     const age = Math.max(0, Math.round(camera.frame_age_ms));
     const fps = Number(camera.fps || 0).toFixed(1);
-    element.textContent = `${fps} FPS · ROS ${age} ms · LINK ${linkLatencyMs ?? '--'} ms`;
+    element.textContent = `${fps} SOURCE FPS · SOURCE AGE ${age} ms · RTT ${linkLatencyMs ?? '--'} ms`;
     element.classList.toggle('stale', age > 500);
   };
   const selected = source => source.startsWith('raspberry:') ? state.cameras?.[source.slice(10)] : null;
-  render($('forward-camera-latency'), selected(preferences.cameras.forward));
-  render($('aux-camera-latency'), selected(preferences.cameras.auxiliary));
+  render($('forward-camera-latency'), selected(preferences.cameras.forward), 'forward');
+  render($('aux-camera-latency'), selected(preferences.cameras.auxiliary), 'auxiliary');
+}
+
+function rebuildCameraOptions() {
+  for (const [slot, id, fallback, label] of [
+    ['forward', 'forward-camera-source', 'virtual', 'Virtual forward camera'],
+    ['auxiliary', 'aux-camera-source', 'off', 'Off'],
+  ]) {
+    const select = $(id);
+    const selected = preferences.cameras[slot];
+    select.replaceChildren(new Option(label, fallback));
+    Object.entries(state.cameras || {}).forEach(([id, camera]) =>
+      select.add(new Option(`Raspberry Pi · ${camera.label}`, `raspberry:${id}`)));
+    localCameras.filter(camera => camera.deviceId).forEach((camera, index) =>
+      select.add(new Option(camera.label || `Laptop camera ${index + 1}`, camera.deviceId)));
+    if (![...select.options].some(option => option.value === selected)) {
+      select.add(new Option(`Unavailable · ${selected.startsWith('raspberry:') ? selected.slice(10) : 'saved laptop camera'}`, selected));
+    }
+    select.value = selected;
+  }
 }
 
 function updateNetworkCameraOptions() {
-  const networkCameras = Object.entries(state.cameras || {});
-  const signature = networkCameras.map(([id, camera]) => `${id}:${camera.topic}`).join('|');
+  const signature = JSON.stringify(Object.entries(state.cameras || {}).map(([id, camera]) => [id, camera.topic, camera.label]));
   if (signature === networkCameraSignature) return;
   networkCameraSignature = signature;
-
-  const selections = [
-    [$('forward-camera-source'), 'virtual', 'Virtual forward camera'],
-    [$('aux-camera-source'), 'off', 'Off'],
-  ];
-  for (const [select, defaultValue, defaultLabel] of selections) {
-    const current = select.value || (select === $('forward-camera-source') ? preferences.cameras.forward : preferences.cameras.auxiliary);
-    select.replaceChildren(new Option(defaultLabel, defaultValue));
-    Object.entries(state.cameras || {}).forEach(([id, camera]) =>
-      select.add(new Option(`Raspberry Pi · ${camera.label}`, `raspberry:${id}`)));
-    const firstNetworkSource = networkCameras.length ? `raspberry:${networkCameras[0][0]}` : defaultValue;
-    const shouldAutoSelect = select === $('forward-camera-source')
-      && preferences.cameras.forward === 'virtual'
-      && networkCameras.length > 0;
-    select.value = shouldAutoSelect ? firstNetworkSource
-      : [...select.options].some(option => option.value === current) ? current : defaultValue;
-  }
-  const forward = $('forward-camera-source').value;
-  const auxiliary = $('aux-camera-source').value;
-  if (preferences.cameras.forward !== forward || preferences.cameras.auxiliary !== auxiliary) {
-    preferences.cameras.forward = forward;
-    preferences.cameras.auxiliary = auxiliary;
-    savePreferences();
-    startCamera('forward', forward);
-    startCamera('auxiliary', auxiliary);
+  rebuildCameraOptions();
+  for (const slot of ['forward', 'auxiliary']) {
+    if (preferences.cameras[slot].startsWith('raspberry:')) startCamera(slot, preferences.cameras[slot]);
   }
 }
 
 async function refreshCameraDevices(requestPermission = false) {
-  const selections = [
-    [$('forward-camera-source'), 'virtual', 'Virtual forward camera'],
-    [$('aux-camera-source'), 'off', 'Off'],
-  ];
-  updateNetworkCameraOptions();
+  const refresh = ++cameraDeviceRefresh;
+  rebuildCameraOptions();
   if (!navigator.mediaDevices?.enumerateDevices) {
-    const restore = (select, source, fallback) => {
-      select.value = source.startsWith('raspberry:') ? source : fallback;
-      return select.value;
-    };
-    preferences.cameras.forward = restore($('forward-camera-source'), preferences.cameras.forward, 'virtual');
-    preferences.cameras.auxiliary = restore($('aux-camera-source'), preferences.cameras.auxiliary, 'off');
-    $('camera-source-status').textContent = `${Object.keys(state.cameras || {}).length} live Raspberry Pi camera source(s). Laptop camera access needs HTTPS or localhost.`;
-    savePreferences();
-    if (preferences.cameras.forward.startsWith('raspberry:')) await startCamera('forward', preferences.cameras.forward);
-    if (preferences.cameras.auxiliary.startsWith('raspberry:')) await startCamera('auxiliary', preferences.cameras.auxiliary);
+    $('refresh-cameras').disabled = true;
+    $('camera-source-status').textContent = 'Raspberry Pi cameras work here. Laptop cameras need HTTPS or localhost.';
     return;
   }
-  let permissionStream = null;
+  let permissionStream;
   try {
-    if (requestPermission) permissionStream = await navigator.mediaDevices.getUserMedia({video: true, audio: false});
-    const cameras = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'videoinput');
-    for (const [select, defaultValue, defaultLabel] of selections) {
-      cameras.forEach((camera, index) => select.add(new Option(camera.label || `Camera ${index + 1}`, camera.deviceId)));
+    if (requestPermission) {
+      permissionStream = await navigator.mediaDevices.getUserMedia({video: true, audio: false});
+      // Release the temporary capture before opening selected cameras.
+      permissionStream.getTracks().forEach(track => track.stop());
     }
-    const knownSource = source => source.startsWith('raspberry:') || cameras.some(camera => camera.deviceId === source);
-    $('forward-camera-source').value = knownSource(preferences.cameras.forward)
-      ? preferences.cameras.forward : 'virtual';
-    $('aux-camera-source').value = knownSource(preferences.cameras.auxiliary)
-      ? preferences.cameras.auxiliary : 'off';
-    preferences.cameras.forward = $('forward-camera-source').value;
-    preferences.cameras.auxiliary = $('aux-camera-source').value;
-    $('camera-source-status').textContent = `${Object.keys(state.cameras || {}).length} live Raspberry Pi camera source(s) · ${cameras.length} laptop camera${cameras.length === 1 ? '' : 's'} available.`;
-    savePreferences();
-    if (preferences.cameras.forward.startsWith('raspberry:') ||
-        (cameras.some(camera => camera.label) && preferences.cameras.forward !== 'virtual')) {
-      await startCamera('forward', preferences.cameras.forward);
-    }
-    if (preferences.cameras.auxiliary.startsWith('raspberry:') ||
-        (cameras.some(camera => camera.label) && preferences.cameras.auxiliary !== 'off')) {
-      await startCamera('auxiliary', preferences.cameras.auxiliary);
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    if (refresh !== cameraDeviceRefresh) return;
+    localCameras = devices.filter(device => device.kind === 'videoinput');
+    rebuildCameraOptions();
+    $('camera-source-status').textContent = `${Object.keys(state.cameras || {}).length} Raspberry Pi camera source(s) · ${localCameras.length} laptop camera(s).`;
+    for (const slot of ['forward', 'auxiliary']) {
+      const source = preferences.cameras[slot];
+      if (localCameras.some(camera => camera.deviceId === source && camera.label)) await startCamera(slot, source);
     }
   } catch (error) {
-    $('camera-source-status').textContent = `Camera permission failed: ${error.message}`;
+    if (refresh === cameraDeviceRefresh) $('camera-source-status').textContent = `Camera permission failed: ${error.message}`;
   } finally {
     permissionStream?.getTracks().forEach(track => track.stop());
   }
@@ -941,6 +983,7 @@ function initializeInputs() {
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopInput(); });
   $('refresh-cameras').onclick = () => refreshCameraDevices(true);
   $('forward-camera-source').onchange = async event => {
+    stopInput();
     preferences.cameras.forward = event.target.value;
     savePreferences();
     await startCamera('forward', event.target.value);
@@ -956,8 +999,12 @@ function initializeInputs() {
 
 let deviceSignature = '';
 let lastPreview = 0;
+let lastInputHint = 0;
 function renderInputs(pads, target) {
-  updateInputHint();
+  if (performance.now() - lastInputHint > 100) {
+    updateInputHint();
+    lastInputHint = performance.now();
+  }
   if (!$('settings-dialog').open || performance.now() - lastPreview < 50) return;
   lastPreview = performance.now();
   const keyboard = preferences.input === 'keyboard';
@@ -978,7 +1025,7 @@ function renderInputs(pads, target) {
     : 'No device selected. Press a device button, then select it above.';
   document.querySelectorAll('[data-code]').forEach(el => el.classList.toggle('pressed', keys.has(el.dataset.code)));
   const preview = keyboard ? readKeyboard() : target;
-  $('steering-preview').setAttribute('transform', `rotate(${preview.angular / MAX_ANGULAR_RAD_S * 100} 80 80)`);
+  $('steering-preview').setAttribute('transform', `rotate(${-preview.angular / MAX_ANGULAR_RAD_S * 100} 80 80)`);
   $('mapped-input').textContent = `Forward / reverse: ${preview.linear.toFixed(3)} m/s\nSteering: ${preview.angular.toFixed(3)} rad/s\nDeadman: ${preview.deadman ? 'HELD' : 'released'}\nDrive output: stopped in Settings`;
   const axes = keyboard ? [] : gamepad?.axes ?? [];
   const buttons = keyboard ? [] : gamepad?.buttons ?? [];
@@ -999,7 +1046,19 @@ updateCameraVisibility();
 setConnection(false, 'Connecting to operator stack');
 connect();
 inputLoop();
-drawForwardView();
-drawMap();
-drawPressureHistory();
-drawRadar();
+let lastCanvasFrame = 0;
+let lastInstrumentFrame = 0;
+function drawDashboard(now) {
+  if (!document.hidden && now - lastCanvasFrame >= 1000 / 30) {
+    lastCanvasFrame = now;
+    drawForwardView();
+    if (now - lastInstrumentFrame >= 100) {
+      lastInstrumentFrame = now;
+      drawMap();
+      drawPressureHistory();
+      drawRadar();
+    }
+  }
+  requestAnimationFrame(drawDashboard);
+}
+requestAnimationFrame(drawDashboard);

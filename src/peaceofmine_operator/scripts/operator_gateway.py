@@ -36,6 +36,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo
 from std_msgs.msg import Bool, Float32
+from peaceofmine_operator.camera_stream import CameraStreams
 
 # Authoritative actuator limits. The dashboard reads these from telemetry so
 # the browser never carries its own copy.
@@ -418,6 +419,8 @@ def build_ssl_context(cert: str, key: str) -> ssl.SSLContext | None:
 def build_app(node: OperatorGateway) -> web.Application:
     app = web.Application()
     dashboard = dashboard_directory()
+    cameras = CameraStreams(str(node.get_parameter('camera_stream_base_url').value))
+    app.on_shutdown.append(cameras.close)
 
     async def index_handler(_: web.Request) -> web.FileResponse:
         return web.FileResponse(dashboard / 'index.html', headers={'Cache-Control': 'no-store'})
@@ -436,33 +439,7 @@ def build_app(node: OperatorGateway) -> web.Application:
         if camera is None:
             raise web.HTTPNotFound()
         topic = camera['topic'].replace('/camera_info', '/image_raw')
-        base_url = str(node.get_parameter('camera_stream_base_url').value).rstrip('/')
-        timeout = aiohttp.ClientTimeout(total=None, sock_connect=4.0, sock_read=None)
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    f'{base_url}/stream',
-                    params={
-                        'topic': topic,
-                        'type': 'mjpeg',
-                        'quality': '60',
-                        'qos_profile': 'default',
-                    },
-                ) as upstream:
-                    if upstream.status != 200:
-                        raise web.HTTPBadGateway(text=f'Camera stream returned HTTP {upstream.status}.')
-                    response = web.StreamResponse(
-                        headers={
-                            'Content-Type': upstream.headers.get('Content-Type', 'multipart/x-mixed-replace'),
-                            'Cache-Control': 'no-store',
-                            'X-Accel-Buffering': 'no',
-                        })
-                    await response.prepare(request)
-                    async for chunk in upstream.content.iter_any():
-                        await response.write(chunk)
-                    return response
-        except (aiohttp.ClientError, asyncio.TimeoutError) as error:
-            raise web.HTTPBadGateway(text=f'Camera streaming service unavailable: {error}') from error
+        return await cameras.serve(request, topic)
 
     async def socket_handler(request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=10.0)

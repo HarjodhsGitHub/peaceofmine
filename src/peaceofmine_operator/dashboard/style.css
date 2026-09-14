@@ -376,17 +376,17 @@ button:disabled {
   letter-spacing: .06em;
 }
 
-.neutral {
+.badge.neutral {
   background: #233940;
   color: #c3d5d0;
 }
 
-.active {
+.badge.active {
   background: #b9473d;
   color: #fff;
 }
 
-.safe {
+.badge.safe {
   background: #22584a;
   color: #b4f3d3;
 }
@@ -874,3 +874,32 @@ dialog select {
 #settings-dialog a { color: #72d6b4; }
 #settings-dialog .hidden { display: none; }
 @media (max-width: 500px) { .mapping-grid, .raw-axes { grid-template-columns: 1fr; } .input-preview { gap: .5rem; } .input-preview svg { width: 90px; } }
+
+/* Let controls grow with text and window size instead of clipping them. */
+main { display: flex; flex-direction: column; height: auto; min-height: 100dvh; }
+header { height: auto; min-height: 3.25rem; flex-wrap: wrap; margin-bottom: .7rem; }
+.header-actions { flex-wrap: wrap; }
+.workspace { flex: 1; height: auto; min-height: calc(100dvh - 5.5rem); }
+.control-column { grid-template-rows: auto minmax(14rem, 1fr) auto; }
+.status-panel, .detector-panel, .probe-panel { overflow: visible; min-width: 0; }
+.controller-text, .connection, .dialog-help { overflow-wrap: anywhere; }
+.camera-feed, .aux-camera { object-fit: contain; }
+.viewport { container-type: inline-size; min-height: 20rem; }
+.aux-camera { width: clamp(8rem, 27cqw, 18rem); aspect-ratio: 4 / 3; }
+.aux-camera-label { bottom: calc(3.4rem + clamp(6rem, 20.25cqw, 13.5rem) - 1.6rem); }
+.camera-label, .camera-latency, .aux-camera-label, .aux-camera-latency,
+.speed-readout, .input-lock, .camera-notice { pointer-events: none; }
+.input-lock { top: 4.8rem; left: .7rem; transform: none; }
+.camera-latency { max-width: calc(100% - 1.4rem); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid #72d6b4; outline-offset: 3px; }
+@media (max-width: 1000px) {
+  header { align-items: flex-start; }
+  .header-actions { flex: 1 1 100%; }
+}
+@media (max-width: 760px) {
+  .workspace { min-height: 0; grid-template-rows: 25rem auto 15rem; }
+  .control-column { grid-template-rows: auto auto auto; }
+  .detector-panel { min-height: 17rem; }
+  .settings-section-heading, .input-preview { flex-wrap: wrap; }
+  .source-help { grid-template-columns: 1fr; }
+}

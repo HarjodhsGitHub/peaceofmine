@@ -246,7 +246,7 @@ append() {
 # > istrue NAME
 istrue() {
     VALUE="$(eval echo "\$$1")"
-    test "${VALUE:-0}" -eq 1
+    test "${VALUE:-0}" = 1
     return $?
 }
 

@@ -121,8 +121,11 @@ reads them from telemetry, so the browser holds no copy of its own.
 
 The gateway commands `cmd_vel`, which `svea_examples/twist_consumer.py`
 consumes, so the simulator's `sim_svea.py` and the real PX4 path share one
-drive interface. A real camera replaces the virtual canvas with a WebRTC
-`MediaStream` without changing telemetry or controls.
+drive interface. Network cameras replace the virtual canvas with a same-origin MJPEG preview;
+laptop cameras use a local `MediaStream`. Neither changes telemetry or controls.
+The gateway shares one upstream encoder per topic and retains only the newest
+queued frame per viewer. Camera badges show source FPS, source frame age and
+WebSocket RTT; these are not camera-to-display latency measurements.
 
 ## Known simulator artifacts
 
@@ -177,3 +180,6 @@ python3 -m unittest discover -s src/peaceofmine_operator/test -v
 The test uses synthetic devices in headless Chromium; actual G27 enumeration,
 axis mapping, and ROS simulation still need verification in the deployment
 environment before hardware driving.
+
+See [the UI audit](../../docs/development/operator-ui-audit.md) for fixes,
+validation results, and the running nils simulation configuration.
