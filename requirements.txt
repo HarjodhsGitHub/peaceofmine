@@ -26,3 +26,6 @@ pyudev>=0.24,<1
 # Install the resolver alongside aiohttp; the base image's system copy may
 # be incomplete and can otherwise prevent aiohttp (and the GUI) importing.
 aiodns>=3.2,<5
+
+# ArbotiX / MX-64 arm transport (Protocol 1.0)
+dynamixel-sdk==3.7.31

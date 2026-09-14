@@ -89,7 +89,15 @@ def main(
     use_joy: bool = False,
     fixture_angle_offset_deg: float = 0.0,
     max_velocity: float = 0.8,
+    use_arm_servo: bool = False,
+    arm_serial_port: str = '',
+    arm_servo_id: int = -1,
+    arm_minimum: int = -1,
+    arm_center: int = -1,
+    arm_maximum: int = -1,
 ):
+    if use_arm_servo and simulate_payload:
+        raise ValueError('Disable simulate_payload before enabling the real arm servo')
     tls_cert, tls_key = _ensure_tls(tls_cert, tls_key)
     port = _pick_port(int(port))
     print(f'Operator TLS: {tls_cert}', flush=True)
@@ -108,6 +116,10 @@ def main(
                lli_baud_rate=lli_baud_rate)
 
     with bl.group(name):
+        if use_arm_servo:
+            bl.node('peaceofmine_operator', 'arm_servo_node.py', name='arm_servo',
+                    params=dict(serial_port=arm_serial_port, servo_id=arm_servo_id,
+                                minimum=arm_minimum, center=arm_center, maximum=arm_maximum))
         bl.node('svea_examples', 'twist_consumer.py',
                 name='operator_twist_consumer',
                 params=dict(twist_top='cmd_vel',

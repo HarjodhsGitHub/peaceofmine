@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="serial_port" default=""/>
+  <arg name="servo_id" default="-1"/>
+  <arg name="minimum" default="-1"/>
+  <arg name="center" default="-1"/>
+  <arg name="maximum" default="-1"/>
+  <arg name="speed" default="20"/>
+  <node pkg="peaceofmine_operator" exec="arm_servo_node.py" name="arm_servo" output="screen">
+    <param name="serial_port" value="$(var serial_port)" type="str"/>
+    <param name="servo_id" value="$(var servo_id)"/>
+    <param name="minimum" value="$(var minimum)"/>
+    <param name="center" value="$(var center)"/>
+    <param name="maximum" value="$(var maximum)"/>
+    <param name="speed" value="$(var speed)"/>
+  </node>
+</launch>

@@ -91,16 +91,24 @@ if __name__ == '__main__':
     log_path = Path('/tmp/pom-teleop-sim.log')
     with log_path.open('w') as log:
         process = subprocess.Popen([
-            'ros2', 'launch', 'peaceofmine_operator', 'operator_sim.launch.py',
-            'name:=teleop_test', 'host:=127.0.0.1', 'port:=18080', 'use_joy:=false',
+            'ros2', 'launch', 'peaceofmine_operator', 'operator.launch.xml',
+            'name:=teleop_test', 'host:=127.0.0.1', 'port:=18080', 'is_sim:=true', 'use_cameras:=false',
         ], stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             asyncio.run(check())
         finally:
-            os.killpg(process.pid, signal.SIGINT)
+            process.send_signal(signal.SIGINT)
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGTERM)
                 process.wait(timeout=5)
             print(f'Simulation log: {log_path}')
+            log.flush()
+            output = log_path.read_text()
+            assert process.returncode == 0, output
+            assert 'process has died' not in output, output
+            assert 'Traceback' not in output, output
+            assert 'context is invalid' not in output, output
+            assert 'escalating' not in output, output
+            print('Simulation shutdown: no node exceptions or signal escalation OK', flush=True)

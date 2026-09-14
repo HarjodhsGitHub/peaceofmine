@@ -12,7 +12,8 @@ DASHBOARD = pathlib.Path(__file__).resolve().parents[1] / 'dashboard'
 class BrowserInputs(unittest.TestCase):
     def test_inputs_and_stop_gates(self):
         html = (DASHBOARD / 'index.html').read_text()
-        html = html.replace('<script src="/assets/app.js"></script>', '')
+        import re
+        html = re.sub(r'<script src="/assets/[^"]+"></script>', '', html)
         html = html.replace('<link rel="stylesheet" href="/assets/style.css">', '<style>' + (DASHBOARD / 'style.css').read_text() + '</style>')
         setup = '''
 window.requestAnimationFrame = () => 0;
@@ -39,6 +40,7 @@ pad.axes = [0.01, 1, 1];
 assert(readWheel(pad, mapping).angular === 0, 'center deadzone');
 Object.defineProperty(navigator, 'getGamepads', {value: () => [pad], configurable: true});
 selectedPadIndex = 0; selectedPadId = pad.id; preferences.input = 'wheel';
+state.safety = {allowed: true, servo_allowed: true, mode: 'simulation'};
 state.connected = true; state.drive.armed = true; state.drive.you_control_owner = true;
 $('settings').click();
 assert(sent.some(m => m.type === 'estop'), 'settings disarms');
@@ -138,12 +140,97 @@ Object.defineProperty(navigator, 'getGamepads', {configurable: true, value: () =
 lastDriveSent = -1000; inputLoop();
 assert(!latestDrive().deadman && latestDrive().linear_x === 0, 'active Xbox disconnect stops drive');
 runTests(dashboardSource);
+assert(!$('settings-connection') && !document.querySelector('[data-settings-tab="connection"]'), 'unused Connection tab removed');
+preferences.cameras.forward = 'raspberry:front';
+state.cameras.front = {label: 'Front', topic: '/front/camera_info', width: 1280, height: 720, fps: 29.8, frame_age_ms: 20};
+state.connected = true; lastTelemetryAt = performance.now();
+$('settings-dialog').showModal();
+document.querySelector('[data-settings-tab="cameras"]').click();
+renderCameraSettings();
+assert($('forward-dimensions').textContent === '1280 × 720 px', 'camera resolution shown');
+assert($('forward-fps').textContent.includes('29.8'), 'source FPS shown');
+assert($('forward-source-detail').textContent === '/front/camera_info', 'source topic shown');
+preferences.cameraRotation.forward = 0;
+$('forward-rotate').click();
+assert(preferences.cameraRotation.forward === 90 && $('forward-network-camera').style.transform.includes('90deg'), 'rotate applies to main view');
+assert(JSON.parse(localStorage.getItem('peaceofmine.operator.preferences')).cameraRotation.forward === 90, 'rotation persists');
+for (let i = 0; i < 3; i++) $('forward-rotate').click();
+assert(preferences.cameraRotation.forward === 0, 'rotation wraps at 360');
+preferences.cameras.auxiliary = 'off'; renderCameraSettings();
+assert($('auxiliary-preview-state').textContent === 'Off' && $('auxiliary-dimensions').textContent === '—', 'off camera has no invented stats');
+$('settings-dialog').close();
+preferences.input = 'keyboard'; cameraFocused = true;
+const keyEvent = (type, code, keyCode) => document.dispatchEvent(new KeyboardEvent(type, {code, keyCode, bubbles: true}));
+keyEvent('keydown', 'KeyW', 87); keyEvent('keydown', 'KeyA', 65); keyEvent('keydown', 'ShiftLeft', 16);
+assert(keys.has('KeyW') && keys.has('KeyA') && keys.has('ShiftLeft'), 'Keydrown acquires held WASD keys');
+resetKeyboardRamp(0);
+let ramped = readKeyboard(); rampKeyboard(ramped, 16);
+assert(ramped.linear > 0 && ramped.linear < .1 && ramped.angular > 0 && ramped.angular < .2, 'WASD starts gradually with correct yaw');
+const runRamp = hz => { resetKeyboardRamp(0); let value; for (let i = 1; i <= hz / 2; i++) { value = readKeyboard(); rampKeyboard(value, i * 1000 / hz); } return value; };
+const at30 = runRamp(30), at60 = runRamp(60);
+assert(Math.abs(at30.linear - at60.linear) < .00001 && Math.abs(at30.angular - at60.angular) < .00001, 'ramp independent of frame rate');
+keyEvent('keyup', 'KeyW', 87); keyEvent('keyup', 'KeyA', 65);
+ramped = readKeyboard(); rampKeyboard(ramped, 516);
+assert(ramped.linear > 0 && ramped.linear < at60.linear && ramped.angular > 0 && ramped.angular < at60.angular, 'throttle coasts down and steering recenters');
+keyEvent('keyup', 'ShiftLeft', 16);
+assert(keyboardRamp.throttle === 0 && keyboardRamp.steer === 0 && !latestDrive().deadman, 'deadman release bypasses ramp');
+
+state.safety = {allowed: false, mode: 'kill', reason: 'PX4 kill'};
+state.connected = true; state.drive.you_control_owner = true; state.drive.armed = false;
+updateHud();
+assert($('rc-safety').textContent === 'RC KILL', 'physical safety indicator');
+assert($('arm').disabled && $('probe-slider').disabled && $('sweep-toggle').disabled && $('sweep-speed').disabled, 'all website actuation gated');
+state.arm_servo = {connected: true, servo_id: 2, serial_port: '/dev/serial/by-id/arm', position: 2000, torque: false,
+  calibration: {minimum: 1500, center: 2000, maximum: 2500}};
+updateArmSettings();
+assert($('arm-launch-xml').value.includes('arm_servo_id" default="2') && $('arm-launch-xml').value.includes('arm_minimum" default="1500'), 'calibration exports launch XML');
+assert($('arm-move-center').disabled, 'calibration cannot move under PX4 kill');
+state.arm_servo.serial_connected = true;
+state.drive.you_control_owner = false;
+updateArmSettings();
+assert($('arm-select-id').disabled && !$('arm-take-control').hidden, 'calibration exposes control requirement');
+assert($('arm-calibration-access').textContent.includes('Take control'), 'disabled selection explains next step');
+state.drive.you_control_owner = true;
+updateArmSettings();
+assert(!$('arm-select-id').disabled && $('arm-take-control').hidden, 'selection enabled for disarmed owner');
+state.drive.armed = true;
+updateArmSettings();
+assert($('arm-select-id').disabled && $('arm-calibration-access').textContent.includes('Disarm'), 'armed selection has explicit explanation');
+state.drive.armed = false;
+state.drive.calibrating = false;
+state.safety = {allowed: false, servo_allowed: true, mode: 'override'};
+state.arm_servo.calibration = null;
+updateArmSettings();
+assert(!$('arm-calibration-enable').disabled, 'jog setup available before limits exist');
+$('arm-select-id').click();
+const selection = sent.at(-1);
+assert(selection.request_id && $('arm-feedback').textContent.includes('Selecting'), 'selection gives immediate pending feedback');
+state.arm_servo.last_command = {request_id: selection.request_id, success: true, message: 'Servo 2 selected'};
+updateArmSettings();
+assert($('arm-feedback').textContent === 'Servo 2 selected', 'driver acknowledgement shown');
+state.drive.armed = true; state.drive.calibrating = true;
+updateArmSettings();
+assert(!$('arm-jog-left').disabled && !$('arm-jog-right').disabled, 'uncalibrated jog enabled in RC override');
+$('arm-jog-left').onkeydown({key: ' ', repeat: false, preventDefault() {}});
+assert(sent.at(-1).action === 'jog' && sent.at(-1).direction === -1, 'hold sends left jog');
+$('arm-jog-left').onkeyup({key: ' '});
+assert(sent.at(-1).action === 'stop', 'jog release sends stop');
+assert($('arm-servo-position').textContent.includes('°'), 'position shown as degrees');
+state.arm_servo.load_percent = 12.5; state.arm_servo.torque_limit_percent = 50;
+state.arm_servo.current_a = .123; state.arm_servo.speed_deg_s = 2;
+updateArmSettings();
+assert($('arm-load').textContent === '12.5 %' && $('arm-torque-limit').textContent === '50.0 %', 'load and torque limit displayed separately');
+assert($('arm-current').textContent === '0.123 A', 'current telemetry displayed');
+$('settings-dialog').showModal();
+const beforeCalibrationLoop = sent.length;
+inputLoop();
+assert(!sent.slice(beforeCalibrationLoop).some(m => m.type === 'drive'), 'calibration does not send background drive commands');
 document.body.textContent = 'BROWSER TESTS PASSED';
 '''
         import json
         source = (DASHBOARD / 'app.js').read_text()
         gamepad_checks = (DASHBOARD.parent / 'test/test_gamepad.cjs').read_text().split("if (typeof require")[0]
-        script = setup + source + gamepad_checks + '\nconst dashboardSource = ' + json.dumps(source) + ';\n'
+        script = setup + (DASHBOARD / 'keydrown-1.3.0.js').read_text() + source + gamepad_checks + '\nconst dashboardSource = ' + json.dumps(source) + ';\n'
         html += '<script>(async () => {try {' + script + checks + "} catch(e) {document.body.textContent = 'TEST FAILED: ' + e.stack;}})();</script>"
         with tempfile.TemporaryDirectory() as tmp:
             page = pathlib.Path(tmp) / 'test.html'

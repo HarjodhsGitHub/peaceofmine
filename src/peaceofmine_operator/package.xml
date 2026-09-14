@@ -10,6 +10,7 @@
   <depend>geometry_msgs</depend>
   <depend>ament_index_python</depend>
   <depend>nav_msgs</depend>
+  <depend>mavros_msgs</depend>
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
@@ -19,6 +20,7 @@
   <exec_depend>python3-aiohttp</exec_depend>
   <exec_depend>python3-pyudev</exec_depend>
   <exec_depend>launch_xml</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
   <exec_depend>svea_core</exec_depend>
   <exec_depend>svea_examples</exec_depend>
   <exec_depend>usb_cam</exec_depend>

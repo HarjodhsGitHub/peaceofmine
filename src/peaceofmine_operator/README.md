@@ -97,9 +97,9 @@ reports an empty mapping and puts the triggers on axes; Auto then uses that
 Xbox 360 layout. Settings → **Controller mapping** can force Standard or
 Xbox 360 (Linux) if the steer/throttle meters do not follow the pad. For
 keyboard driving, choose **WASD keyboard** in Settings, click the forward
-camera to focus it, then hold Shift while using WASD. Both input paths map
-sticks linearly (0.12 deadzone, no extra smoothing) and send a drive command
-as soon as the pad changes, plus a 20 Hz keepalive while moving.
+camera to focus it, then hold Shift while using WASD. Gamepad sticks map linearly (0.12 deadzone, no extra smoothing). WASD
+throttle and steering ramp progressively. Both send changed commands promptly,
+plus a 20 Hz keepalive while moving.
 
 Browser gamepad input on a non-localhost URL requires HTTPS (`tls_cert` and
 `tls_key`). Alternatively, connect the Xbox to the SVEA USB and launch with
@@ -198,3 +198,34 @@ environment before hardware driving.
 
 See [the UI audit](../../docs/development/operator-ui-audit.md) for fixes,
 validation results, and the running nils simulation configuration.
+
+### Camera settings and keyboard response
+
+Settings → Cameras shows the current main and inset selections using the
+existing capture streams. Each card includes a live preview, source details,
+resolution, and source frame age for ROS cameras. FPS is labeled as measured
+source FPS for ROS, configured capture FPS for browser cameras, or the rendering
+target for the virtual camera. Unavailable metadata is shown as a dash.
+Rotate changes the local view by 90° and saves the orientation independently for
+each slot; it does not modify the camera sensor or steering directions.
+
+WASD uses bundled Keydrown 1.3.0 for held-key input. While Shift is held,
+throttle reaches full scale in about 0.63 seconds and steering in about 0.31
+seconds. Releasing WASD ramps throttle down and recenters steering. Releasing
+Shift, losing focus, disconnecting, or opening Settings bypasses the ramp and
+stops immediately. The Settings keyboard test previews the same ramp without
+sending motion. Xbox and wheel mappings are unchanged. Connection status and
+retry remain in the main dashboard; the redundant Connection settings tab is removed.
+
+### Arm servo and RC authority
+
+Servo motion requires fresh connected PX4 `system_status == 4`; RC override does
+not block servos. Vehicle drive additionally requires RC ROS authority and arming.
+The header distinguishes ROS mode, RC override, kill, disarmed, and unknown/lost
+status. Settings → Arm calibration records safe limits and exports launch XML.
+See [the safety audit and setup](../../docs/development/arm-servo-safety.md) before
+enabling the hardware driver. Safety uses existing `mavros/state` and `mavros/rc/in`;
+no firmware changes are required. Missing or stale MAVROS state leaves actuation locked.
+The XML defaults to hardware mode with the verified FTDI adapter and servo ID 1 enabled.
+Use `is_sim:=true` for simulation; this excludes the hardware arm driver.
+Servo limits remain unset until calibration.

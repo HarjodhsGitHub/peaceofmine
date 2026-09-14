@@ -53,7 +53,7 @@ def main(
 
         bl.node('peaceofmine_operator', 'operator_gateway.py',
                 name='operator_gateway',
-                params=dict(host=host,
+                params=dict(safety_simulation=True, host=host,
                             port=port,
                             tls_cert=tls_cert,
                             tls_key=tls_key,
