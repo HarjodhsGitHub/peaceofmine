@@ -49,6 +49,10 @@ class twist_consumer(rx.Node):
         delta = math.atan(self.wheelbase * w / abs(v))
         return max(-self.max_steering, min(self.max_steering, delta))
 
+    def on_shutdown(self):
+        self.actuation.send_control(0.0, 0.0)
+        self.actuation.loop()  # Publish neutral before ROS publishers are destroyed.
+
     @rx.Subscriber(twist_type, twist_top)
     def twist_cb(self, msg):
         tw = msg if isinstance(msg, Twist) else msg.twist

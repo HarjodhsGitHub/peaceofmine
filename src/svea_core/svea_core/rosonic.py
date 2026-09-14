@@ -150,6 +150,8 @@ from __future__ import annotations
 
 from typing import TypeGuard, Callable
 
+import signal
+from rclpy.signals import SignalHandlerOptions
 import rclpy                            # pyright: ignore[reportMissingImports]
 from rclpy.node import Node as NodeBase # pyright: ignore[reportMissingImports]
 from rosidl_runtime_py.utilities import (
@@ -500,30 +502,37 @@ class Node(Resource, NodeBase):
         """
         Main function to run the SVEA node.
         """
-        rclpy.init(args=args)
+        # Stop hooks must run before ROS's publishers become invalid.
+        def request_shutdown(*_):
+            raise KeyboardInterrupt
 
-        node = cls()
-        logger = node.get_logger()
-        logger.debug("Initialization complete.")
-
-        logger.info("Starting up...")
-        node.__rosonic_startup__(node)
-        logger.debug("Startup complete.")
-
-        logger.info("Running...")
+        signals = (signal.SIGINT, signal.SIGTERM)
+        for sig in signals:
+            signal.signal(sig, request_shutdown)
+        node = None
         try:
+            rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+            node = cls()
+            logger = node.get_logger()
+            logger.info("Starting up...")
+            node.__rosonic_startup__(node)
+            logger.info("Running...")
             node.run()
         except KeyboardInterrupt:
             pass
         finally:
-
-            logger.info("Shutting down...")
-            node.__rosonic_shutdown__(node)
-            logger.debug("Shutdown complete.")
-
-            # # Perhaps causes more errors than help 
-            # node.destroy_node()
-            # rclpy.shutdown()
+            # Let stop hooks finish even if Ctrl-C is pressed again.
+            for sig in signals:
+                signal.signal(sig, signal.SIG_IGN)
+            try:
+                if node is not None and node._is_started():
+                    logger.info("Shutting down...")
+                    node.__rosonic_shutdown__(node)
+                    logger.debug("Shutdown complete.")
+            finally:
+                if node is not None:
+                    node.destroy_node()
+                rclpy.try_shutdown()
 
     def __init__(self, name: str | None = None, **kwds):
         name = name if name is not None else type(self).__name__
