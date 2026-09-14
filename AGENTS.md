@@ -104,10 +104,15 @@ ros2 launch peaceofmine_operator operator_sim.launch.py
 Open <http://localhost:8080>. The launch starts the vehicle simulation,
 simulated payload, browser gateway, and `cmd_vel` consumer.
 
-To drive, take control and arm in the dashboard. A standard gamepad uses the
-left stick for steering, triggers for forward/reverse, and the right bumper as
-the deadman. For keyboard control, select **WASD keyboard** in Settings, focus
-the forward camera, and hold `Shift` while using WASD.
+To drive, take control and arm in the dashboard. Plug an Xbox 360 or other
+gamepad into the computer running the browser (not the SVEA USB ports) and
+press a button so the Gamepad API can see it. The left stick steers, the
+right trigger goes forward, the left trigger reverses, and the right bumper
+is the deadman. Settings → **Controller mapping** defaults to Auto: the
+browser `standard` layout when the pad reports it, otherwise the Linux Xbox
+360 layout (triggers on axes). Override it if the Drive-panel meters do not
+match the sticks. For keyboard control, select **WASD keyboard** in Settings,
+focus the forward camera, and hold `Shift` while using WASD.
 
 Example launch options:
 

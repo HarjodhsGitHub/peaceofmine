@@ -208,12 +208,21 @@ class OperatorGateway(Node):
 
     def snapshot(self) -> dict[str, Any]:
         """Telemetry shared by every client, without the per-client lease flag."""
+        now = time.monotonic()
         with self._lock:
+            publishing = (self._lease is not None
+                          and self._armed
+                          and self._deadman
+                          and now - self._last_command <= self._timeout)
             return {
                 'type': 'state',
                 'drive': {
                     'armed': self._armed,
                     'deadman': self._deadman,
+                    'publishing': publishing,
+                    'cmd_linear_x': self._command[0] if publishing else 0.0,
+                    'cmd_angular_z': self._command[1] if publishing else 0.0,
+                    'cmd_vel_topic': 'cmd_vel',
                     'timeout_ms': round(self._timeout * 1000),
                     'client_count': len(self._connected_sockets),
                     'control_owner_present': self._lease is not None,

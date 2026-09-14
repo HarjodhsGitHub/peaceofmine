@@ -41,12 +41,23 @@ take or steal control at any time; ownership transfers immediately, the
 previous owner becomes a spectator, and the gateway disarms so the new owner
 must arm before sending motion.
 
-The default controller mapping is the browser `standard` mapping: left stick
-steers, right trigger drives forward, left trigger reverses, and the right
-bumper is the deadman. For keyboard driving, choose **WASD keyboard** in
-Settings, click the forward camera to focus it, then hold Shift while using
-WASD. Both input paths share the same response smoothing and publish drive
-commands at 20 Hz.
+Plug the Xbox 360 (or another gamepad) into the computer that is showing this
+dashboard, then press any button if the Drive panel still says no controller
+is connected. Chrome often ignores a pad until that first press.
+
+The default **Auto** mapping uses the browser `standard` layout when the pad
+reports it: left stick steers, right trigger drives forward, left trigger
+reverses, and the right bumper is the deadman. An Xbox 360 on Linux often
+reports an empty mapping and puts the triggers on axes; Auto then uses that
+Xbox 360 layout. Settings → **Controller mapping** can force Standard or
+Xbox 360 (Linux) if the steer/throttle meters do not follow the pad. For
+keyboard driving, choose **WASD keyboard** in Settings, click the forward
+camera to focus it, then hold Shift while using WASD. Both input paths share
+the same response smoothing and publish drive commands at 20 Hz.
+
+Gamepad input on a non-localhost URL requires HTTPS (`tls_cert` and
+`tls_key`). Opening `http://<host-ip>:8080` from another computer will not
+see the controller.
 
 The gateway publishes `cmd_vel` only while a lease is held, armed, and the
 deadman is down. It publishes zeros for 0.5 s after that stops and then goes

@@ -14,6 +14,9 @@ const state = {
   drive: {
     armed: false,
     deadman: false,
+    publishing: false,
+    cmd_linear_x: 0,
+    cmd_angular_z: 0,
     client_count: 0,
     you_control_owner: false,
     control_owner_present: false,
@@ -45,13 +48,42 @@ const state = {
 const $ = id => document.getElementById(id);
 const forward = $('forward-view');
 const map = $('map-view');
-const preferences = JSON.parse(
-  localStorage.getItem('peaceofmine.operator.preferences') || '{"input":"controller","sensitivity":100}');
+const defaultPreferences = {input: 'controller', sensitivity: 100, mapping: 'auto'};
+const preferences = {
+  ...defaultPreferences,
+  ...JSON.parse(localStorage.getItem('peaceofmine.operator.preferences') || '{}'),
+};
+if (preferences.input !== 'keyboard' && preferences.input !== 'controller') {
+  preferences.input = 'controller';
+}
+if (preferences.mapping !== 'auto' && preferences.mapping !== 'standard' && preferences.mapping !== 'xbox360') {
+  preferences.mapping = 'auto';
+}
+preferences.sensitivity = Math.max(50, Math.min(150, Number(preferences.sensitivity) || 100));
 
 const keys = new Set();
 const smoothedDrive = {linear: 0, angular: 0, updatedAt: performance.now()};
+const triggerSeen = {lt: false, rt: false};
+const lastInput = {
+  steer: 0,
+  throttle: 0,
+  deadman: false,
+  mapping: '',
+  stickX: 0,
+  stickY: 0,
+  lt: 0,
+  rt: 0,
+  lb: false,
+  rb: false,
+  a: false,
+  b: false,
+  x: false,
+  y: false,
+};
 let socket;
 let gamepad = null;
+let lastPadId = null;
+let prevA = false;
 let cameraFocused = false;
 let lastDriveSent = 0;
 let noticeExpiry = 0;
@@ -179,20 +211,117 @@ function updateHud() {
   updateInputHint();
 }
 
+function padDisplayName(pad) {
+  return pad.id.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function mappingLabel(kind) {
+  if (kind === 'xbox360') return 'Xbox 360 / Linux';
+  if (kind === 'standard') return 'standard gamepad';
+  return kind || 'unknown';
+}
+
+function setLit(id, on, extraClass) {
+  const el = $(id);
+  if (!el) return;
+  el.classList.toggle('lit', Boolean(on));
+  if (extraClass) el.classList.toggle(extraClass, Boolean(on));
+}
+
+function paintTrigger(id, value) {
+  const el = $(id);
+  if (!el) return;
+  const active = value > 0.08;
+  el.classList.toggle('lit', active);
+  el.style.fill = active ? `rgba(42, 165, 134, ${0.35 + value * 0.65})` : '';
+}
+
+function gamepadApiBlocked() {
+  return typeof navigator.getGamepads !== 'function'
+    || (typeof window.isSecureContext === 'boolean' && !window.isSecureContext);
+}
+
+function driveBlockMessage() {
+  const owner = state.connected && state.drive.you_control_owner;
+  if (preferences.input === 'controller' && gamepadApiBlocked()) {
+    return {
+      text: 'Gamepad API blocked. Open http://localhost:8080 on this computer (not the LAN IP) or use HTTPS.',
+      kind: 'blocked',
+    };
+  }
+  if (preferences.input === 'keyboard' && !cameraFocused) {
+    return {text: 'Click the forward camera, then hold Shift and WASD.', kind: 'blocked'};
+  }
+  if (preferences.input === 'controller' && !gamepad) {
+    return {text: 'No pad seen. Plug in the Xbox 360 and press a button.', kind: 'blocked'};
+  }
+  if (!owner) return {text: 'Spectator · take control. Pad input stays local until then.', kind: 'blocked'};
+  if (!state.drive.armed) return {text: 'Disarmed · press Arm or A, then use RT/LT.', kind: 'blocked'};
+  if (!lastInput.deadman) return {text: 'Armed · pull RT/LT or hold a bumper to publish cmd_vel.', kind: 'blocked'};
+  if (!state.drive.publishing) {
+    return {text: 'Commands leaving the browser · waiting for ROS cmd_vel…', kind: 'blocked'};
+  }
+  return {
+    text: `ROS cmd_vel ${state.drive.cmd_linear_x.toFixed(2)} m/s · ${state.drive.cmd_angular_z.toFixed(2)} rad/s`,
+    kind: 'ready',
+  };
+}
+
 function updateInputHint() {
   const keyboard = preferences.input === 'keyboard';
-  $('input-lock').classList.toggle('hidden', !keyboard);
-  $('input-lock').classList.toggle('locked', keyboard && cameraFocused);
-  $('input-lock').textContent = cameraFocused ? 'WASD INPUT ACTIVE' : 'CLICK CAMERA FOR INPUT';
+  $('input-lock')?.classList.toggle('hidden', !keyboard);
+  $('input-lock')?.classList.toggle('locked', keyboard && cameraFocused);
+  if ($('input-lock')) {
+    $('input-lock').textContent = cameraFocused ? 'WASD INPUT ACTIVE' : 'CLICK CAMERA FOR INPUT';
+  }
 
-  if (gamepad && !keyboard) {
-    $('controller').textContent = `${gamepad.id.replace(/\([^)]*\)/g, '').trim()} · ${gamepad.mapping || 'custom mapping'}`;
+  if (gamepadApiBlocked() && !keyboard) {
+    $('controller').textContent = 'Controller blocked by the browser';
+    $('controller-mapping').textContent =
+      'Use http://localhost:8080 on this computer. http://<ip>:8080 is not a secure context, so Chrome hides the Gamepad API.';
   } else if (keyboard) {
     $('controller').textContent = cameraFocused
       ? 'WASD active · hold Shift to drive'
       : 'Click the forward camera to use WASD';
+    $('controller-mapping').textContent = 'WASD steer/throttle · Shift is the deadman (shown as RB).';
+  } else if (gamepad) {
+    const kind = resolveMapping(gamepad);
+    $('controller').textContent = padDisplayName(gamepad);
+    $('controller-mapping').textContent =
+      `${mappingLabel(kind)} · LS steer · LT/RT throttle · LB/RB deadman · A arm`;
   } else {
     $('controller').textContent = 'No controller connected';
+    $('controller-mapping').textContent =
+      'Plug the Xbox 360 into this computer and press any button so the browser can see it.';
+  }
+
+  if ($('pad-raw')) {
+    if (gamepad) {
+      const axes = [...gamepad.axes].map(value => Number(value).toFixed(2)).join(' ');
+      const buttons = [...gamepad.buttons].map(button => (button.pressed ? '1' : '0')).join('');
+      $('pad-raw').textContent = `${gamepad.mapping || 'no-mapping'} · axes ${axes} · btns ${buttons}`;
+    } else {
+      $('pad-raw').textContent = gamepadApiBlocked()
+        ? 'Gamepad API unavailable in this origin.'
+        : `Pads seen: ${(navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean).length : 0)}. Press a button.`;
+    }
+  }
+
+  $('pad-ls')?.setAttribute('transform', `translate(${lastInput.stickX * 14}, ${lastInput.stickY * 14})`);
+  $('pad-ls')?.classList.toggle('lit', Math.hypot(lastInput.stickX, lastInput.stickY) > 0.12);
+  paintTrigger('pad-lt', lastInput.lt);
+  paintTrigger('pad-rt', lastInput.rt);
+  setLit('pad-lb', lastInput.lb, 'deadman');
+  setLit('pad-rb', lastInput.rb, 'deadman');
+  setLit('pad-a', lastInput.a);
+  setLit('pad-b', lastInput.b);
+  setLit('pad-x', lastInput.x);
+  setLit('pad-y', lastInput.y);
+
+  const block = driveBlockMessage();
+  if ($('drive-block')) {
+    $('drive-block').textContent = block.text;
+    $('drive-block').className = block.kind;
   }
 }
 
@@ -210,38 +339,168 @@ function responseCurve(value) {
   return Math.sign(value) * Math.abs(value) ** 1.65;
 }
 
+function looksLikeXbox(id) {
+  return /xbox|x-box|xinput/i.test(id);
+}
+
+function resolveMapping(pad) {
+  const override = preferences.mapping;
+  if (override === 'standard' || override === 'xbox360') return override;
+  if (pad.mapping === 'standard') return 'standard';
+  if (looksLikeXbox(pad.id)) return 'xbox360';
+  return 'standard';
+}
+
+function syncTriggerState(pad) {
+  if (!pad || pad.id !== lastPadId) {
+    triggerSeen.lt = false;
+    triggerSeen.rt = false;
+    lastPadId = pad?.id ?? null;
+  }
+}
+
+// Linux xpad often reports LT/RT as -1..1, but the axis stays at 0 until the
+// first press. Treat that unused 0 as released; after motion, map to 0..1.
+function axisTrigger(key, value) {
+  if (value == null || Number.isNaN(value)) return 0;
+  if (!triggerSeen[key]) {
+    if (value === 0) return 0;
+    triggerSeen[key] = true;
+  }
+  return Math.max(0, Math.min(1, (value + 1) / 2));
+}
+
+function readTriggers(pad, kind) {
+  const stdLt = buttonValue(pad.buttons[6]);
+  const stdRt = buttonValue(pad.buttons[7]);
+  const axisLt = axisTrigger('lt', pad.axes[2]);
+  const axisRt = axisTrigger('rt', pad.axes[5]);
+  if (kind === 'standard') {
+    if (stdLt + stdRt < 0.05 && axisLt + axisRt > 0.2 && pad.mapping !== 'standard') {
+      return {lt: axisLt, rt: axisRt};
+    }
+    return {lt: stdLt, rt: stdRt};
+  }
+  if (stdLt + stdRt > 0.2 && axisLt + axisRt < 0.05) return {lt: stdLt, rt: stdRt};
+  return {lt: axisLt, rt: axisRt};
+}
+
 function readGamepad() {
   const pad = gamepad;
-  // Browser standard mapping: left stick steers, LT/RT set throttle, RB is the deadman.
-  const steering = responseCurve(deadzone(pad.axes[0] ?? 0));
-  const throttle = responseCurve(buttonValue(pad.buttons[7]) - buttonValue(pad.buttons[6]));
+  const kind = resolveMapping(pad);
+  syncTriggerState(pad);
+  const stickX = pad.axes[0] ?? 0;
+  const stickY = pad.axes[1] ?? 0;
+  const steering = responseCurve(deadzone(stickX));
+  const {lt: leftTrigger, rt: rightTrigger} = readTriggers(pad, kind);
+  const throttle = responseCurve(rightTrigger - leftTrigger);
+  const lb = Boolean(pad.buttons[4]?.pressed);
+  const rb = Boolean(pad.buttons[5]?.pressed);
   return {
     linear: throttle * MAX_LINEAR_MPS,
     angular: steering * MAX_ANGULAR_RAD_S * preferences.sensitivity / 100,
-    deadman: Boolean(pad.buttons[5]?.pressed),
+    deadman: lb || rb || Math.abs(throttle) > 0.12,
+    steer: steering,
+    throttle,
+    mapping: kind,
+    stickX,
+    stickY,
+    lt: leftTrigger,
+    rt: rightTrigger,
+    lb,
+    rb,
+    a: Boolean(pad.buttons[0]?.pressed),
+    b: Boolean(pad.buttons[1]?.pressed),
+    x: Boolean(pad.buttons[2]?.pressed),
+    y: Boolean(pad.buttons[3]?.pressed),
   };
 }
 
 function readKeyboard() {
-  const linear = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
-  const angular = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+  const throttle = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
+  const steer = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+  const deadman = keys.has('ShiftLeft') || keys.has('ShiftRight');
   return {
-    linear: linear * MAX_LINEAR_MPS,
-    angular: angular * MAX_ANGULAR_RAD_S * preferences.sensitivity / 100,
-    deadman: keys.has('ShiftLeft') || keys.has('ShiftRight'),
+    linear: throttle * MAX_LINEAR_MPS,
+    angular: steer * MAX_ANGULAR_RAD_S * preferences.sensitivity / 100,
+    deadman,
+    steer,
+    throttle,
+    mapping: 'keyboard',
+    stickX: steer,
+    stickY: -throttle,
+    lt: keys.has('KeyS') ? 1 : 0,
+    rt: keys.has('KeyW') ? 1 : 0,
+    lb: false,
+    rb: deadman,
+    a: false,
+    b: false,
+    x: false,
+    y: false,
   };
+}
+
+function padActivity(pad) {
+  const button = pad.buttons.reduce((sum, item) => sum + (item.pressed ? 1 : item.value || 0), 0);
+  const axes = pad.axes.reduce((sum, value) => sum + (Math.abs(value) > 0.2 ? Math.abs(value) : 0), 0);
+  return button + axes;
+}
+
+function pickGamepad(pads) {
+  if (!pads.length) return null;
+  const ranked = [...pads].sort((left, right) => padActivity(right) - padActivity(left));
+  if (padActivity(ranked[0]) > 0.2) return ranked[0];
+  if (lastPadId) {
+    const previous = pads.find(pad => pad.id === lastPadId);
+    if (previous) return previous;
+  }
+  return ranked.find(pad => looksLikeXbox(pad.id)) || ranked[0];
+}
+
+function maybeArmFromPad(target) {
+  if (target.a && !prevA && state.drive.you_control_owner && !state.drive.armed) {
+    send({type: 'arm'});
+  }
+  prevA = Boolean(target.a);
+}
+
+function copyInput(target) {
+  lastInput.steer = target.steer ?? 0;
+  lastInput.throttle = target.throttle ?? 0;
+  lastInput.deadman = Boolean(target.deadman);
+  lastInput.mapping = target.mapping || '';
+  lastInput.stickX = target.stickX ?? 0;
+  lastInput.stickY = target.stickY ?? 0;
+  lastInput.lt = target.lt ?? 0;
+  lastInput.rt = target.rt ?? 0;
+  lastInput.lb = Boolean(target.lb);
+  lastInput.rb = Boolean(target.rb);
+  lastInput.a = Boolean(target.a);
+  lastInput.b = Boolean(target.b);
+  lastInput.x = Boolean(target.x);
+  lastInput.y = Boolean(target.y);
 }
 
 function inputLoop() {
   const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
-  gamepad = pads[0] ?? null;
+  gamepad = pickGamepad(pads);
 
-  let target = {linear: 0, angular: 0, deadman: false};
+  let target = {
+    linear: 0, angular: 0, deadman: false, steer: 0, throttle: 0, mapping: '',
+    stickX: 0, stickY: 0, lt: 0, rt: 0, lb: false, rb: false, a: false, b: false, x: false, y: false,
+  };
   if (preferences.input === 'keyboard' && cameraFocused) {
     target = readKeyboard();
   } else if (preferences.input === 'controller' && gamepad) {
     target = readGamepad();
+    maybeArmFromPad(target);
+  } else {
+    syncTriggerState(null);
+    prevA = false;
   }
+
+  copyInput(target);
+  updateInputHint();
 
   const now = performance.now();
   const dt = Math.min(0.1, (now - smoothedDrive.updatedAt) / 1000);
@@ -279,8 +538,10 @@ $('sweep-toggle').onclick = () => send({type: 'sweep_enabled', enabled: !state.d
 function savePreferences() {
   localStorage.setItem('peaceofmine.operator.preferences', JSON.stringify(preferences));
   $('control-source').value = preferences.input;
+  $('pad-mapping').value = preferences.mapping;
   $('steering-sensitivity').value = preferences.sensitivity;
   $('sensitivity-value').textContent = `${preferences.sensitivity}%`;
+  $('pad-mapping').disabled = preferences.input === 'keyboard';
   updateInputHint();
 }
 
@@ -291,6 +552,12 @@ $('control-source').onchange = event => {
 };
 $('steering-sensitivity').oninput = event => {
   preferences.sensitivity = Number(event.target.value);
+  savePreferences();
+};
+$('pad-mapping').onchange = event => {
+  preferences.mapping = event.target.value;
+  triggerSeen.lt = false;
+  triggerSeen.rt = false;
   savePreferences();
 };
 
@@ -571,7 +838,7 @@ function drawRadar() {
   requestAnimationFrame(drawRadar);
 }
 
-savePreferences();
+try { savePreferences(); } catch (error) { console.error(error); }
 setConnection(false, 'Connecting');
 connect();
 inputLoop();
