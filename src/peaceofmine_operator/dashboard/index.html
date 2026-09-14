@@ -51,7 +51,7 @@
             <span id="arm-state" class="badge neutral">DISARMED</span>
           </div>
           <p class="controller-text" id="controller">No controller connected</p>
-          <p class="controller-mapping" id="controller-mapping">Plug the Xbox 360 into this computer and press any button so the browser can see it.</p>
+          <p class="controller-mapping" id="controller-mapping">Plug the Xbox 360 into this computer or the SVEA USB, then press any button.</p>
           <p class="pad-raw" id="pad-raw">Waiting for Gamepad API…</p>
           <svg class="pad-visual" viewBox="0 0 280 132" role="img" aria-label="Xbox controller input preview">
             <rect class="pad-shell" x="18" y="30" width="244" height="86" rx="32"/>
@@ -162,10 +162,10 @@
       </select>
       <label for="steering-sensitivity">Steering sensitivity <output id="sensitivity-value">100%</output></label>
       <input id="steering-sensitivity" type="range" min="50" max="150" value="100" step="5">
-      <p class="dialog-help">Plug the Xbox 360 into the computer running this browser and press any button if it is not listed. Auto uses the browser standard mapping when the pad reports it, otherwise the Linux Xbox 360 layout (triggers on axes). Left stick steers, RT forward, LT reverse, RB deadman. Keyboard: click the forward camera, then WASD while holding Shift.</p>
+      <p class="dialog-help">Pad on this browser: Gamepad API needs http://localhost or HTTPS. Pad on the SVEA: joy_node publishes /joy and the gateway drives from that, so a LAN http:// address still works. Auto uses the browser standard mapping when the pad reports it, otherwise Linux Xbox 360 (triggers on axes). Left stick steers, RT forward, LT reverse, LB/RB deadman. Keyboard: click the forward camera, then WASD while holding Shift.</p>
     </form>
   </dialog>
 
-  <script src="/assets/app.js?v=pad2"></script>
+  <script src="/assets/app.js?v=pad3"></script>
 </body>
 </html>

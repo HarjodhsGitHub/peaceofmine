@@ -95,24 +95,34 @@ import a suitable layout from `foxglove/`.
 
 ## Operator GUI
 
-After building and sourcing the workspace, run:
+After building and sourcing the workspace, simulation:
 
 ```bash
 ros2 launch peaceofmine_operator operator_sim.launch.py
 ```
 
-Open <http://localhost:8080>. The launch starts the vehicle simulation,
-simulated payload, browser gateway, and `cmd_vel` consumer.
+Real car (privileged `util/run`, PX4 serial present, HTTPS for a laptop
+pad). Full steps are in `src/peaceofmine_operator/gui.md`:
 
-To drive, take control and arm in the dashboard. Plug an Xbox 360 or other
-gamepad into the computer running the browser (not the SVEA USB ports) and
-press a button so the Gamepad API can see it. The left stick steers, the
-right trigger goes forward, the left trigger reverses, and the right bumper
-is the deadman. Settings → **Controller mapping** defaults to Auto: the
-browser `standard` layout when the pad reports it, otherwise the Linux Xbox
-360 layout (triggers on axes). Override it if the Drive-panel meters do not
-match the sticks. For keyboard control, select **WASD keyboard** in Settings,
-focus the forward camera, and hold `Shift` while using WASD.
+```bash
+ros2 launch peaceofmine_operator operator.launch.py \
+  tls_cert:=/tmp/operator-tls/cert.pem \
+  tls_key:=/tmp/operator-tls/key.pem
+```
+
+Open the dashboard on port `8080`. Simulation starts `sim_svea` and a
+fake payload. Hardware starts MAVROS → PX4 instead. Keep the vehicle
+lifted or clear for the first hardware test and keep the physical RC
+ready.
+
+To drive, take control and arm in the dashboard. Plug an Xbox 360 into the
+computer running the browser, or into the SVEA USB (`joy_node` → `/joy`).
+The left stick steers, the right trigger goes forward, the left trigger
+reverses, and a trigger or bumper is the deadman. Browser Gamepad input on a
+non-localhost URL needs HTTPS; the SVEA USB path works over plain HTTP.
+Settings → **Controller mapping** is for the browser pad only. For keyboard
+control, select **WASD keyboard** in Settings, focus the forward camera, and
+hold `Shift` while using WASD.
 
 Example launch options:
 

@@ -33,12 +33,15 @@ deadman, the 0.25 s command watchdog, and the 0.5 s zero-command stop tail in
 `_drive_watchdog`, backed independently by `twist_consumer`'s own
 `cmd_timeout`.
 
-**Xbox 360 / browser teleop** is implemented. The pad is on the GUI computer
-(Gamepad API), not SVEA USB. Auto mapping covers the browser `standard`
-layout and Linux xpad trigger axes; the Drive panel shows a live pad graphic
-and whether `/<ns>/cmd_vel` is actually publishing. Operator usage is in
-[`gui.md`](gui.md). Do not regress the localhost-only Gamepad API caveat
-(LAN `http://` needs TLS).
+**Xbox 360 teleop** is implemented two ways: browser Gamepad API (pad on the
+GUI computer) and ROS `/joy` (pad on the SVEA USB, `joy_node` in
+`operator_sim.launch.py`). A live `/joy` stream wins so the sources do not
+fight. Auto mapping covers the browser `standard` layout and Linux xpad
+trigger axes; the Drive panel shows a live pad graphic and whether
+`/<ns>/cmd_vel` is actually publishing. Hardware launch is
+`launch/operator.launch.py` (`is_sim:=false`, MAVROS → PX4). Operator
+usage is in [`gui.md`](gui.md). Do not regress the localhost-only
+Gamepad API caveat (LAN `http://` needs TLS **or** the SVEA `/joy` path).
 
 ## Target architecture
 

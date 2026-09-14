@@ -30,6 +30,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from sensor_msgs.msg import Joy
 from std_msgs.msg import Bool, Float32
 
 # Authoritative actuator limits. The dashboard reads these from telemetry so
@@ -61,6 +62,7 @@ class OperatorGateway(Node):
         self.declare_parameter('tls_cert', '')
         self.declare_parameter('tls_key', '')
         self.declare_parameter('cmd_vel_topic', 'cmd_vel')
+        self.declare_parameter('joy_topic', 'joy')
         self.declare_parameter('odometry_topic', 'odometry/local')
         self.declare_parameter('detector_signal_topic', 'detector/signal_ratio')
         self.declare_parameter('probe_depth_topic', 'probe/depth_mm')
@@ -88,6 +90,24 @@ class OperatorGateway(Node):
         self._deadman = False
         self._command = (0.0, 0.0)
         self._last_command = 0.0
+        self._last_joy = 0.0
+        self._joy_prev_a = False
+        self._trigger_seen = {'lt': False, 'rt': False}
+        self._joy = {
+            'seen': False,
+            'age_ms': None,
+            'stick_x': 0.0,
+            'stick_y': 0.0,
+            'lt': 0.0,
+            'rt': 0.0,
+            'lb': False,
+            'rb': False,
+            'a': False,
+            'b': False,
+            'x': False,
+            'y': False,
+            'deadman': False,
+        }
         self._stop_until = 0.0
         self._detector = 0.0
         self._probe_depth = 0.0
@@ -124,6 +144,7 @@ class OperatorGateway(Node):
         self.create_subscription(Bool, str(self.get_parameter('fixture_sweep_enabled_state_topic').value), self._sweep_enabled_cb, 10)
         self.create_subscription(Float32, str(self.get_parameter('fixture_sweep_speed_state_topic').value), self._sweep_speed_cb, 10)
         self.create_subscription(Bool, str(self.get_parameter('probe_fault_topic').value), self._probe_fault_cb, 10)
+        self.create_subscription(Joy, str(self.get_parameter('joy_topic').value), self._joy_cb, 10)
         self.create_timer(0.05, self._drive_watchdog)
 
     ## ROS callbacks ##
@@ -185,6 +206,92 @@ class OperatorGateway(Node):
         with self._lock:
             self._probe_fault = bool(message.data)
 
+    def _axis_trigger(self, key: str, axes: list[float], index: int) -> float:
+        if index >= len(axes):
+            return 0.0
+        value = float(axes[index])
+        if not self._trigger_seen[key]:
+            if value == 0.0:
+                return 0.0
+            self._trigger_seen[key] = True
+        return max(0.0, min(1.0, (value + 1.0) / 2.0))
+
+    @staticmethod
+    def _deadzone(value: float) -> float:
+        return 0.0 if abs(value) < 0.12 else value
+
+    @staticmethod
+    def _response_curve(value: float) -> float:
+        return math.copysign(abs(value) ** 1.65, value)
+
+    def _parse_xbox_joy(self, message: Joy) -> dict[str, Any]:
+        axes = list(message.axes)
+        buttons = list(message.buttons)
+
+        def pressed(index: int) -> bool:
+            return index < len(buttons) and bool(buttons[index])
+
+        def button_value(index: int) -> float:
+            return float(buttons[index]) if index < len(buttons) else 0.0
+
+        std_lt = button_value(6)
+        std_rt = button_value(7)
+        axis_lt = self._axis_trigger('lt', axes, 2)
+        axis_rt = self._axis_trigger('rt', axes, 5)
+        if std_lt + std_rt > 0.2 and axis_lt + axis_rt < 0.05:
+            left_trigger, right_trigger = std_lt, std_rt
+        else:
+            left_trigger, right_trigger = axis_lt, axis_rt
+        stick_x = float(axes[0]) if axes else 0.0
+        stick_y = float(axes[1]) if len(axes) > 1 else 0.0
+        steering = self._response_curve(self._deadzone(stick_x))
+        throttle = self._response_curve(right_trigger - left_trigger)
+        left_bumper = pressed(4)
+        right_bumper = pressed(5)
+        return {
+            'seen': True,
+            'age_ms': 0,
+            'stick_x': stick_x,
+            'stick_y': stick_y,
+            'lt': left_trigger,
+            'rt': right_trigger,
+            'lb': left_bumper,
+            'rb': right_bumper,
+            'a': pressed(0),
+            'b': pressed(1),
+            'x': pressed(2),
+            'y': pressed(3),
+            'deadman': left_bumper or right_bumper or abs(throttle) > 0.12,
+            'linear': throttle * self._max_velocity,
+            'angular': steering * self._max_yaw_rate,
+        }
+
+    def _apply_drive_locked(self, linear: float, angular: float, deadman: bool) -> None:
+        self._deadman = deadman
+        self._command = (
+            max(-self._max_velocity, min(self._max_velocity, linear)),
+            max(-self._max_yaw_rate, min(self._max_yaw_rate, angular)),
+        )
+        self._last_command = time.monotonic()
+
+    def _joy_cb(self, message: Joy) -> None:
+        parsed = self._parse_xbox_joy(message)
+        with self._lock:
+            self._joy = parsed
+            self._last_joy = time.monotonic()
+            if self._lease is None:
+                self._joy_prev_a = bool(parsed['a'])
+                return
+            if parsed['a'] and not self._joy_prev_a and not self._armed:
+                self._armed = True
+            self._joy_prev_a = bool(parsed['a'])
+            if not self._armed:
+                return
+            self._apply_drive_locked(float(parsed['linear']), float(parsed['angular']), bool(parsed['deadman']))
+
+    def _joy_live(self, now: float) -> bool:
+        return self._last_joy > 0.0 and now - self._last_joy < 0.4
+
     def _drive_watchdog(self) -> None:
         now = time.monotonic()
         with self._lock:
@@ -214,12 +321,18 @@ class OperatorGateway(Node):
                           and self._armed
                           and self._deadman
                           and now - self._last_command <= self._timeout)
+            joy_live = self._joy_live(now)
+            joy = {**self._joy, 'seen': joy_live}
+            if self._last_joy:
+                joy['age_ms'] = round((now - self._last_joy) * 1000)
             return {
                 'type': 'state',
                 'drive': {
                     'armed': self._armed,
                     'deadman': self._deadman,
                     'publishing': publishing,
+                    'command_source': 'joy' if joy_live and publishing else ('browser' if publishing else 'none'),
+                    'joy': joy,
                     'cmd_linear_x': self._command[0] if publishing else 0.0,
                     'cmd_angular_z': self._command[1] if publishing else 0.0,
                     'cmd_vel_topic': 'cmd_vel',
@@ -274,6 +387,7 @@ class OperatorGateway(Node):
                 self._armed = False
                 self._deadman = False
                 self._command = (0.0, 0.0)
+                self._joy_prev_a = False
 
     def handle_command(self, ws: web.WebSocketResponse, payload: dict[str, Any]) -> dict[str, Any] | None:
         message_type = payload.get('type')
@@ -295,14 +409,15 @@ class OperatorGateway(Node):
                 self._deadman = False
                 self._command = (0.0, 0.0)
             elif message_type == 'drive':
-                linear = float(payload.get('linear_x', 0.0))
-                angular = float(payload.get('angular_z', 0.0))
-                self._deadman = bool(payload.get('deadman', False))
-                self._command = (
-                    max(-self._max_velocity, min(self._max_velocity, linear)),
-                    max(-self._max_yaw_rate, min(self._max_yaw_rate, angular)),
+                # A live ROS pad on the SVEA owns the sticks so the browser
+                # Gamepad API is not required on http://<lan-ip>.
+                if self._joy_live(time.monotonic()):
+                    return None
+                self._apply_drive_locked(
+                    float(payload.get('linear_x', 0.0)),
+                    float(payload.get('angular_z', 0.0)),
+                    bool(payload.get('deadman', False)),
                 )
-                self._last_command = time.monotonic()
             elif message_type == 'probe_target':
                 requested = float(payload.get('depth_mm', 0.0))
                 if abs(self._speed) > self._probe_speed_limit:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the hardware-free operator workflow on the existing SVEA simulator."""
+"""Launch the operator GUI against the real SVEA (MAVROS / PX4)."""
 
 from better_launch import BetterLaunch, launch_this
 
@@ -11,39 +11,40 @@ def main(
     port: int = 8080,
     tls_cert: str = '',
     tls_key: str = '',
-    initial_pose_x: float = 0.0,
-    initial_pose_y: float = 0.0,
-    initial_pose_a: float = 0.0,
+    lli_serial_device: str = '/dev/serial/by-id/usb-SVEA_PX4_AUTOPILOT_0-if00',
+    lli_baud_rate: int = 921600,
+    use_localization: bool = False,
+    use_lidar: bool = False,
+    use_rtk: bool = False,
+    simulate_payload: bool = False,
+    use_joy: bool = False,
     fixture_angle_offset_deg: float = 0.0,
-    use_joy: bool = True,
+    max_velocity: float = 0.8,
 ):
     bl = BetterLaunch()
-    # svea.launch.py owns the SVEA namespace; the nodes below join it so their
-    # relative topic names match the hardware launch variant.
     bl.include('svea_core', 'svea.launch.py',
                name=name,
-               is_sim=True,
-               use_localization=False,
-               use_lidar=False,
-               initial_pose_x=initial_pose_x,
-               initial_pose_y=initial_pose_y,
-               initial_pose_a=initial_pose_a)
+               is_sim=False,
+               use_localization=use_localization,
+               use_lidar=use_lidar,
+               use_rtk=use_rtk,
+               lli_serial_device=lli_serial_device,
+               lli_baud_rate=lli_baud_rate)
 
     with bl.group(name):
         bl.node('svea_examples', 'twist_consumer.py',
                 name='operator_twist_consumer',
                 params=dict(twist_top='cmd_vel',
-                            max_velocity=0.8,
+                            max_velocity=max_velocity,
                             cmd_timeout=0.25))
 
-        bl.node('peaceofmine_operator', 'simulated_payload.py',
-                name='simulated_payload',
-                params=dict(odometry_topic='odometry/local',
-                            fixture_angle_offset_deg=fixture_angle_offset_deg))
+        if simulate_payload:
+            bl.node('peaceofmine_operator', 'simulated_payload.py',
+                    name='simulated_payload',
+                    params=dict(odometry_topic='odometry/local',
+                                fixture_angle_offset_deg=fixture_angle_offset_deg))
 
         if use_joy:
-            # Xbox on the SVEA USB. Autorepeat keeps the 0.25 s watchdog fed
-            # while a stick or trigger is held still.
             bl.node('joy', 'joy_node',
                     name='operator_joy',
                     params=dict(device_id=0,
@@ -59,4 +60,5 @@ def main(
                             tls_key=tls_key,
                             cmd_vel_topic='cmd_vel',
                             joy_topic='joy',
-                            odometry_topic='odometry/local'))
+                            odometry_topic='odometry/local',
+                            max_velocity_mps=max_velocity))

@@ -22,6 +22,8 @@ const state = {
     client_count: 0,
     you_control_owner: false,
     control_owner_present: false,
+    command_source: 'none',
+    joy: {seen: false},
   },
   robot: {x: 0, y: 0, yaw: 0, speed_mps: 0},
   detector: {
@@ -298,23 +300,30 @@ function gamepadApiBlocked() {
     || (typeof window.isSecureContext === 'boolean' && !window.isSecureContext);
 }
 
+function rosJoyLive() {
+  return Boolean(state.drive.joy?.seen);
+}
+
 function driveBlockMessage() {
   const owner = state.connected && state.drive.you_control_owner;
-  if (preferences.input === 'controller' && gamepadApiBlocked()) {
+  const padReady = Boolean(gamepad) || rosJoyLive();
+  if (preferences.input === 'controller' && gamepadApiBlocked() && !rosJoyLive()) {
     return {
-      text: 'Gamepad API blocked. Open http://localhost:8080 on this computer (not the LAN IP) or use HTTPS.',
+      text: 'Browser Gamepad API blocked. Plug the Xbox into the SVEA for ROS /joy, or open http://localhost:8080 / HTTPS.',
       kind: 'blocked',
     };
   }
   if (preferences.input === 'keyboard' && !cameraFocused) {
     return {text: 'Click the forward camera, then hold Shift and WASD.', kind: 'blocked'};
   }
-  if (preferences.input === 'controller' && !gamepad) {
-    return {text: 'No pad seen. Plug in the Xbox 360 and press a button.', kind: 'blocked'};
+  if (preferences.input === 'controller' && !padReady) {
+    return {text: 'No pad seen. Plug the Xbox into this computer or the SVEA USB, then press a button.', kind: 'blocked'};
   }
   if (!owner) return {text: 'Spectator · take control. Pad input stays local until then.', kind: 'blocked'};
   if (!state.drive.armed) return {text: 'Disarmed · press Arm or A, then use RT/LT.', kind: 'blocked'};
-  if (!lastInput.deadman) return {text: 'Armed · pull RT/LT or hold a bumper to publish cmd_vel.', kind: 'blocked'};
+  if (!lastInput.deadman && !state.drive.deadman) {
+    return {text: 'Armed · pull RT/LT or hold a bumper to publish cmd_vel.', kind: 'blocked'};
+  }
   if (!state.drive.publishing) {
     return {text: 'Commands leaving the browser · waiting for ROS cmd_vel…', kind: 'blocked'};
   }
@@ -332,10 +341,14 @@ function updateInputHint() {
     $('input-lock').textContent = cameraFocused ? 'WASD INPUT ACTIVE' : 'CLICK CAMERA FOR INPUT';
   }
 
-  if (gamepadApiBlocked() && !keyboard) {
-    $('controller').textContent = 'Controller blocked by the browser';
+  if (rosJoyLive() && !keyboard && !gamepad) {
+    $('controller').textContent = 'Xbox via ROS /joy (SVEA USB)';
     $('controller-mapping').textContent =
-      'Use http://localhost:8080 on this computer. http://<ip>:8080 is not a secure context, so Chrome hides the Gamepad API.';
+      'Pad is on the rover. LS steer · LT/RT throttle · LB/RB deadman · A arm';
+  } else if (gamepadApiBlocked() && !keyboard) {
+    $('controller').textContent = 'Browser Gamepad API blocked';
+    $('controller-mapping').textContent =
+      'Open http://localhost:8080 on this computer, or plug the Xbox into the SVEA so ROS /joy can drive.';
   } else if (keyboard) {
     $('controller').textContent = cameraFocused
       ? 'WASD active · hold Shift to drive'
@@ -357,23 +370,40 @@ function updateInputHint() {
       const axes = [...gamepad.axes].map(value => Number(value).toFixed(2)).join(' ');
       const buttons = [...gamepad.buttons].map(button => (button.pressed ? '1' : '0')).join('');
       $('pad-raw').textContent = `${gamepad.mapping || 'no-mapping'} · axes ${axes} · btns ${buttons}`;
+    } else if (rosJoyLive()) {
+      const joy = state.drive.joy;
+      $('pad-raw').textContent =
+        `ROS /joy · age ${joy.age_ms ?? '--'} ms · LT ${Number(joy.lt || 0).toFixed(2)} RT ${Number(joy.rt || 0).toFixed(2)}`;
     } else {
       $('pad-raw').textContent = gamepadApiBlocked()
-        ? 'Gamepad API unavailable in this origin.'
+        ? 'Gamepad API unavailable in this origin. Waiting for ROS /joy…'
         : `Pads seen: ${(navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean).length : 0)}. Press a button.`;
     }
   }
 
-  $('pad-ls')?.setAttribute('transform', `translate(${lastInput.stickX * 14}, ${lastInput.stickY * 14})`);
-  $('pad-ls')?.classList.toggle('lit', Math.hypot(lastInput.stickX, lastInput.stickY) > 0.12);
-  paintTrigger('pad-lt', lastInput.lt);
-  paintTrigger('pad-rt', lastInput.rt);
-  setLit('pad-lb', lastInput.lb, 'deadman');
-  setLit('pad-rb', lastInput.rb, 'deadman');
-  setLit('pad-a', lastInput.a);
-  setLit('pad-b', lastInput.b);
-  setLit('pad-x', lastInput.x);
-  setLit('pad-y', lastInput.y);
+  const visual = (!gamepad && rosJoyLive()) ? {
+    stickX: state.drive.joy.stick_x || 0,
+    stickY: state.drive.joy.stick_y || 0,
+    lt: state.drive.joy.lt || 0,
+    rt: state.drive.joy.rt || 0,
+    lb: Boolean(state.drive.joy.lb),
+    rb: Boolean(state.drive.joy.rb),
+    a: Boolean(state.drive.joy.a),
+    b: Boolean(state.drive.joy.b),
+    x: Boolean(state.drive.joy.x),
+    y: Boolean(state.drive.joy.y),
+  } : lastInput;
+
+  $('pad-ls')?.setAttribute('transform', `translate(${visual.stickX * 14}, ${visual.stickY * 14})`);
+  $('pad-ls')?.classList.toggle('lit', Math.hypot(visual.stickX, visual.stickY) > 0.12);
+  paintTrigger('pad-lt', visual.lt);
+  paintTrigger('pad-rt', visual.rt);
+  setLit('pad-lb', visual.lb, 'deadman');
+  setLit('pad-rb', visual.rb, 'deadman');
+  setLit('pad-a', visual.a);
+  setLit('pad-b', visual.b);
+  setLit('pad-x', visual.x);
+  setLit('pad-y', visual.y);
 
   const block = driveBlockMessage();
   if ($('drive-block')) {
@@ -433,7 +463,7 @@ function readTriggers(pad, kind) {
   const axisLt = axisTrigger('lt', pad.axes[2]);
   const axisRt = axisTrigger('rt', pad.axes[5]);
   if (kind === 'standard') {
-    if (stdLt + stdRt < 0.05 && axisLt + axisRt > 0.2 && pad.mapping !== 'standard') {
+    if (stdLt + stdRt < 0.05 && axisLt + axisRt > 0.2) {
       return {lt: axisLt, rt: axisRt};
     }
     return {lt: stdLt, rt: stdRt};
