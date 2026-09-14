@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GNSS telemetry</title>
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=20260911-7">
+  <link rel="stylesheet" href="style.css?v=20260911-7">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">ZED-F9P / live telemetry</p>
+      <h1>GNSS position</h1>
+    </div>
+    <div id="connection" class="connection offline"><span class="dot"></span>Waiting</div>
+  </header>
+  <main>
+    <div class="overview">
+    <section class="hero panel">
+      <div class="fix-row"><span id="fix-label" class="fix no-fix">NO FIX</span><span id="age">No data</span></div>
+      <div id="solution-summary" class="solution-summary waiting" role="status">
+        <h2 id="solution-title">Connecting to viewer…</h2>
+        <p id="solution-detail">Checking receiver and correction service.</p>
+      </div>
+      <div class="status-strip">
+        <div><span>1 · RECEIVER</span><strong id="receiver-status">Checking…</strong><small id="receiver-detail">Serial connection</small></div>
+        <div><span>2 · CORRECTION SERVICE</span><strong id="service-status">Checking…</strong><small id="service-detail">NTRIP connection</small></div>
+        <div><span>3 · CORRECTION DATA</span><strong id="corrections-status">Checking…</strong><small id="corrections-detail">RTCM delivery</small></div>
+        <div><span>4 · POSITION SOLUTION</span><strong id="position-status">Checking…</strong><small id="position-detail">Receiver fix type</small></div>
+      </div>
+      <div class="coordinates"><div><span>LATITUDE</span><strong id="latitude">--</strong></div><div><span>LONGITUDE</span><strong id="longitude">--</strong></div></div>
+      <p id="message" class="message">Waiting for a valid NMEA sentence.</p>
+    </section>
+    <section class="panel map-panel" aria-label="Receiver position map">
+      <div class="section-heading"><div><p class="eyebrow">POSITION / 30 SECOND TRAIL</p><h2>On the ground</h2></div><button id="follow-position" type="button" aria-pressed="true">Follow position: on</button></div>
+      <form id="reference-form" class="reference-form">
+        <label>Approximate reference latitude<input id="reference-lat" type="number" step="any" min="-90" max="90" required></label>
+        <label>Longitude<input id="reference-lon" type="number" step="any" min="-180" max="180" required></label>
+        <button type="submit">Compare reference</button><button id="clear-reference" type="button">Clear</button>
+      </form>
+      <p id="reference-status" class="accuracy-status" role="status">Reference is approximate; offset is not surveyed ground-truth error.</p>
+      <div id="map" aria-label="OpenStreetMap receiver location"></div>
+      <article class="metric uncertainty-chart"><span>BLUE CIRCLE UNCERTAINTY · METRES</span><strong id="accuracy">--</strong><small>Same radius as the blue circle · last 30 seconds</small></article>
+      <p id="accuracy-status" class="accuracy-status" role="status">Connecting to receiver accuracy…</p>
+      <div class="map-footer"><span id="map-status" role="status">Waiting for a valid position. No marker placed yet.</span><span id="tile-status">Map tiles load after the first valid position.</span></div>
+    </section>
+    </div>
+    <div class="section-heading history-heading"><div><p class="eyebrow">LIVE TRENDS</p><h2>The last 30 seconds</h2></div><span>1 s samples · gaps mean unavailable data</span></div>
+    <section class="metrics">
+      <article class="panel metric"><span>ALTITUDE</span><strong id="altitude">--</strong><small>metres</small></article>
+      <article class="panel metric"><span>SATELLITES</span><strong id="satellites">--</strong><small>in solution</small></article>
+      <article class="panel metric"><span>HDOP</span><strong id="hdop">--</strong><small>lower is better</small></article>
+      <article class="panel metric"><span>PDOP / VDOP</span><strong id="dop">--</strong><small>position / vertical dilution</small></article>
+      <article class="panel metric"><span>SPEED</span><strong id="speed">--</strong><small>m/s</small></article>
+      <article class="panel metric"><span>COURSE</span><strong id="course">--</strong><small>degrees</small></article>
+      <article class="panel metric"><span>CORRECTION RATE</span><strong id="correction-rate">--</strong><small>RTCM bytes / second</small></article>
+      <article class="panel metric"><span>CORRECTION AGE</span><strong id="correction-age">--</strong><small>seconds since RTCM received</small></article>
+      <article class="panel metric"><span>DATA AGE</span><strong id="data-age">--</strong><small>seconds since receiver update</small></article>
+    </section>
+    <section class="panel details"><div><span>UTC</span><strong id="utc">--</strong></div><div><span>SATELLITE VIEW</span><strong id="satellite-view">--</strong></div><div><span>FIX MODE</span><strong id="fix-mode">--</strong></div><div><span>DEVICE</span><strong id="device">--</strong></div><div><span>BAUD</span><strong id="baud">--</strong></div><div><span>LAST MESSAGE</span><strong id="last-message">--</strong></div><div><span>RTCM / NTRIP</span><strong id="ntrip">--</strong></div></section>
+    <details class="panel raw-log"><summary>Raw receiver log <span>latest 200 readings</span></summary><pre id="raw-log-content">Waiting for serial data...</pre></details>
+    <details class="panel event-log" open><summary>Event history <span>connection and fix changes</span></summary><div id="event-log-content">Waiting for events...</div></details>
+  </main>
+  <script src="vendor/leaflet/leaflet.js?v=20260911-7"></script>
+  <script src="vendor/chartjs/chart.umd.min.js?v=20260911-7"></script>
+  <script src="history.js?v=20260911-7"></script>
+  <script src="app.js?v=20260911-7"></script>
+</body>
+</html>

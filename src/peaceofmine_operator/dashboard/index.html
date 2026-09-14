@@ -19,6 +19,11 @@
           <span id="connection-dot"></span>
           <span id="connection">Connecting</span>
         </div>
+        <div class="latency" title="WebSocket round-trip to the car">
+          <span class="latency-label">LATENCY</span>
+          <strong id="latency-value">-- ms</strong>
+          <canvas id="latency-graph" width="96" height="28" aria-label="Recent connection latency"></canvas>
+        </div>
         <div id="client-count" class="client-count">1 viewer</div>
         <span id="control-owner" class="badge neutral">SPECTATING</span>
         <button id="take-control" class="primary">Take control</button>

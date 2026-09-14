@@ -385,6 +385,9 @@ def build_app(node: OperatorGateway) -> web.Application:
                 except (ValueError, json.JSONDecodeError) as error:
                     await ws.send_json({'type': 'error', 'message': f'Invalid operator command: {error}'})
                     continue
+                if payload.get('type') == 'latency_ping':
+                    await ws.send_json({'type': 'latency_pong', 'probe_id': payload.get('probe_id')})
+                    continue
                 try:
                     error_message = node.handle_command(ws, payload)
                 except (ValueError, TypeError) as error:
