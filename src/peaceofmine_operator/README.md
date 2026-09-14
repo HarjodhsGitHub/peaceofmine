@@ -86,12 +86,25 @@ take or steal control at any time; ownership transfers immediately, the
 previous owner becomes a spectator, and the gateway disarms so the new owner
 must arm before sending motion.
 
-The default controller mapping is the browser `standard` mapping: left stick
-steers, right trigger drives forward, left trigger reverses, and the right
-bumper is the deadman. For keyboard driving, choose **WASD keyboard** in
-Settings, click the forward camera to focus it, then hold Shift while using
-WASD. Both input paths share the same response smoothing and publish drive
-commands at 20 Hz.
+Plug the Xbox 360 (or another gamepad) into the computer that is showing this
+dashboard, then press any button if the Drive panel still says no controller
+is connected. Chrome often ignores a pad until that first press.
+
+The default **Auto** mapping uses the browser `standard` layout when the pad
+reports it: left stick steers, right trigger drives forward, left trigger
+reverses, and a trigger or bumper is the deadman. An Xbox 360 on Linux often
+reports an empty mapping and puts the triggers on axes; Auto then uses that
+Xbox 360 layout. Settings → **Controller mapping** can force Standard or
+Xbox 360 (Linux) if the steer/throttle meters do not follow the pad. For
+keyboard driving, choose **WASD keyboard** in Settings, click the forward
+camera to focus it, then hold Shift while using WASD. Both input paths map
+sticks linearly (0.12 deadzone, no extra smoothing) and send a drive command
+as soon as the pad changes, plus a 20 Hz keepalive while moving.
+
+Browser gamepad input on a non-localhost URL requires HTTPS (`tls_cert` and
+`tls_key`). Alternatively, connect the Xbox to the SVEA USB and launch with
+`use_joy:=true`: ROS joystick input works over plain HTTP and takes priority
+over browser drive commands while the joystick is live.
 
 The gateway publishes `cmd_vel` only while a lease is held, armed, and the
 deadman is down. It publishes zeros for 0.5 s after that stops and then goes
@@ -141,9 +154,11 @@ arming again. Losing browser focus or hiding the page also stops and disarms.
 
 Choose one of three schemes:
 
-- **Xbox / standard gamepad**: explicitly select a browser device with the
-  `standard` mapping. Left stick steers, RT drives forward, LT reverses, RB is
-  the deadman. Non-standard mappings are blocked in this scheme.
+- **Xbox / standard gamepad**: the dashboard selects an active browser pad
+  automatically; Settings can select a specific device and override the
+  automatically detected `standard` or Xbox 360 mapping.
+  Left stick steers, RT drives forward, LT reverses, and either trigger or
+  bumper acts as the deadman. A arms when you own control.
 - **WASD keyboard**: focus the test button to preview keys, or close Settings
   and focus the forward camera to drive while holding Shift.
 - **Steering wheel**: select the wheel, inspect raw axes and buttons, then set

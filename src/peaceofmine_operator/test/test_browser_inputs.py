@@ -25,6 +25,7 @@ Object.defineProperty(document, 'hidden', {value: false});
 '''
         checks = '''
 const assert = (condition, label) => { if (!condition) throw Error(label); };
+const latestDrive = () => sent.filter(m => m.type === 'drive').at(-1);
 const pad = {index: 0, id: 'Test wheel', mapping: '', axes: [0, 1, 1], buttons: [{pressed: true, value: 1}]};
 const mapping = {steering: 0, throttle: 1, brake: 2, deadman: 0, deadzone: .05, invertThrottle: true, invertBrake: true};
 assert(readWheel(pad, mapping).linear === 0, 'released pedals');
@@ -42,16 +43,16 @@ state.connected = true; state.drive.armed = true; state.drive.you_control_owner 
 $('settings').click();
 assert(sent.some(m => m.type === 'estop'), 'settings disarms');
 lastDriveSent = -1000; inputLoop();
-assert(sent.at(-1).deadman === false && sent.at(-1).linear_x === 0, 'settings blocks drive');
+assert(latestDrive().deadman === false && latestDrive().linear_x === 0, 'settings blocks drive');
 $('settings-dialog').close();
 preferences.input = 'controller'; lastDriveSent = -1000; inputLoop();
-assert(!sent.at(-1).deadman, 'nonstandard pad cannot drive standard profile');
+assert(!latestDrive().deadman, 'unmapped wheel has no trigger drive');
 preferences.input = 'wheel';
 Object.defineProperty(navigator, 'getGamepads', {value: () => []});
 lastDriveSent = -1000; inputLoop();
-assert(!sent.at(-1).deadman && sent.at(-1).linear_x === 0, 'disconnect stops');
-smoothedDrive.linear = .8; keys.add('KeyW'); window.dispatchEvent(new Event('blur'));
-assert(smoothedDrive.linear === 0 && keys.size === 0, 'blur clears input');
+assert(!latestDrive().deadman && latestDrive().linear_x === 0, 'disconnect stops');
+lastInput.linear = .8; keys.add('KeyW'); window.dispatchEvent(new Event('blur'));
+assert(lastInput.linear === 0 && keys.size === 0, 'blur clears input');
 setConnection(true, 'Raspberry Pi connected');
 assert($('connection-overlay').classList.contains('hidden'), 'connected overlay hidden');
 setConnection(false, 'Raspberry Pi disconnected');
@@ -118,9 +119,31 @@ await startCamera('forward', 'virtual');
 rejectCapture(Error('permission denied'));
 await rejectedCapture;
 assert(cameraErrors.forward === '', 'superseded camera errors are ignored');
+const xbox = {index: 1, id: 'Xbox 360', mapping: '', timestamp: 1,
+  axes: [-1, 0, -1, 0, 0, 1], buttons: Array.from({length: 17}, () => ({value: 0, pressed: false}))};
+Object.defineProperty(navigator, 'getGamepads', {configurable: true, value: () => [xbox]});
+preferences.input = 'controller'; preferences.mapping = 'auto';
+state.connected = true; state.drive.you_control_owner = true; state.drive.armed = true;
+lastDriveSent = -1000; inputLoop();
+assert(latestDrive().linear_x === .8 && latestDrive().angular_z > 0 && latestDrive().deadman, 'raw Xbox automatically selected and drives');
+$('settings').click();
+xbox.buttons[0] = {pressed: true, value: 1}; xbox.timestamp++;
+state.drive.armed = false;
+const beforeSettings = sent.length;
+lastDriveSent = -1000; inputLoop();
+assert(!sent.slice(beforeSettings).some(m => m.type === 'arm' || (m.type === 'drive' && m.deadman)), 'settings blocks Xbox drive and A arming');
+$('settings-dialog').close();
+state.drive.armed = true; xbox.timestamp++; lastDriveSent = -1000; inputLoop();
+Object.defineProperty(navigator, 'getGamepads', {configurable: true, value: () => []});
+lastDriveSent = -1000; inputLoop();
+assert(!latestDrive().deadman && latestDrive().linear_x === 0, 'active Xbox disconnect stops drive');
+runTests(dashboardSource);
 document.body.textContent = 'BROWSER TESTS PASSED';
 '''
-        script = setup + (DASHBOARD / 'app.js').read_text()
+        import json
+        source = (DASHBOARD / 'app.js').read_text()
+        gamepad_checks = (DASHBOARD.parent / 'test/test_gamepad.cjs').read_text().split("if (typeof require")[0]
+        script = setup + source + gamepad_checks + '\nconst dashboardSource = ' + json.dumps(source) + ';\n'
         html += '<script>(async () => {try {' + script + checks + "} catch(e) {document.body.textContent = 'TEST FAILED: ' + e.stack;}})();</script>"
         with tempfile.TemporaryDirectory() as tmp:
             page = pathlib.Path(tmp) / 'test.html'

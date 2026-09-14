@@ -70,11 +70,35 @@
             <span id="arm-state" class="badge neutral">DISARMED</span>
           </div>
           <p class="controller-text" id="controller">No controller connected</p>
+          <p class="controller-mapping" id="controller-mapping">Plug the Xbox 360 into this computer or the SVEA USB, then press any button.</p>
+          <p class="pad-raw" id="pad-raw">Waiting for Gamepad API…</p>
+          <svg class="pad-visual" viewBox="0 0 280 132" role="img" aria-label="Xbox controller input preview">
+            <rect class="pad-shell" x="18" y="30" width="244" height="86" rx="32"/>
+            <rect id="pad-lt" class="pad-trigger" x="36" y="8" width="46" height="16" rx="5"/>
+            <rect id="pad-rt" class="pad-trigger" x="198" y="8" width="46" height="16" rx="5"/>
+            <rect id="pad-lb" class="pad-bumper" x="36" y="28" width="46" height="10" rx="3"/>
+            <rect id="pad-rb" class="pad-bumper" x="198" y="28" width="46" height="10" rx="3"/>
+            <text class="pad-label" x="59" y="20">LT</text>
+            <text class="pad-label" x="221" y="20">RT</text>
+            <text class="pad-label" x="59" y="37">LB</text>
+            <text class="pad-label" x="221" y="37">RB</text>
+            <circle class="pad-well" cx="78" cy="82" r="24"/>
+            <circle id="pad-ls" class="pad-stick" cx="78" cy="82" r="9"/>
+            <circle id="pad-y" class="pad-face" cx="202" cy="62" r="7"/>
+            <circle id="pad-b" class="pad-face" cx="220" cy="80" r="7"/>
+            <circle id="pad-a" class="pad-face" cx="202" cy="98" r="7"/>
+            <circle id="pad-x" class="pad-face" cx="184" cy="80" r="7"/>
+            <text class="pad-face-label" x="202" y="65">Y</text>
+            <text class="pad-face-label" x="220" y="83">B</text>
+            <text class="pad-face-label" x="202" y="101">A</text>
+            <text class="pad-face-label" x="184" y="83">X</text>
+          </svg>
+          <p id="drive-block">Take control, arm, then hold a trigger or bumper to drive.</p>
           <div class="buttons">
             <button id="arm" class="primary">Arm</button>
             <button id="estop" class="danger">Disarm / stop</button>
           </div>
-          <p id="drive-help" class="safety-note">Hold the right bumper to send throttle and steering. Releasing it stops the rover.</p>
+          <p id="drive-help" class="safety-note">Take control, then arm (or press A). Left stick steers, RT forward, LT reverse. A trigger or bumper is the deadman. Releasing it stops the rover.</p>
         </section>
 
         <section class="panel detector-panel">
@@ -156,6 +180,12 @@
         <option value="wheel">Steering wheel</option>
         <option value="keyboard">WASD keyboard</option>
       </select>
+      <label for="pad-mapping">Controller mapping</label>
+      <select id="pad-mapping">
+        <option value="auto">Auto (standard or Xbox 360)</option>
+        <option value="standard">Standard gamepad</option>
+        <option value="xbox360">Xbox 360 (Linux)</option>
+      </select>
       <label for="steering-sensitivity">Steering sensitivity <output id="sensitivity-value">100%</output></label>
       <input id="steering-sensitivity" type="range" min="50" max="150" value="100" step="5">
       <p class="diagnostic-banner">INPUT LAB · Driving is stopped and disarmed while Settings is open. Re-arm after closing.</p>
@@ -215,9 +245,10 @@
         <p class="dialog-help">The dashboard reconnects automatically. If the gateway or ROS launch stops, controls are disabled and a disconnect screen appears.</p>
         <button id="settings-retry-connection" type="button" class="primary">Retry connection</button>
       </section>
+      <p class="dialog-help">Pad on this browser: Gamepad API needs http://localhost or HTTPS. Pad on the SVEA: joy_node publishes /joy and the gateway drives from that, so a LAN http:// address still works. Auto uses the browser standard mapping when the pad reports it, otherwise Linux Xbox 360 (triggers on axes). Left stick steers, RT forward, LT reverse, LB/RB deadman. Keyboard: click the forward camera, then WASD while holding Shift.</p>
     </form>
   </dialog>
 
-  <script src="/assets/app.js"></script>
+  <script src="/assets/app.js?v=pad4"></script>
 </body>
 </html>

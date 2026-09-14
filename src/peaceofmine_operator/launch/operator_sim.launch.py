@@ -15,6 +15,7 @@ def main(
     initial_pose_y: float = 0.0,
     initial_pose_a: float = 0.0,
     fixture_angle_offset_deg: float = 0.0,
+    use_joy: bool = True,
 ):
     bl = BetterLaunch()
     # svea.launch.py owns the SVEA namespace; the nodes below join it so their
@@ -40,6 +41,16 @@ def main(
                 params=dict(odometry_topic='odometry/local',
                             fixture_angle_offset_deg=fixture_angle_offset_deg))
 
+        if use_joy:
+            # Xbox on the SVEA USB. Autorepeat keeps the 0.25 s watchdog fed
+            # while a stick or trigger is held still.
+            bl.node('joy', 'joy_node',
+                    name='operator_joy',
+                    params=dict(device_id=0,
+                                deadzone=0.12,
+                                autorepeat_rate=20.0,
+                                coalesce_interval_ms=50))
+
         bl.node('peaceofmine_operator', 'operator_gateway.py',
                 name='operator_gateway',
                 params=dict(host=host,
@@ -47,4 +58,5 @@ def main(
                             tls_cert=tls_cert,
                             tls_key=tls_key,
                             cmd_vel_topic='cmd_vel',
+                            joy_topic='joy',
                             odometry_topic='odometry/local'))
