@@ -149,6 +149,7 @@
         </section>
       </aside>
 
+      <div class="lower-panels">
       <section class="panel map-panel">
         <div class="panel-heading">
           <h2>Field map</h2>
@@ -157,6 +158,18 @@
         <canvas id="map-view" aria-label="Local field map"></canvas>
         <p id="position">X 0.0 &middot; Y 0.0 &middot; heading 0&deg;</p>
       </section>
+      <section class="panel power-panel" aria-labelledby="power-heading">
+        <div class="panel-heading"><h2 id="power-heading">Power</h2><span id="power-status" class="badge neutral">NO DATA</span></div>
+        <div class="power-summary"><div><span>Battery draw</span><strong id="battery-watts">—</strong></div><div><span>Charge</span><strong id="battery-charge">—</strong></div></div>
+        <progress id="battery-level" max="100" aria-label="Battery charge" hidden></progress>
+        <svg id="power-history" viewBox="0 0 300 38" preserveAspectRatio="none" role="img" aria-label="Battery power over the last sixty seconds"><polyline id="power-history-line" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+        <div class="power-metrics"><span>Voltage <b id="battery-voltage">—</b></span><span>Current <b id="battery-current">—</b></span><span>Temperature <b id="battery-temperature">—</b></span><span>Cell spread <b id="battery-cells">—</b></span></div>
+        <div class="power-subheading">ESC <span id="esc-status">No telemetry</span></div>
+        <div id="esc-readings" class="power-esc">Waiting for ESC telemetry</div>
+        <div class="power-subheading">Arm servo <span id="power-arm">No telemetry</span></div>
+        <p class="power-note">Battery watts = V × A · negative draw means charging. ESC and arm readings are separate, not added to battery draw.</p>
+      </section>
+      </div>
     </section>
   </main>
 

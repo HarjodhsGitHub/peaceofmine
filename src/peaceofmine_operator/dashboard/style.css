@@ -119,7 +119,7 @@ header {
   min-height: 34rem;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(285px, 340px);
-  grid-template-rows: minmax(0, 1fr) minmax(145px, .39fr);
+  grid-template-rows: minmax(0, 1fr) minmax(300px, .45fr);
   gap: .7rem;
 }
 
@@ -1050,3 +1050,23 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .arm-jog-status[data-ready=true] { border-color: #72d6b4; color: #72d6b4; }
 #settings-arm .dialog-help { margin: .6rem 0; font-size: .8rem; line-height: 1.5; }
 @media (max-width: 720px) { .arm-workbench { grid-template-columns: 1fr; } .arm-table th, .arm-table td { padding: .5rem .3rem; } .arm-points-table button { padding: .5rem .3rem; font-size: .75rem; } }
+
+/* Map and measured power share the bottom row. */
+.lower-panels { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, .8fr); gap: .7rem; min-height: 0; }
+.lower-panels .map-panel { grid-column: auto; grid-row: auto; }
+.power-panel { padding: .78rem; overflow: auto; font-variant-numeric: tabular-nums; }
+.power-summary { display: flex; justify-content: space-between; gap: 1rem; margin: .65rem 0 .35rem; }
+.power-summary span { display: block; font-size: .7rem; color: #a9c3bb; }
+.power-summary strong { font-size: 1.6rem; font-weight: 650; }
+#battery-level { width: 100%; height: .35rem; accent-color: #72d6b4; display: block; }
+#battery-level[hidden] { display: none; }
+#power-history { width: 100%; height: 2rem; color: #72d6b4; background: #071316; border-radius: .3rem; margin: .3rem 0; }
+.power-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem .75rem; font-size: .7rem; color: #a9c3bb; }
+.power-metrics span { display: flex; justify-content: space-between; gap: .4rem; }
+.power-metrics b { color: #e8f1ed; }
+.power-subheading { display: flex; justify-content: space-between; gap: .6rem; border-top: 1px solid #24404a; padding-top: .5rem; margin-top: .5rem; font-size: .75rem; }
+.power-subheading span, .power-esc { color: #a9c3bb; font-size: .7rem; }
+.power-esc div { padding-top: .35rem; }
+.power-note { color: #8fa8a1; font-size: .62rem; line-height: 1.45; margin-top: .55rem; }
+@media (max-width: 1100px) { .lower-panels { grid-template-columns: 1fr; overflow: auto; } .lower-panels .map-panel { min-height: 12rem; } .power-panel { min-height: 17rem; overflow: visible; } }
+@media (max-width: 900px) { .lower-panels { grid-column: auto; grid-row: auto; overflow: visible; } }

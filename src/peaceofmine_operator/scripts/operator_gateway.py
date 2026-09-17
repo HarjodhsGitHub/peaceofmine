@@ -37,10 +37,11 @@ from nav_msgs.msg import Odometry
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import CameraInfo
+from sensor_msgs.msg import CameraInfo, BatteryState
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Bool, Float32, String
 from peaceofmine_operator.rc_safety import RcSafety
+from peaceofmine_operator.power import PowerTelemetry
 from peaceofmine_operator.camera_stream import CameraStreams
 
 # Authoritative actuator limits. The dashboard reads these from telemetry so
@@ -98,6 +99,15 @@ class OperatorGateway(Node):
         self.declare_parameter('detector_threshold_ratio', 0.65)
 
         self._lock = threading.RLock()
+        self._power = PowerTelemetry()
+        self.create_subscription(BatteryState, 'mavros/battery', self._battery_cb, qos_profile_sensor_data)
+        # PX4 tunnel messages are optional on installations without px4_msgs.
+        try:
+            from px4_msgs.msg import EscStatus
+        except ImportError:
+            pass
+        else:
+            self.create_subscription(EscStatus, 'px4/uorb/esc_status', self._esc_cb, qos_profile_sensor_data)
         self._shutting_down = False
         self._rc_safety = RcSafety(bool(self.get_parameter('safety_simulation').value), clock=lambda: time.monotonic())
         self._arm_state = {'connected': False, 'reason': 'Arm driver not running'}
@@ -179,6 +189,14 @@ class OperatorGateway(Node):
         self.create_subscription(Joy, str(self.get_parameter('joy_topic').value), self._joy_cb, 10)
         self.create_timer(0.05, self._drive_watchdog)
         self._discover_cameras()
+
+    def _battery_cb(self, message):
+        with self._lock:
+            self._power.update_battery(message)
+
+    def _esc_cb(self, message):
+        with self._lock:
+            self._power.update_esc(message)
 
     def _arm_state_cb(self, message):
         try:
@@ -462,6 +480,7 @@ class OperatorGateway(Node):
                 joy['age_ms'] = round((now - self._last_joy) * 1000)
             return {
                 'type': 'state',
+                'power': self._power.snapshot(),
                 'safety': self._rc_safety.snapshot(),
                 'arm_servo': self._arm_state if time.monotonic() - self._arm_state_at < 1.0 else {'connected': False, 'reason': 'Arm driver unavailable'},
                 'drive': {

@@ -306,7 +306,43 @@ function setRange(input, min, max, step) {
   if (Number(input.step) !== step) input.step = step;
 }
 
+function updatePower() {
+  const power = state.power || {};
+  const battery = power.battery || {};
+  const live = state.connected && battery.available && !battery.stale && battery.present;
+  const fmt = (value, unit, digits = 1) => Number.isFinite(value) ? `${value.toFixed(digits)} ${unit}` : '—';
+  const text = (id, value) => { $(id).textContent = value; };
+  text('power-status', !state.connected ? 'DISCONNECTED' : battery.stale ? 'STALE' : live ? 'LIVE' : 'NO BATTERY DATA');
+  $('power-status').className = `badge ${live ? 'safe' : 'neutral'}`;
+  text('battery-watts', live ? fmt(battery.power_w, 'W') : '—');
+  text('battery-charge', live ? fmt(battery.remaining_pct, '%', 0) : '—');
+  text('battery-voltage', live ? fmt(battery.voltage_v, 'V', 2) : '—');
+  text('battery-current', live ? fmt(battery.current_a, 'A', 2) : '—');
+  text('battery-temperature', live ? fmt(battery.temperature_c, '°C') : '—');
+  text('battery-cells', live && Number.isFinite(battery.cell_delta_v) ? fmt(battery.cell_delta_v * 1000, 'mV', 0) : '—');
+  $('battery-level').hidden = !live || !Number.isFinite(battery.remaining_pct);
+  if (live && Number.isFinite(battery.remaining_pct)) $('battery-level').value = battery.remaining_pct;
+  const history = live ? (power.history || []).filter(p => Number.isFinite(p.watts) && p.age_s <= 60) : [];
+  const low = Math.min(0, ...history.map(p => p.watts)), high = Math.max(1, ...history.map(p => p.watts));
+  $('power-history-line').setAttribute('points', history.map(p => `${300 * (1 - p.age_s / 60)},${35 - 32 * (p.watts - low) / (high - low)}`).join(' '));
+  const esc = power.esc || {};
+  const escLive = state.connected && esc.available && !esc.stale;
+  text('esc-status', !state.connected ? 'Disconnected' : esc.stale ? 'Stale' : escLive ? 'Live' : 'No telemetry');
+  const rows = $('esc-readings');
+  rows.replaceChildren();
+  if (escLive && esc.motors?.length) {
+    esc.motors.forEach(motor => {
+      const row = document.createElement('div');
+      row.textContent = motor.online ? `ESC ${motor.id} · ${fmt(motor.power_w, 'W')} · ${fmt(motor.current_a, 'A')} · ${fmt(motor.temperature_c, '°C')} · ${fmt(motor.rpm, 'rpm', 0)}${motor.faults ? ' · FAULT' : ''}` : `ESC ${motor.id} · Offline`;
+      rows.append(row);
+    });
+  } else rows.textContent = esc.stale ? 'ESC readings are stale' : 'No ESC measurements received';
+  const arm = state.arm_servo || {};
+  text('power-arm', state.connected && arm.connected ? `ID ${arm.servo_id} · ${fmt(arm.voltage, 'V')} · ${fmt(arm.current_a, 'A', 3)} · ${fmt(arm.temperature_c, '°C', 0)}` : 'No telemetry');
+}
+
 function updateHud() {
+  updatePower();
   updateArmSettings();
   const {drive, robot, detector, probe} = state;
   const owner = state.connected && drive.you_control_owner;

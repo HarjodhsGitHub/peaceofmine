@@ -27,6 +27,16 @@ Object.defineProperty(document, 'hidden', {value: false});
         checks = '''
 const assert = (condition, label) => { if (!condition) throw Error(label); };
 const latestDrive = () => sent.filter(m => m.type === 'drive').at(-1);
+state.connected = true;
+state.power = {battery: {available: true, present: true, stale: false, power_w: 24, current_a: 2, voltage_v: 12, remaining_pct: 50},
+  esc: {available: false}, history: [{age_s: 2, watts: 24}]};
+updatePower();
+assert($('battery-watts').textContent === '24.0 W' && $('battery-charge').textContent === '50 %', 'power metrics render');
+assert($('esc-status').textContent === 'No telemetry', 'missing ESC does not invent readings');
+state.power.battery.stale = true; updatePower();
+assert($('battery-watts').textContent === '—' && $('battery-level').hidden, 'stale power is hidden');
+state.connected = false; updatePower();
+assert($('power-status').textContent === 'DISCONNECTED', 'power follows connection status');
 state.arm_servo = {discovered_servos: [1, 2], serial_connected: true};
 updateArmSettings();
 assert($('arm-servo-id').options.length === 3, 'detected servo options');
