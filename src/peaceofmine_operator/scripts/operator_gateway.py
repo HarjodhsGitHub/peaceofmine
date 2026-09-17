@@ -586,9 +586,9 @@ class OperatorGateway(Node):
             elif message_type in ('probe_target', 'sweep_enabled', 'sweep_speed', 'arm_servo') and not self._armed:
                 return {'type': 'error', 'message': 'Arm the website controls before actuating.'}
             elif message_type == 'arm_servo':
-                if payload.get('action') == 'jog' and not self._calibrating:
+                if payload.get('action') in ('jog', 'position') and not self._calibrating:
                     return {'type': 'error', 'message': 'Enable calibration before jogging.'}
-                command = {key: payload[key] for key in ('action', 'request_id', 'point', 'held', 'direction') if key in payload}
+                command = {key: payload[key] for key in ('action', 'request_id', 'point', 'held', 'direction', 'position', 'speed_deg_s') if key in payload}
                 self._arm_command_pub.publish(String(data=json.dumps(command)))
             elif message_type == 'probe_target':
                 requested = float(payload.get('depth_mm', 0.0))

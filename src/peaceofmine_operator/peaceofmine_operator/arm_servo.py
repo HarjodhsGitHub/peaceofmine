@@ -1,5 +1,6 @@
 """MX-64 Protocol 1.0 transport and bounded, non-queued calibration moves."""
 import time
+import math
 
 
 def limits(minimum, center, maximum):
@@ -120,24 +121,33 @@ class ArmServo:
         self.jog_limits = None
         self.target = self.calibration[point]
 
-    def request_jog(self, direction):
+    def movement_limits(self):
+        low, high = self.cw, self.ccw
+        if self.calibration:
+            low, high = max(low, self.calibration['minimum']), min(high, self.calibration['maximum'])
+        return low, high
+
+    def request_jog(self, direction, speed_deg_s=2.0):
         if type(direction) is not int or direction not in (-1, 1):
             raise ValueError('Jog direction must be left or right')
-        if self.jog_limits is None:
-            position = self.bus.read(self.ident, 36)
-            if not self.cw <= position <= self.ccw:
-                raise ValueError('Present position is outside servo joint limits')
-            if self.calibration:
-                low, high = self.calibration['minimum'], self.calibration['maximum']
-            else:
-                # Unknown mechanical limits: at most five degrees per hold.
-                low, high = max(self.cw, position - 56), min(self.ccw, position + 56)
-            if not low <= position <= high:
-                raise ValueError('Position outside saved limits; reposition with torque off')
-            self.jog_limits = (low, high)
-        self.speed = 3  # MX-64: approximately 2 degrees/second.
-        self.max_step = 16  # Let the hardware speed controller move beyond tiny position errors.
+        if isinstance(speed_deg_s, bool) or not isinstance(speed_deg_s, (int, float)) or not math.isfinite(speed_deg_s) or speed_deg_s <= 0:
+            raise ValueError('Speed must be a finite positive number')
+        if speed_deg_s > 1023 * .684:
+            raise ValueError('Speed exceeds the MX-64 speed register range (1023 units)')
+        self.jog_limits = self.movement_limits()
+        self.speed = max(1, round(speed_deg_s / .684))
+        # Jog continuously while held; keep only a small outstanding goal.
+        self.max_step = 56
         self.target = self.jog_limits[0 if direction < 0 else 1]
+
+    def request_position(self, position):
+        low, high = self.movement_limits()
+        if type(position) is not int or not low <= position <= high:
+            raise ValueError('Position must be within servo joint and saved limits')
+        self.jog_limits = (low, high)
+        self.speed = 0  # MX-64 joint mode: maximum available speed.
+        self.max_step = 4095  # Send the user's target directly.
+        self.target = position
 
     def step(self, allowed):
         # Recheck the independent safety gate before each serial motion write.
@@ -168,7 +178,7 @@ class ArmServo:
                 return
             self.bus.write(self.ident, 32, self.speed)
             self._applied_speed = self.speed
-        # Only a small move can remain outstanding if the process/serial link dies.
+        # Jog/preset moves use a bounded lead; slider moves send the chosen target.
         goal = max(low, min(high, self.position + max(-self.max_step, min(self.max_step, self.target - self.position))))
         if not allowed():
             self.stop()

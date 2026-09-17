@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <launch>
-  <arg name="serial_port" default=""/>
+  <arg name="serial_port" default="auto"/>
   <arg name="servo_id" default="-1"/>
   <arg name="minimum" default="-1"/>
   <arg name="center" default="-1"/>

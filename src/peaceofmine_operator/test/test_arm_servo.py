@@ -35,34 +35,56 @@ class ArmServoTest(unittest.TestCase):
         self.servo.step(lambda: True)
         self.assertNotIn((24, 1), self.bus.writes)
 
-    def test_uncalibrated_jog_has_fixed_small_window_and_stops_on_gate_loss(self):
+    def test_jog_continues_to_joint_limit_and_stops_on_gate_loss(self):
         self.servo.request_jog(1)
-        self.assertEqual(self.servo.target, 2056)
+        self.assertEqual(self.servo.target, 4095)
         self.servo.step(lambda: True)
         self.assertEqual(self.bus.values[32], 3)
-        self.assertEqual(self.bus.values[30], 2016)
+        self.assertEqual(self.bus.values[30], 2056)
         self.bus.values[36] = 2040
         self.servo.request_jog(1)
-        self.assertEqual(self.servo.target, 2056)  # Repeated packets cannot extend a hold.
+        self.assertEqual(self.servo.target, 4095)
         self.servo.step(lambda: False)
         self.assertFalse(self.servo.torque)
         self.assertIsNone(self.servo.target)
         self.assertIsNone(self.servo.jog_limits)
 
-    def test_slow_jog_can_overcome_small_position_deadband(self):
+    def test_slow_jog_can_overcome_loaded_position_deadband(self):
         original = self.bus.write
         def motor(ident, address, value, size=2):
             original(ident, address, value, size)
             error = value - self.bus.values[36]
-            if address == 30 and self.bus.values[24] and abs(error) > 3:
+            if address == 30 and self.bus.values[24] and abs(error) > 20:
                 self.bus.values[36] += 1 if error > 0 else -1
         self.bus.write = motor
         for _ in range(80):
             self.servo.request_jog(1)
             self.servo.step(lambda: True)
         self.assertGreater(self.bus.values[36], 2003)
-        self.assertLessEqual(self.bus.values[36], 2056)
+        self.assertGreater(self.bus.values[36], 2056)
         self.assertEqual(self.bus.values[32], 3)
+
+    def test_jog_goal_is_bounded_in_both_directions_and_after_release(self):
+        for direction in (-1, 1):
+            self.servo.stop()
+            self.bus.values[36] = 2000
+            for _ in range(100):
+                self.servo.request_jog(direction)
+                self.servo.step(lambda: True)
+                self.assertEqual(self.bus.values[30], 2000 + direction * 56)
+            self.servo.stop()
+            before = list(self.bus.writes)
+            self.servo.step(lambda: True)
+            self.assertEqual(self.bus.writes, before)
+            self.assertEqual(self.bus.values[24], 0)
+
+    def test_calibrated_jog_never_commands_past_saved_limit(self):
+        self.servo.configure(dict(minimum=1980, center=2000, maximum=2020))
+        for direction, goal in [(-1, 1980), (1, 2020)]:
+            self.servo.stop()
+            self.servo.request_jog(direction)
+            self.servo.step(lambda: True)
+            self.assertEqual(self.bus.values[30], goal)
 
     def test_telemetry_reports_hardware_values_and_signed_units(self):
         self.bus.values.update({24: 1, 34: 512, 38: 1024 + 10, 40: 512, 68: 2148, 46: 1})
@@ -87,6 +109,35 @@ class ArmServoTest(unittest.TestCase):
         self.assertEqual(self.servo.target, 1900)
         with self.assertRaises(ValueError):
             self.servo.request_jog(0)
+
+    def test_jog_speed_applies_without_hold_travel_limit(self):
+        self.servo.request_jog(1, 100)
+        self.servo.step(lambda: True)
+        self.assertEqual(self.bus.values[32], round(100 / .684))
+        self.bus.values[36] = 3000
+        self.servo.request_jog(1, 100)
+        self.servo.step(lambda: True)
+        self.assertEqual(self.bus.values[30], 3056)
+        self.assertEqual(self.servo.target, 4095)
+
+    def test_invalid_speed_and_out_of_range_target_are_rejected(self):
+        for speed in (0, -1, float('nan'), float('inf'), True, 700):
+            with self.assertRaises(ValueError):
+                self.servo.request_jog(1, speed)
+        self.servo.configure(dict(minimum=1900, center=2000, maximum=2100))
+        with self.assertRaises(ValueError):
+            self.servo.request_position(2500)
+        self.assertNotIn((24, 1), self.bus.writes)
+
+    def test_slider_uses_full_speed_direct_target_and_permission(self):
+        self.servo.request_jog(1, 2)
+        self.servo.step(lambda: True)
+        self.servo.request_position(3500)
+        self.servo.step(lambda: True)
+        self.assertEqual(self.bus.values[32], 0)
+        self.assertEqual(self.bus.values[30], 3500)
+        self.servo.step(lambda: False)
+        self.assertEqual(self.bus.values[24], 0)
 
     def test_capture_is_read_only_and_range_checked(self):
         before = list(self.bus.writes)

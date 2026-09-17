@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 from unittest.mock import patch
+from concurrent.futures import Future
 import json
 
 import rclpy
@@ -39,6 +40,7 @@ class ArmNodeTest(unittest.TestCase):
         healthy(self.node.safety)
         self.bus = Bus()
         self.node.bus = self.bus
+        self.node.discovered_servos = [1, 2]
         self.node.servo = ArmServo(self.bus, 1, dict(minimum=1500, center=2000, maximum=2500))
         self.node.permission_cb(Bool(data=True))
 
@@ -51,12 +53,86 @@ class ArmNodeTest(unittest.TestCase):
         self.node.tick()
         self.assertTrue(self.node.servo.torque)
 
+    def test_scan_is_read_only_and_finds_both_servos_at_fixed_baud(self):
+        def read(ident, address, size=2):
+            if ident in (1, 2):
+                return 310
+            raise RuntimeError('No reply')
+        with patch.object(module, 'ArbotiX', return_value=self.bus) as factory, \
+                patch.object(self.bus, 'read', side_effect=read):
+            before = list(self.bus.writes)
+            bus, device, ids = self.node.discover('/dev/fake')
+        self.assertIs(bus, self.bus)
+        self.assertEqual(ids, [1, 2])
+        self.assertEqual(self.bus.writes, before)
+        factory.assert_called_once_with('/dev/fake', 1000000)
+
+    def test_pending_scan_does_not_block_tick_or_select_a_servo(self):
+        self.node.bus = self.node.servo = None
+        self.node.discovery = Future()
+        self.node.tick()
+        self.assertIsNone(self.node.servo)
+        self.assertFalse(self.node.discovery.done())
+        self.node.discovery.set_result((self.bus, '/dev/fake', [1, 2]))
+        self.node.tick()
+        self.assertEqual(self.node.discovered_servos, [1, 2])
+        self.assertIsNone(self.node.servo)
+        self.assertNotIn((24, 1), self.bus.writes)
+
+    def test_scan_cancellation_closes_port_without_motion(self):
+        with patch.object(module, 'ArbotiX', return_value=self.bus), \
+                patch.object(self.bus, 'read', side_effect=lambda *args: self.node.discovery_stop.set() or 310), \
+                patch.object(self.bus, 'close') as close:
+            self.assertIsNone(self.node.discover('/dev/fake'))
+            close.assert_called_once()
+        self.assertNotIn((24, 1), self.bus.writes)
+
+    def test_failed_startup_scan_is_not_retried(self):
+        self.node.bus = self.node.servo = None
+        future = Future()
+        future.set_exception(RuntimeError('No adapter'))
+        with patch.object(self.node.discovery_pool, 'submit', return_value=future) as submit:
+            self.node.tick()  # Schedule once without blocking the ROS callback.
+            self.node.tick()  # Report failure.
+            for _ in range(5):
+                self.now += 10
+                self.node.tick()
+            submit.assert_called_once_with(self.node.discover, 'auto')
+        self.assertEqual(self.node.reason, 'No adapter')
+
+    def test_stop_does_not_hide_discovery_failure(self):
+        self.node.fail(RuntimeError('Adapter did not answer'))
+        self.node.command_cb(String(data=json.dumps(dict(action='stop'))))
+        self.assertEqual(self.node.reason, 'Adapter did not answer')
+        self.assertEqual(self.node.connection_error, 'Adapter did not answer')
+
+    def test_disconnect_after_scan_does_not_restart_discovery(self):
+        self.node.bus = self.node.servo = None
+        self.node.discovery = Future()
+        self.node.discovery.set_result((self.bus, '/dev/fake', [1, 2]))
+        self.node.tick()
+        self.node.fail(RuntimeError('Disconnected'))
+        with patch.object(self.node.discovery_pool, 'submit') as submit:
+            self.now += 10
+            self.node.tick()
+            submit.assert_not_called()
+
     def test_jog_without_limits_and_command_feedback(self):
         self.node.servo.calibration = None
         self.node.command_cb(String(data=json.dumps(dict(action='jog', direction=1, held=True, request_id='jog1'))))
         self.node.tick()
         self.assertTrue(self.node.servo.torque)
         self.assertTrue(self.node.last_command['success'])
+        self.now += .26
+        self.node.tick()
+        self.assertFalse(self.node.servo.torque)
+
+    def test_slider_command_full_speed_and_timeout(self):
+        self.node.command_cb(String(data=json.dumps(dict(action='position', position=2030,
+            held=True))))
+        self.node.tick()
+        self.assertEqual(self.bus.values[30], 2030)
+        self.assertEqual(self.bus.values[32], 0)
         self.now += .26
         self.node.tick()
         self.assertFalse(self.node.servo.torque)

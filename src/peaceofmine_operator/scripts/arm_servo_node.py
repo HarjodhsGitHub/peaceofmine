@@ -5,6 +5,8 @@ import math
 import signal
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import rclpy
 from mavros_msgs.msg import State
@@ -18,7 +20,7 @@ from peaceofmine_operator.rc_safety import RcSafety
 class ArmServoNode(Node):
     def __init__(self):
         super().__init__('arm_servo')
-        for key, value in dict(serial_port='', servo_id=-1, bus_baud=1000000,
+        for key, value in dict(serial_port='auto', servo_id=-1,
                                minimum=-1, center=-1, maximum=-1, speed=20).items():
             self.declare_parameter(key, value)
         self.safety = RcSafety()  # No hardware simulation bypass.
@@ -28,8 +30,15 @@ class ArmServoNode(Node):
         self.permission = False
         self.permission_at = self.command_at = 0.0
         self.bus = self.servo = None
-        self.reason = 'Set serial_port and select the servo ID; torque remains off'
-        self.last_retry = self.last_poll = 0.0
+        self.discovery_pool = ThreadPoolExecutor(max_workers=1)
+        self.discovery = None
+        self.discovery_started = False
+        self.discovery_stop = threading.Event()
+        self.discovered_servos = []
+        self.device = ''
+        self.reason = 'Looking for the arm adapter'
+        self.connection_error = ''
+        self.last_poll = 0.0
         self.state = {}
         self.last_command = {}
         self.create_subscription(State, 'mavros/state', self.state_cb, 10)
@@ -42,6 +51,65 @@ class ArmServoNode(Node):
         self.sweep_pub = self.create_publisher(Bool, 'fixture/sweep_enabled_state', 1)
         self.publisher = self.create_publisher(String, 'arm/state', 1)
         self.create_timer(.05, self.tick)
+
+    def discover(self, configured):
+        # This worker exclusively owns the port until its result is adopted by
+        # tick(). Never scan concurrently with an active servo or motion writes.
+        candidates = ([configured] if configured not in ('', 'auto') else
+                      sorted(str(p) for p in Path('/dev/serial/by-id').glob('usb-FTDI*')))
+        errors = []
+        for device in candidates:
+            bus = None
+            try:
+                if self.discovery_stop.is_set():
+                    return None
+                bus = ArbotiX(device, 1000000)
+                found = []
+                for ident in range(253):
+                    if self.discovery_stop.is_set():
+                        bus.close()
+                        return None
+                    try:
+                        if bus.read(ident, 0) == 310:
+                            found.append(ident)
+                    except RuntimeError:
+                        continue
+                if found:
+                    return bus, device, found
+                errors.append(f'{device}: no MX-64 servos found')
+            except Exception as error:
+                errors.append(f'{device}: {error}')
+            if bus:
+                bus.close()
+        raise RuntimeError('; '.join(errors) or 'No FTDI arm adapter found; connect it and restart the arm driver')
+
+    def poll_discovery(self):
+        if self.bus:
+            return
+        if self.discovery is not None:
+            if not self.discovery.done():
+                return
+            future, self.discovery = self.discovery, None
+            self.discovery_started = True
+            self.discovery_pool.shutdown(wait=False)
+            result = future.result()
+            if result is None:
+                return
+            self.bus, self.device, self.discovered_servos = result
+            self.connection_error = ''
+            self.get_logger().info(f'Arm discovery: {self.device}, servo IDs {self.discovered_servos}, 1000000 baud')
+            ident = self.get_parameter('servo_id').value
+            if ident != -1:
+                if ident not in self.discovered_servos:
+                    raise ValueError(f'Configured servo {ident} was not detected')
+                self.select(ident)
+            else:
+                self.reason = 'Scan complete; select a detected servo'
+        elif not self.discovery_started:
+            self.discovery_started = True
+            self.reason = 'Scanning arm adapter and servo IDs…'
+            self.discovery = self.discovery_pool.submit(
+                self.discover, str(self.get_parameter('serial_port').value))
 
     def allowed(self):
         now = time.monotonic()
@@ -94,6 +162,8 @@ class ArmServoNode(Node):
     def fail(self, error):
         self.sweeping = False
         self.reason = str(error)
+        self.connection_error = self.reason
+        self.get_logger().error(f'Arm driver: {self.reason}')
         self.command_at = 0.0
         if self.servo:
             try:
@@ -103,9 +173,12 @@ class ArmServoNode(Node):
         if self.bus:
             self.bus.close()
         self.bus = self.servo = None
+        self.discovered_servos = []
         self.state = {}
 
     def select(self, ident):
+        if ident not in self.discovered_servos:
+            raise ValueError('Select a detected servo ID')
         self.stop()
         calibration = {key: self.get_parameter(key).value for key in ('minimum', 'center', 'maximum')}
         if all(value == -1 for value in calibration.values()):
@@ -122,7 +195,8 @@ class ArmServoNode(Node):
             action = command.get('action')
             if action == 'stop':
                 self.stop()
-                self.reason = 'Stopped; torque released'
+                if self.servo:
+                    self.reason = 'Stopped; torque released'
                 return
             if not self.bus:
                 raise ValueError('Arm serial port is not connected')
@@ -143,7 +217,7 @@ class ArmServoNode(Node):
                 else:
                     self.servo.configure({key: command.get(key) for key in ('minimum', 'center', 'maximum')})
                     self.reason = 'Limits applied; copy launch settings to keep them after restart'
-            elif action in ('move', 'jog'):
+            elif action in ('move', 'jog', 'position'):
                 self.sweeping = False
                 # Never store a request without website permission and PX4 status 4.
                 if (command.get('held') is not True or not self.permission
@@ -154,8 +228,11 @@ class ArmServoNode(Node):
                 self.servo.speed = self.get_parameter('speed').value
                 self.servo.max_step = 16
                 if action == 'jog':
-                    self.servo.request_jog(command.get('direction'))
+                    self.servo.request_jog(command.get('direction'), command.get('speed_deg_s', 2.0))
                     self.reason = 'Jogging slowly; release to stop'
+                elif action == 'position':
+                    self.servo.request_position(command.get('position'))
+                    self.reason = 'Moving to slider position'
                 else:
                     self.servo.request(command.get('point'))
                     self.reason = f'Moving toward {command.get("point")}; release to stop'
@@ -182,15 +259,7 @@ class ArmServoNode(Node):
     def tick(self):
         now = time.monotonic()
         try:
-            device = str(self.get_parameter('serial_port').value)
-            if not self.bus and device and now - self.last_retry > 2:
-                self.last_retry = now
-                self.bus = ArbotiX(device, self.get_parameter('bus_baud').value)
-                ident = self.get_parameter('servo_id').value
-                if ident != -1:
-                    self.select(ident)
-                else:
-                    self.reason = 'Adapter connected; select the servo ID to read its position'
+            self.poll_discovery()
             if self.servo:
                 if self.sweeping:
                     if (not self.permission or now - self.permission_at >= .3 or not self.safety.servo_snapshot()['allowed']):
@@ -213,15 +282,26 @@ class ArmServoNode(Node):
                         self.angle_pub.publish(Float32(data=angle))
             self.sweep_pub.publish(Bool(data=self.sweeping))
             self.speed_pub.publish(Float32(data=self.sweep_speed))
-            data = {**self.state, 'reason': self.reason, 'last_command': self.last_command,
+            data = {**self.state, 'reason': self.connection_error or self.reason, 'last_command': self.last_command,
                     'connected': self.servo is not None, 'serial_connected': self.bus is not None,
-                    'serial_port': device, 'safety': self.safety.servo_snapshot()}
+                    'serial_port': self.device, 'discovered_servos': self.discovered_servos,
+                    'scanning': self.discovery is not None, 'safety': self.safety.servo_snapshot()}
             self.publisher.publish(String(data=json.dumps(data)))
         except Exception as error:
             self.fail(error)
             self.publisher.publish(String(data=json.dumps(dict(connected=False, reason=self.reason, last_command=self.last_command))))
 
     def destroy_node(self):
+        self.discovery_stop.set()
+        self.discovery_pool.shutdown(wait=True)
+        if self.discovery is not None and not self.discovery.cancelled():
+            try:
+                result = self.discovery.result()
+                if result:
+                    result[0].close()
+            except Exception:
+                pass
+            self.discovery = None
         try:
             self.stop()
         finally:

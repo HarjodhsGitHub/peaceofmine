@@ -225,7 +225,7 @@
             <button id="arm-take-control" type="button">Take control for calibration</button>
             <p id="arm-calibration-access" class="dialog-help" role="status"></p>
             <div class="arm-selection"><label for="arm-servo-id">Servo ID</label>
-              <input id="arm-servo-id" type="number" min="0" max="252" value="1">
+              <select id="arm-servo-id"><option value="">Scanning for servos…</option></select>
               <button type="button" id="arm-select-id">Select servo</button>
             </div>
             <div class="arm-enable-controls">
@@ -236,8 +236,13 @@
               <button type="button" id="arm-jog-left">← Hold left</button>
               <button type="button" id="arm-jog-right">Hold right →</button>
             </div>
+            <div class="arm-enable-controls">
+              <label>Jog speed (°/s) <input id="arm-jog-speed" type="number" step="any" value="2" required></label>
+            </div>
+            <label for="arm-position-slider">Target position <output id="arm-position-label">—</output></label>
+            <input id="arm-position-slider" type="range" min="0" max="4095" step="1" value="0" disabled>
             <p id="arm-jog-status" class="arm-jog-status" role="status">Jogging disabled</p>
-            <p class="dialog-help">About 2°/s. Release to stop. Before limits are saved: at most 5° per hold.</p>
+            <p class="dialog-help">Hold left or right to jog at the selected speed; release to stop. The slider commands its target at full servo speed. Saved limits always apply.</p>
             <p class="dialog-help">Support the arm: stopping releases torque. PX4 status must remain 4.</p>
             <details class="arm-help"><summary>Position units and calibration help</summary>
               <p>The angle is the servo shaft position, not its angle to the ground. 4096 raw ticks = 360°. Left decreases the angle; mounting may reverse physical direction.</p>

@@ -1033,7 +1033,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .arm-control-panel, .arm-telemetry-panel { min-width: 0; }
 .arm-control-panel h4 { margin: 0 0 .6rem; }
 .arm-selection, .arm-enable-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin: .8rem 0; }
-.arm-selection input { width: 5rem; padding: .65rem; }
+.arm-selection select { min-width: 10rem; max-width: 100%; padding: .65rem; }
 .arm-table { width: 100%; border-collapse: collapse; font-size: .85rem; font-variant-numeric: tabular-nums; }
 .arm-table caption { text-align: left; font-size: 1rem; font-weight: 700; padding: .6rem 0; }
 .arm-table th, .arm-table td { padding: .55rem .65rem; border-bottom: 1px solid #34504f; text-align: left; overflow-wrap: anywhere; }

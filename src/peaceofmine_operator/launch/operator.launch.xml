@@ -4,8 +4,8 @@
        ros2 launch peaceofmine_operator operator.launch.xml
        Stop the previous launch before switching vehicle modes. -->
   <arg name="use_arm_servo" default="true"/>
-  <arg name="arm_serial_port" default="/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AI049UTL-if00-port0"/>
-  <arg name="arm_servo_id" default="1"/>
+  <arg name="arm_serial_port" default="auto"/>
+  <arg name="arm_servo_id" default="-1"/>
   <!-- Record mechanical limits in Settings before preset moves or sweeping. -->
   <arg name="arm_minimum" default="-1"/>
   <arg name="arm_center" default="-1"/>

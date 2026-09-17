@@ -1444,6 +1444,9 @@ function initializeCameraSettings() {
 }
 
 let armHoldTimer = null;
+let armSliderMoving = false;
+let armSliderDragging = false;
+let armSliderTarget = null;
 let armPending = null;
 let armRequestSequence = 0;
 function setArmFeedback(text, kind = 'pending') {
@@ -1455,7 +1458,7 @@ function armCommand(action, values = {}, feedback = true) {
   if (feedback) {
     payload.request_id = `${Date.now()}-${++armRequestSequence}`;
     armPending = {id: payload.request_id, at: performance.now()};
-    setArmFeedback(({select: 'Selecting servo…', capture: 'Recording position…', configure: 'Applying limits…', stop: 'Stopping…', jog: 'Starting slow jog…', move: 'Starting movement…'})[action] || 'Sending command…');
+    setArmFeedback(({select: 'Selecting servo…', capture: 'Recording position…', configure: 'Applying limits…', stop: 'Stopping…', jog: 'Starting jog…', position: 'Moving to slider target…', move: 'Starting movement…'})[action] || 'Sending command…');
   }
   send(payload);
 }
@@ -1468,6 +1471,7 @@ function armAngle(position) {
   return Number.isFinite(position) ? `${(position * 360 / 4096).toFixed(1)}°` : '—';
 }
 function stopArmMove() {
+  armSliderMoving = false;
   if (armHoldTimer !== null) {
     clearInterval(armHoldTimer);
     armHoldTimer = null;
@@ -1476,6 +1480,17 @@ function stopArmMove() {
 }
 function updateArmSettings() {
   const servo = state.arm_servo || {};
+  const servoSelect = $('arm-servo-id');
+  const ids = servo.discovered_servos || [];
+  const signature = JSON.stringify([ids, Boolean(servo.scanning)]);
+  if (servoSelect.dataset.discovery !== signature) {
+    const previous = servoSelect.value;
+    servoSelect.replaceChildren(new Option(servo.scanning ? 'Scanning for servos…' : 'Select a detected servo', ''));
+    ids.forEach(id => servoSelect.add(new Option(`Servo ${id}`, String(id))));
+    servoSelect.value = ids.includes(Number(previous)) && previous !== '' ? previous
+      : ids.includes(servo.servo_id) ? String(servo.servo_id) : '';
+    servoSelect.dataset.discovery = signature;
+  }
   const owner = state.connected && state.drive.you_control_owner;
   if (armPending) {
     const acknowledgement = servo.last_command;
@@ -1489,6 +1504,18 @@ function updateArmSettings() {
     }
   }
   const ready = owner && state.safety?.servo_allowed && state.drive.armed && servo.connected;
+  const slider = $('arm-position-slider');
+  if (servo.connected) {
+    slider.min = Math.max(servo.eeprom_minimum ?? 0, servo.calibration?.minimum ?? 0);
+    slider.max = Math.min(servo.eeprom_maximum ?? 4095, servo.calibration?.maximum ?? 4095);
+    if (!armSliderDragging) slider.value = servo.position;
+  }
+  slider.disabled = !ready || !state.drive.calibrating || (armHoldTimer !== null && !armSliderMoving);
+  if (armSliderMoving && !armSliderDragging && servo.torque && Math.abs(servo.position - armSliderTarget) <= 3
+      && servo.goal_position === armSliderTarget) stopArmMove();
+  $('arm-position-label').textContent = servo.connected ? armAngle(Number(slider.value)) : '—';
+  $('arm-jog-speed').disabled = armHoldTimer !== null && !armSliderMoving;
+
   $('arm-servo-status').textContent = servo.reason || 'Arm driver not running';
   $('arm-servo-position').textContent = servo.connected ? `${armAngle(servo.position)} (${servo.position ?? '—'} ticks)` : servo.serial_connected ? 'Adapter connected · no servo selected' : 'Disconnected';
   $('arm-servo-details').textContent = servo.connected ? `Servo ${servo.servo_id} · ${servo.serial_port || 'serial adapter'}` : servo.serial_connected ? 'Select the ID of the arm servo, then click Select servo.' : servo.serial_port ? `Arm serial port: ${servo.serial_port}` : 'Start hardware launch with use_arm_servo:=true and arm_serial_port:=<adapter path>.';
@@ -1500,7 +1527,7 @@ function updateArmSettings() {
   metric('arm-torque-limit', number(servo.torque_limit_percent, 1, ' %'));
   metric('arm-max-torque', number(servo.max_torque_percent, 1, ' %'));
   metric('arm-current', number(servo.current_a, 3, ' A'));
-  metric('arm-speed', `${number(servo.speed_deg_s, 1, '°/s')} / ${number(servo.speed_limit_deg_s, 1, '°/s')}`);
+  metric('arm-speed', `${number(servo.speed_deg_s, 1, '°/s')} / ${servo.speed_limit_deg_s === 0 ? 'Full speed' : number(servo.speed_limit_deg_s, 1, '°/s')}`);
   metric('arm-moving', typeof servo.moving === 'boolean' ? (servo.moving ? 'Yes' : 'No') : '—');
   metric('arm-power', `${number(servo.voltage, 1, ' V')} / ${number(servo.temperature_c, 0, ' °C')}`);
   metric('arm-model', `${servo.model ?? '—'} / ${servo.firmware ?? '—'}`);
@@ -1515,7 +1542,7 @@ function updateArmSettings() {
   $('arm-calibration-access').textContent = owner && state.drive.calibrating ? 'Hold a jog button to move. Release it, then record the position.' : selectionBlocked || 'Ready to select a servo and record positions.';
   $('arm-take-control').hidden = owner;
   $('arm-take-control').disabled = !state.connected;
-  $('arm-select-id').disabled = Boolean(selectionBlocked);
+  $('arm-select-id').disabled = Boolean(selectionBlocked) || servoSelect.value === '';
   $('arm-select-id').title = selectionBlocked || 'Select the servo ID; position updates automatically.';
   const canRecord = owner && (!state.drive.armed || state.drive.calibrating) && servo.connected && !servo.torque && armHoldTimer === null;
   $('arm-apply-limits').disabled = !canRecord || !['minimum', 'center', 'maximum'].every(point => Number.isFinite(servo.captured?.[point] ?? servo.calibration?.[point]));
@@ -1549,15 +1576,24 @@ function updateArmSettings() {
 }
 function initializeArmSettings() {
   $('arm-take-control').onclick = () => armControlCommand({type: 'take_control'}, 'Control acquired. Select a servo or enable slow jogging.', () => state.drive.you_control_owner);
-  $('arm-select-id').onclick = () => armCommand('select', {servo_id: Number($('arm-servo-id').value)});
+  $('arm-servo-id').onchange = updateArmSettings;
+  $('arm-select-id').onclick = () => {
+    if ($('arm-servo-id').value !== '') armCommand('select', {servo_id: Number($('arm-servo-id').value)});
+  };
   $('arm-calibration-enable').onclick = () => armControlCommand({type: 'arm', calibration: true}, 'Slow jogging enabled. Hold left or right; release to stop.', () => state.drive.armed && state.drive.calibrating);
   $('arm-calibration-stop').onclick = () => { stopArmMove(); armCommand('stop'); send({type: 'estop'}); };
   function bindHold(button, action, values) {
     const start = () => {
       if (button.disabled) return;
       stopArmMove();
-      armCommand(action, {...values, held: true});
-      armHoldTimer = setInterval(() => armCommand(action, {...values, held: true}, false), 80);
+      const selected = typeof values === 'function' ? values() : values;
+      if (action === 'jog' && (['arm-jog-speed'].some(id => !$(id).checkValidity() || !Number.isFinite(Number($(id).value)) || Number($(id).value) <= 0))) {
+        setArmFeedback('Enter a positive jog speed.', 'error'); return;
+      }
+      const held = {...selected, held: true};
+      armCommand(action, held);
+      armHoldTimer = setInterval(() => armCommand(action, held, false), 80);
+      updateArmSettings();
     };
     button.onpointerdown = event => { event.preventDefault(); button.setPointerCapture(event.pointerId); start(); };
     button.onpointerup = button.onpointercancel = button.onlostpointercapture = stopArmMove;
@@ -1565,8 +1601,33 @@ function initializeArmSettings() {
     button.onkeyup = event => { if ([' ', 'Enter'].includes(event.key)) stopArmMove(); };
     button.onblur = stopArmMove;
   }
-  bindHold($('arm-jog-left'), 'jog', {direction: -1});
-  bindHold($('arm-jog-right'), 'jog', {direction: 1});
+  const jogOptions = () => ({speed_deg_s: Number($('arm-jog-speed').value)});
+  bindHold($('arm-jog-left'), 'jog', () => ({direction: -1, ...jogOptions()}));
+  bindHold($('arm-jog-right'), 'jog', () => ({direction: 1, ...jogOptions()}));
+  const positionSlider = $('arm-position-slider');
+  positionSlider.onpointerdown = () => { armSliderDragging = true; };
+  positionSlider.onpointerup = positionSlider.onpointercancel = positionSlider.onlostpointercapture = () => {
+    armSliderDragging = false; updateArmSettings();
+  };
+  positionSlider.onkeydown = event => {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) armSliderDragging = true;
+  };
+  positionSlider.onkeyup = positionSlider.onblur = () => { armSliderDragging = false; updateArmSettings(); };
+  positionSlider.oninput = () => {
+    if (positionSlider.disabled) return;
+    armSliderTarget = Number(positionSlider.value);
+    $('arm-position-label').textContent = armAngle(armSliderTarget);
+    const target = () => ({position: armSliderTarget, held: true});
+    if (armSliderMoving) {
+      armCommand('position', target(), false);
+      return;
+    }
+    stopArmMove();
+    armSliderMoving = true;
+    armCommand('position', target());
+    armHoldTimer = setInterval(() => armCommand('position', target(), false), 80);
+    updateArmSettings();
+  };
   for (const point of ['minimum', 'center', 'maximum']) {
     $(`arm-capture-${point}`).onclick = () => armCommand('capture', {point});
     bindHold($(`arm-move-${point}`), 'move', {point});
