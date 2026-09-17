@@ -1,8 +1,33 @@
 # ArbotiX-M Servo Toolbox
 
 This is a standalone static website. It has no backend, package install, or
-Python runtime requirement. The browser connects directly to the ArbotiX FTDI
-device through the Web Serial API.
+virtual environment requirement. The browser connects directly to the ArbotiX
+FTDI device through the Web Serial API.
+
+## Start for local testing
+
+From the repository root, start a local static server. Do not activate the
+servodemo Python virtual environment or install `requirements.txt`; those are
+only needed for the Python desktop demo:
+
+```bash
+cd DevTools/servodemo
+python3 -m http.server 8080 --directory web
+```
+
+Open <http://localhost:8080> in Chrome or Edge on the same computer connected
+to the servo adapter. Keep the terminal running while testing the site; press
+**Ctrl+C** to stop the server.
+
+If Python reports `OSError: [Errno 98] Address already in use`, a server may
+already be running on port 8080, so try <http://localhost:8080> first. To use
+another port instead, start the server with a matching directory and URL:
+
+```bash
+python3 -m http.server 8081 --directory web
+```
+
+Then open <http://localhost:8081>.
 
 ## Use
 
@@ -17,7 +42,14 @@ interfere with the serial connection; all DYNAMIXEL traffic stays in the
 browser.
 
 Web Serial is not supported by Safari or Firefox. It requires a secure context
-and a user-initiated permission request.
+and a user-initiated permission request. The serial connection belongs to the
+browser computer: opening this site from a remote PC does not give it access to
+the Raspberry Pi's USB devices.
+
+For remote testing with the servo adapter connected to the Raspberry Pi, run
+the Python desktop demo on the Pi instead. The static browser demo would need a
+serial proxy backend on the Pi before a remote browser could control that
+hardware.
 
 ## Live telemetry
 

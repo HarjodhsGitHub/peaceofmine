@@ -249,6 +249,13 @@ async function emergencyStop() {
 $('connect').onclick = async () => {
   if (connecting) return;
   if (connected) return disconnect();
+  if (!navigator.serial) {
+    const reason = window.isSecureContext
+      ? 'Web Serial is unavailable here. Use Chrome or Edge on the computer connected to the servo adapter.'
+      : 'Web Serial requires HTTPS or localhost. Open this site locally on the computer connected to the servo adapter.';
+    setStatus(reason);
+    return;
+  }
   connecting = true; $('connect').disabled = true;
   try {
     setStatus('Choose the ArbotiX USB serial device…', true);

@@ -18,31 +18,50 @@ interlock. Do not rely on the RC switch to stop commands from a demo.
 
 ## Python desktop demo on the Pi
 
-Run these commands in a terminal on the **Pi's desktop, outside Docker**.
-The pygame window needs a graphical desktop session; a plain SSH terminal
-without display forwarding is not enough.
+Run this on the **Pi's desktop, outside Docker**. The pygame window needs a
+graphical desktop session; a plain SSH terminal is not enough.
 
-First-time setup:
+### 1. Enter the demo directory
+
+Run this from the repository root. If your prompt already ends in
+`DevTools/servodemo`, do not run it again.
 
 ```bash
-cd ~/Documents/nils/PeaceOfMine
-python3 -m venv DevTools/servodemo/.venv
-source DevTools/servodemo/.venv/bin/activate
-python -m pip install -r DevTools/servodemo/requirements.txt
+cd DevTools/servodemo
+```
+
+### 2. Set up the environment once
+
+Only run the first command if `.venv` does not exist. Re-running it on the
+existing environment can report an `activate.csh` permission error.
+
+```bash
+python3 -m venv .venv
+```
+
+Then activate the environment and install the dependencies:
+
+```bash
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
 If creating the environment reports that `venv` or `ensurepip` is unavailable,
-install `python3-venv` with `sudo apt install python3-venv`, then repeat setup.
+install `python3-venv` with `sudo apt install python3-venv`, then run the setup
+again.
 
-Start the demo (also use these commands on subsequent runs):
+### 3. Start the demo
+
+Run this while your prompt is in `DevTools/servodemo` and shows `(.venv)`:
 
 ```bash
-cd ~/Documents/nils/PeaceOfMine
-source DevTools/servodemo/.venv/bin/activate
-python DevTools/servodemo/mx64_slider.py \
+python mx64_slider.py \
   --port /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AI049UTL-if00-port0 \
   --id 1
 ```
+
+On later runs, only repeat steps 1 and 3. If you are already in the demo
+directory, skip step 1.
 
 The demo waits for ArbotiX startup and scans servo IDs at 1 Mbps and 57,600 baud.
 Wait for **Connected** and check that only the intended servo is selected.
@@ -60,16 +79,18 @@ They are not required just to test an already configured joint servo.
 
 ## Browser demo
 
-No virtual environment or requirements installation is needed. From the Pi:
+The browser demo is a static site, so do not activate the Python virtual
+environment or install `requirements.txt` for it. Run this from the repository
+root on the Pi:
 
 ```bash
-cd ~/Documents/nils/PeaceOfMine
 python3 -m http.server 8080 --bind 127.0.0.1 --directory DevTools/servodemo/web
 ```
 
 Open <http://localhost:8080> in Chrome/Chromium or Edge **on the Pi**, click
-**Connect ArbotiX**, and choose the FTDI adapter. A browser on your laptop
-cannot access the Pi's USB through this web server. You can alternatively open
+**Connect ArbotiX**, and choose the FTDI adapter. A browser on a remote PC
+cannot access the Pi's USB through this static web server. For remote control,
+run the Python desktop demo on the Pi, or add a serial proxy backend. You can alternatively open
 `web/index.html` directly if the browser permits Web Serial from local files.
 See [the browser README](web/README.md) for details.
 
