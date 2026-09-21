@@ -219,6 +219,17 @@ state.arm_servo.torque = true;
 updateArmSettings();
 assert($('arm-select-id').disabled && $('arm-calibration-access').textContent.includes('Stop'), 'moving servo cannot change ID');
 state.arm_servo.torque = false;
+state.arm_servo.calibration = {minimum: 1000, center: 1500, maximum: 2000};
+state.arm_servo.eeprom_minimum = 0;
+state.arm_servo.eeprom_maximum = 4095;
+state.arm_servo.motion_speed_limit = 292;
+state.arm_servo.sweep_acceleration_deg_s2 = 94.413;
+updateArmSettings();
+assert($('arm-position-slider').min === '0' && $('arm-position-slider').max === '4095', 'calibration ignores saved sweep range');
+$('arm-max-speed').value = '200';
+$('arm-acceleration').value = '100';
+$('arm-apply-motion').click();
+assert(sent.at(-1).action === 'configure_motion' && sent.at(-1).max_speed_deg_s === 200, 'motion settings reach driver');
 state.drive.armed = false;
 state.drive.calibrating = false;
 state.safety = {allowed: false, servo_allowed: true, mode: 'override'};
@@ -231,6 +242,26 @@ assert(selection.request_id && $('arm-feedback').textContent.includes('Selecting
 state.arm_servo.last_command = {request_id: selection.request_id, success: true, message: 'Servo 2 selected'};
 updateArmSettings();
 assert($('arm-feedback').textContent === 'Servo 2 selected', 'driver acknowledgement shown');
+const savedServo = state.arm_servo;
+state.arm_servo = {active_role: 'probe', role_ids: {arm: 1, probe: 2}, discovered_servos: [1],
+  serial_connected: true, connected: false, reason: 'Probe servo ID 2 is not connected'};
+updateArmSettings();
+assert($('arm-servo-role').value === 'probe' && !$('arm-servo-role').disabled, 'unplugged probe role remains selectable');
+assert($('arm-servo-role').options[1].textContent.includes('Not connected'), 'unplugged probe labelled honestly');
+assert($('arm-jog-left').disabled && $('arm-position-slider').disabled, 'unplugged probe cannot move');
+assert(!$('arm-reconnect').disabled, 'owner can reconnect while stopped');
+$('arm-reconnect').click();
+assert(sent.at(-1).action === 'reconnect', 'explicit reconnect request');
+state.drive.you_control_owner = false;
+updateArmSettings();
+assert($('arm-reconnect').disabled, 'spectator cannot reconnect');
+state.drive.you_control_owner = true;
+updateArmSettings();
+$('arm-servo-role').value = 'arm';
+$('arm-servo-role').dispatchEvent(new Event('change'));
+assert(sent.at(-1).action === 'select_role' && sent.at(-1).role === 'arm', 'role switch sent to driver');
+armPending = null;
+state.arm_servo = savedServo;
 state.drive.armed = true; state.drive.calibrating = true;
 updateArmSettings();
 assert(!$('arm-jog-left').disabled && !$('arm-jog-right').disabled, 'uncalibrated jog enabled in RC override');
@@ -277,6 +308,23 @@ state.drive.rc = {fresh: true, steering: .5, throttle: -.7, channels: [1750, 115
 updateHud();
 assert(!$('sweep-toggle').disabled, 'RC override permits sweep without website arming');
 assert($('controller').textContent === 'Physical RC transmitter' && $('pad-raw').textContent.includes('1750'), 'RC inputs visualized');
+for (const [minimum, maximum] of [[-20, 80], [-120, 220], [-1, 2]]) {
+  state.detector.beam_min_angle_deg = minimum;
+  state.detector.beam_max_angle_deg = maximum;
+  state.detector.fixture_angle_deg = 0;
+  state.detector.beam = Array(101).fill(.5);
+  drawRadar();
+  const canvas = $('radar-view');
+  const geometry = radarGeometry(canvas.clientWidth, canvas.clientHeight, minimum, maximum);
+  for (let angle = minimum; angle <= maximum; angle += .5) {
+    const x = geometry.cx + Math.cos(beamScreenAngle(angle)) * geometry.radius;
+    const y = geometry.cy + Math.sin(beamScreenAngle(angle)) * geometry.radius;
+    assert(x >= 9 && x <= canvas.clientWidth - 9 && y >= 9 && y <= canvas.clientHeight - 9, 'calibrated sector fits canvas');
+  }
+  const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  assert(pixels.some((value, index) => index % 4 === 3 && value > 0), 'radar renders nonblank');
+}
+assert(Math.abs(Math.cos(beamScreenAngle(0))) < 1e-10 && Math.sin(beamScreenAngle(0)) === -1, 'calibrated center points straight ahead');
 state.detector.sensor = {available: true, fresh: true, packet: {v: 1, seq: 2, uptime_ms: 100, amplitude_adc: 20},
   baseline_adc: 20, full_response_adc: 150, reference_voltage: 5, rate_hz: 20, age_ms: 10,
   history: [{age_s: 1, adc: 20}, {age_s: .05, adc: 150}]};

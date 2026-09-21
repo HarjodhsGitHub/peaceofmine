@@ -3,10 +3,12 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import json
 from unittest.mock import patch
 
 import rclpy
 from sensor_msgs.msg import CameraInfo, Joy
+from std_msgs.msg import Float32, String
 
 spec = importlib.util.spec_from_file_location(
     'operator_gateway', Path(__file__).parents[1] / 'scripts/operator_gateway.py')
@@ -41,6 +43,22 @@ class TeleopTest(unittest.TestCase):
     def arm(self):
         self.command('take_control')
         self.command('arm')
+
+    def test_radar_calibration_bounds_bins_and_probe_selection(self):
+        calibration = dict(minimum=100, center=1500, maximum=4000)
+        self.node._arm_state_cb(String(data=json.dumps(dict(active_role='arm', calibration=calibration))))
+        self.assertAlmostEqual(self.node._beam_min, -1400 * 360 / 4096)
+        self.assertAlmostEqual(self.node._beam_max, 2500 * 360 / 4096)
+        for angle, index in [(self.node._beam_min, 0), (self.node._beam_max, -1)]:
+            self.node._fixture_angle_cb(Float32(data=angle))
+            self.node._detector_cb(Float32(data=.5))
+            self.assertEqual(self.node._beam[index], .5)
+        self.node._arm_state_cb(String(data=json.dumps(dict(active_role='probe', calibration=dict(minimum=0, center=100, maximum=200)))))
+        self.assertEqual(self.node._beam_calibration, (100, 1500, 4000))
+        calibration['center'] = 1600
+        self.node._arm_state_cb(String(data=json.dumps(dict(active_role='probe', arm_calibration=calibration))))
+        self.assertTrue(all(sample == 0 for sample in self.node._beam))
+        self.assertEqual(self.node._beam_calibration, (100, 1600, 4000))
 
     def test_shutdown_stops_outputs_and_rejects_new_control(self):
         self.arm()

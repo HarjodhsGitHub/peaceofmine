@@ -381,7 +381,7 @@ function updateHud() {
     : !owner ? 'Take control to sweep'
     : !servoSafe ? state.safety?.reason || 'RC blocks servo movement'
     : state.arm_servo?.reason || (state.safety?.simulated ? 'Ready' : 'Waiting for arm driver');
-  setRange($('sweep-speed'), detector.sweep_speed_min, detector.sweep_speed_max, 5);
+  setRange($('sweep-speed'), detector.sweep_speed_min, detector.sweep_speed_max, 'any');
   if (!activeSliders.has('sweep-speed')) $('sweep-speed').value = detector.sweep_speed_deg_s;
   $('sweep-speed-value').textContent = `${Math.round(detector.sweep_speed_deg_s)}°/s`;
 
@@ -1124,39 +1124,51 @@ function beamScreenAngle(degrees) {
   return -Math.PI / 2 - degrees * Math.PI / 180;
 }
 
+function radarGeometry(width, height, minimum, maximum) {
+  const angles = [minimum, maximum, 0];
+  for (let angle = Math.ceil(minimum / 90) * 90; angle <= maximum; angle += 90) angles.push(angle);
+  const xs = [0, ...angles.map(angle => Math.cos(beamScreenAngle(angle)))];
+  const ys = [0, ...angles.map(angle => Math.sin(beamScreenAngle(angle)))];
+  const left = Math.min(...xs), right = Math.max(...xs);
+  const top = Math.min(...ys), bottom = Math.max(...ys);
+  const radius = Math.max(1, Math.min((width - 20) / (right - left || 1), (height - 20) / (bottom - top || 1)));
+  return {radius, cx: (width - radius * (right + left)) / 2,
+    cy: (height - radius * (bottom + top)) / 2};
+}
+
 function drawRadar() {
   const canvas = $('radar-view');
   const context = resize(canvas);
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
-  const padding = 10;
-  const cx = width / 2;
-  const cy = height - padding;
-  const radius = Math.max(1, Math.min(width * 0.42, height - 2 * padding));
   const {beam, beam_half_angle_deg: half} = state.detector;
+  const minimum = state.detector.beam_min_angle_deg ?? -half;
+  const maximum = state.detector.beam_max_angle_deg ?? half;
+  const {cx, cy, radius} = radarGeometry(width, height, minimum, maximum);
 
   context.clearRect(0, 0, width, height);
   context.strokeStyle = '#265148';
   context.lineWidth = 1;
   for (const factor of [0.33, 0.66, 1]) {
     context.beginPath();
-    context.arc(cx, cy, radius * factor, beamScreenAngle(half), beamScreenAngle(-half));
+    context.arc(cx, cy, radius * factor, beamScreenAngle(maximum), beamScreenAngle(minimum));
     context.stroke();
   }
-  for (const edge of [half, -half]) {
+  for (const edge of [minimum, 0, maximum]) {
     const angle = beamScreenAngle(edge);
     drawSegment(context, {x: cx, y: cy}, {x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius});
   }
 
-  // One arc per degree of the gateway's beam trace: green is quiet, red is hot.
+  // Trace bins span the calibrated sector, including asymmetric endpoints.
   context.lineWidth = 8;
   for (let index = 0; index < beam.length - 1; index++) {
     const ratio = (beam[index] + beam[index + 1]) / 2;
-    const from = beamScreenAngle(-half + index + 1);
-    const to = beamScreenAngle(-half + index);
+    const step = (maximum - minimum) / (beam.length - 1);
+    const from = beamScreenAngle(minimum + (index + 1) * step);
+    const to = beamScreenAngle(minimum + index * step);
     context.strokeStyle = `hsl(${(1 - ratio) * 120} 78% 55%)`;
     context.beginPath();
-    context.arc(cx, cy, radius * 0.84, from, to + 0.012);
+    context.arc(cx, cy, radius * 0.84, from, to);
     context.stroke();
   }
 
@@ -1514,17 +1526,27 @@ function stopArmMove() {
 function updateArmSettings() {
   const servo = state.arm_servo || {};
   const servoSelect = $('arm-servo-id');
+  const role = servo.active_role || 'arm';
+  const roles = servo.role_ids || {arm: servo.servo_id, probe: 2};
+  const roleSelect = $('arm-servo-role');
+  roleSelect.value = role;
   const ids = servo.discovered_servos || [];
-  const signature = JSON.stringify([ids, Boolean(servo.scanning)]);
+  for (const option of roleSelect.options) {
+    const id = roles[option.value];
+    option.textContent = `${option.value === 'arm' ? 'Arm' : 'Probe'} servo${id >= 0 ? ` · ID ${id}` : ''}${ids.includes(id) ? '' : ' · Not connected'}`;
+  }
+  const signature = JSON.stringify([ids, Boolean(servo.scanning), role, servo.servo_id]);
   if (servoSelect.dataset.discovery !== signature) {
     const previous = servoSelect.value;
     servoSelect.replaceChildren(new Option(servo.scanning ? 'Scanning for servos…' : 'Select a detected servo', ''));
     ids.forEach(id => servoSelect.add(new Option(`Servo ${id}`, String(id))));
-    servoSelect.value = ids.includes(Number(previous)) && previous !== '' ? previous
-      : ids.includes(servo.servo_id) ? String(servo.servo_id) : '';
+    servoSelect.value = ids.includes(servo.servo_id) ? String(servo.servo_id)
+      : ids.includes(Number(previous)) && previous !== '' ? previous : '';
     servoSelect.dataset.discovery = signature;
   }
   const owner = state.connected && state.drive.you_control_owner;
+  roleSelect.disabled = !owner || !servo.serial_connected || Boolean(servo.torque) || armHoldTimer !== null;
+  $('arm-reconnect').disabled = !owner || Boolean(servo.scanning || servo.torque || servo.sweeping) || armHoldTimer !== null;
   if (armPending) {
     const acknowledgement = servo.last_command;
     if (armPending.id && acknowledgement?.request_id === armPending.id) {
@@ -1539,8 +1561,8 @@ function updateArmSettings() {
   const ready = owner && state.safety?.servo_allowed && servo.connected;
   const slider = $('arm-position-slider');
   if (servo.connected) {
-    slider.min = Math.max(servo.eeprom_minimum ?? 0, servo.calibration?.minimum ?? 0);
-    slider.max = Math.min(servo.eeprom_maximum ?? 4095, servo.calibration?.maximum ?? 4095);
+    slider.min = servo.eeprom_minimum ?? 0;
+    slider.max = servo.eeprom_maximum ?? 4095;
     if (!armSliderDragging) slider.value = servo.position;
   }
   slider.disabled = !ready || !state.drive.calibrating || (armHoldTimer !== null && !armSliderMoving);
@@ -1578,6 +1600,13 @@ function updateArmSettings() {
   $('arm-select-id').disabled = Boolean(selectionBlocked) || servoSelect.value === '';
   $('arm-select-id').title = selectionBlocked || 'Select the servo ID; position updates automatically.';
   const canRecord = owner && servo.connected && !servo.torque && armHoldTimer === null;
+  $('arm-apply-motion').disabled = !canRecord;
+  const motionSignature = JSON.stringify([servo.motion_speed_limit, servo.sweep_acceleration_deg_s2]);
+  if ($('arm-apply-motion').dataset.profile !== motionSignature) {
+    $('arm-max-speed').value = ((servo.motion_speed_limit || 80) * .684).toFixed(3);
+    $('arm-acceleration').value = (servo.sweep_acceleration_deg_s2 || 40).toFixed(3);
+    $('arm-apply-motion').dataset.profile = motionSignature;
+  }
   $('arm-apply-limits').disabled = !canRecord || !['minimum', 'center', 'maximum'].every(point => Number.isFinite(servo.captured?.[point] ?? servo.calibration?.[point]));
   $('arm-jog-left').disabled = $('arm-jog-right').disabled = !ready || !state.drive.calibrating;
   const jogReason = !state.connected ? 'Dashboard disconnected'
@@ -1601,13 +1630,25 @@ function updateArmSettings() {
     $('arm-launch-xml').value = [
       '<arg name="use_arm_servo" default="true"/>',
       `<arg name="arm_serial_port" default="${escape(servo.serial_port || '')}"/>`,
-      `<arg name="arm_servo_id" default="${servo.servo_id}"/>`,
-      ...['minimum', 'center', 'maximum'].map(point => `<arg name="arm_${point}" default="${servo.calibration[point]}"/>`),
-      '<arg name="arm_speed" default="20"/>',
+      `<arg name="${role}_servo_id" default="${servo.servo_id}"/>`,
+      ...['minimum', 'center', 'maximum'].map(point => `<arg name="${role}_${point}" default="${servo.calibration[point]}"/>`),
+      `<arg name="arm_speed" default="${servo.motion_speed_limit || 20}"/>`,
+      `<arg name="arm_sweep_endpoint_tolerance_deg" default="${servo.sweep_endpoint_tolerance_deg ?? 2.0}"/>`,
+      `<arg name="arm_sweep_acceleration_deg_s2" default="${servo.sweep_acceleration_deg_s2 || 40}"/>`,
     ].join('\n');
   } else $('arm-launch-xml').value = 'Record and apply all three positions to generate launch XML.';
 }
 function initializeArmSettings() {
+  $('arm-apply-motion').onclick = () => {
+    if (!$('arm-max-speed').reportValidity() || !$('arm-acceleration').reportValidity()) return;
+    armCommand('configure_motion', {max_speed_deg_s: Number($('arm-max-speed').value),
+      acceleration_deg_s2: Number($('arm-acceleration').value)});
+  };
+  $('arm-reconnect').onclick = () => armCommand('reconnect');
+  $('arm-servo-role').onchange = () => {
+    stopArmMove();
+    armCommand('select_role', {role: $('arm-servo-role').value});
+  };
   $('arm-take-control').onclick = () => armControlCommand({type: 'take_control'}, 'Control acquired. Select a servo or enable slow jogging.', () => state.drive.you_control_owner);
   $('arm-servo-id').onchange = updateArmSettings;
   $('arm-select-id').onclick = () => {
@@ -1955,11 +1996,11 @@ function drawDashboard(now) {
   if (!document.hidden && now - lastCanvasFrame >= 1000 / 30) {
     lastCanvasFrame = now;
     drawForwardView();
+    drawRadar();
     if (now - lastInstrumentFrame >= 100) {
       lastInstrumentFrame = now;
       drawMap();
       drawPressureHistory();
-      drawRadar();
     }
   }
   requestAnimationFrame(drawDashboard);

@@ -13,18 +13,30 @@ from mavros_msgs.msg import State, RCIn
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool, String, Float32
-from peaceofmine_operator.arm_servo import ArbotiX, ArmServo
+from peaceofmine_operator.arm_servo import ArbotiX, ArmServo, FirmwareMotionFault
 from peaceofmine_operator.rc_safety import RcSafety
 
 
 class ArmServoNode(Node):
-    def __init__(self):
-        super().__init__('arm_servo')
+    def __init__(self, **kwargs):
+        super().__init__('arm_servo', **kwargs)
         for key, value in dict(serial_port='auto', servo_id=-1,
+                               probe_servo_id=2, probe_minimum=-1, probe_center=-1, probe_maximum=-1,
                                minimum=-1, center=-1, maximum=-1, speed=20,
                                sweep_endpoint_tolerance_deg=2.0,
                                sweep_acceleration_deg_s2=40.0).items():
             self.declare_parameter(key, value)
+        requested_speed = self.get_parameter('speed').value
+        if requested_speed < 1:
+            raise ValueError('Servo speed must be positive; zero means unlimited')
+        self.motion_speed = min(1023, requested_speed)
+        if requested_speed > 1023:
+            self.get_logger().warning(f'Servo speed {requested_speed} exceeds firmware limit; using 1023')
+        self.active_role = 'arm'
+        self.role_ids = {role: self.get_parameter(key).value for role, key in
+                         (('arm', 'servo_id'), ('probe', 'probe_servo_id'))}
+        self.role_servos = {}
+        self.saved_role_calibration = {}
         tolerance = float(self.get_parameter('sweep_endpoint_tolerance_deg').value)
         if not math.isfinite(tolerance) or not 0 < tolerance <= 10:
             raise ValueError('Sweep endpoint tolerance must be within 0..10 degrees')
@@ -36,13 +48,13 @@ class ArmServoNode(Node):
         self.safety = RcSafety()  # No hardware simulation bypass.
         self.sweeping = False
         self.sweep_speed = 5.0
-        self.sweep_direction = 1
         self.permission = False
         self.permission_at = self.command_at = 0.0
         self.bus = self.servo = None
         self.discovery_pool = ThreadPoolExecutor(max_workers=1)
         self.discovery = None
         self.discovery_started = False
+        self.next_discovery_at = 0.0
         self.discovery_stop = threading.Event()
         self.discovered_servos = []
         self.device = ''
@@ -102,21 +114,22 @@ class ArmServoNode(Node):
                 return
             future, self.discovery = self.discovery, None
             self.discovery_started = True
-            self.discovery_pool.shutdown(wait=False)
             result = future.result()
             if result is None:
                 return
             self.bus, self.device, self.discovered_servos = result
             self.connection_error = ''
             self.get_logger().info(f'Arm discovery: {self.device}, servo IDs {self.discovered_servos}, 1000000 baud')
-            ident = self.get_parameter('servo_id').value
+            ident = self.role_ids[self.active_role]
             if ident != -1:
-                if ident not in self.discovered_servos:
-                    raise ValueError(f'Configured servo {ident} was not detected')
-                self.select(ident)
+                try:
+                    self.select(ident)
+                except ValueError as error:
+                    self.reason = str(error)
+                    self.get_logger().warning(self.reason)
             else:
                 self.reason = 'Scan complete; select a detected servo'
-        elif not self.discovery_started:
+        elif not self.discovery_started and time.monotonic() >= self.next_discovery_at:
             self.discovery_started = True
             self.reason = 'Scanning arm adapter and servo IDs…'
             self.discovery = self.discovery_pool.submit(
@@ -137,7 +150,7 @@ class ArmServoNode(Node):
         if not math.isfinite(message.data) or not self.permission or not self.safety.servo_snapshot()['allowed']:
             return
         # MX-64 Protocol 1.0 speed units are approximately 0.114 rpm.
-        self.sweep_speed = max(1.0, min(float(message.data), self.get_parameter('speed').value * .684, 28.0))
+        self.sweep_speed = max(.684, min(float(message.data), self.motion_speed * .684))
 
     def sweep_cb(self, message):
         try:
@@ -150,12 +163,13 @@ class ArmServoNode(Node):
                 raise ValueError(safety['reason'])
             if not self.permission or time.monotonic() - self.permission_at >= .3:
                 raise ValueError('Sweep blocked: waiting for control-owner permission')
+            if self.active_role != 'arm':
+                self.select_role('arm')
             if not self.servo:
                 raise ValueError('Select an arm servo in Settings')
             if not self.servo.calibration:
                 raise ValueError('Record and apply minimum, center and maximum before sweeping')
             self.sweeping = True
-            self.sweep_direction = 1
             self.reason = 'Sweeping between calibrated limits'
         except ValueError as error:
             self.stop()
@@ -190,10 +204,24 @@ class ArmServoNode(Node):
 
     def fail(self, error):
         self.sweeping = False
+        self.command_at = 0.0
+        if isinstance(error, FirmwareMotionFault) and self.servo and self.bus:
+            try:
+                self.servo.stop()
+                if self.bus.read(self.servo.ident, 24, 1) != 0:
+                    raise RuntimeError('Controller stop did not confirm torque-off')
+                self.state = self.servo.snapshot()
+                self.connection_error = ''
+                self.reason = f'{error}; stopped, connection retained. Start a new move to retry.'
+                self.get_logger().warning(self.reason)
+                return
+            except Exception as stop_error:
+                error = RuntimeError(f'{error}; stop verification failed: {stop_error}')
         self.reason = str(error)
         self.connection_error = self.reason
         self.get_logger().error(f'Arm driver: {self.reason}')
         self.command_at = 0.0
+        self.remember_calibration()
         if self.servo:
             try:
                 self.servo.stop()
@@ -202,18 +230,87 @@ class ArmServoNode(Node):
         if self.bus:
             self.bus.close()
         self.bus = self.servo = None
+        self.role_servos.clear()
         self.discovered_servos = []
         self.state = {}
+        self.permission = False
+        self.permission_at = 0.0
+        self.discovery_started = False
+        self.next_discovery_at = time.monotonic() + 2.0
+
+    def select_role(self, role):
+        if role not in self.role_ids:
+            raise ValueError('Select arm or probe')
+        if self.servo and (self.servo.torque or self.servo.target is not None):
+            raise ValueError('Stop the servo before switching arm/probe')
+        if self.servo:
+            self.role_servos[self.active_role] = self.servo
+        self.stop()
+        self.active_role = role
+        self.servo = None
+        self.state = {}
+        ident = self.role_ids[role]
+        if ident in self.discovered_servos:
+            self.select(ident)
+        else:
+            self.reason = f'{role.title()} servo ID {ident} is not connected; connect it and restart discovery'
+
+    def reconnect(self):
+        if self.discovery is not None:
+            raise ValueError('Servo discovery is already running')
+        if self.sweeping or (self.servo and (self.servo.torque or self.servo.target is not None)):
+            raise ValueError('Stop the servo before reconnecting')
+        self.stop()
+        self.remember_calibration()
+        if self.bus:
+            self.bus.close()
+        self.bus = self.servo = None
+        self.role_servos.clear()
+        self.state = {}
+        self.discovered_servos = []
+        self.active_role = 'arm'
+        self.permission = False
+        self.permission_at = self.command_at = 0.0
+        self.connection_error = ''
+        self.discovery_pool.shutdown(wait=False)
+        self.discovery_pool = ThreadPoolExecutor(max_workers=1)
+        self.discovery_started = False
+        self.reason = 'Reconnecting; motion remains stopped'
+        self.next_discovery_at = 0.0
+
+    def remember_calibration(self):
+        servos = dict(self.role_servos)
+        if self.servo:
+            servos[self.active_role] = self.servo
+        for role, servo in servos.items():
+            self.saved_role_calibration[role] = (servo.ident,
+                dict(servo.calibration) if servo.calibration else None, dict(servo.captured))
 
     def select(self, ident):
         if ident not in self.discovered_servos:
             raise ValueError('Select a detected servo ID')
+        other = 'probe' if self.active_role == 'arm' else 'arm'
+        if ident == self.role_ids[other]:
+            raise ValueError(f'Servo ID {ident} is assigned to {other}; select that role to calibrate it')
         self.stop()
-        calibration = {key: self.get_parameter(key).value for key in ('minimum', 'center', 'maximum')}
-        if all(value == -1 for value in calibration.values()):
+        prefix = '' if self.active_role == 'arm' else 'probe_'
+        calibration = {key: self.get_parameter(prefix + key).value for key in ('minimum', 'center', 'maximum')}
+        if ident != self.role_ids[self.active_role]:
             calibration = None
-        servo = ArmServo(self.bus, ident, calibration, self.get_parameter('speed').value)
+        if calibration is not None and all(value == -1 for value in calibration.values()):
+            calibration = None
+        saved = self.saved_role_calibration.get(self.active_role)
+        if saved and saved[0] == ident:
+            calibration = saved[1]
+        servo = self.role_servos.get(self.active_role)
+        if servo is None or servo.ident != ident:
+            servo = ArmServo(self.bus, ident, calibration, self.motion_speed)
+            if saved and saved[0] == ident:
+                servo.captured = dict(saved[2])
         self.servo = servo
+        self.role_ids[self.active_role] = ident
+        self.role_servos[self.active_role] = servo
+        self.state = servo.snapshot()
         self.reason = 'Torque off; ready to record supported arm positions'
 
     def command_cb(self, message):
@@ -227,8 +324,14 @@ class ArmServoNode(Node):
                 if self.servo:
                     self.reason = 'Stopped; torque released'
                 return
+            if action == 'reconnect':
+                self.reconnect()
+                return
             if not self.bus:
                 raise ValueError('Arm serial port is not connected')
+            if action == 'select_role':
+                self.select_role(command.get('role'))
+                return
             if action == 'select':
                 if self.servo and (self.servo.torque or self.servo.target is not None):
                     raise ValueError('Stop the arm before selecting a servo')
@@ -237,7 +340,22 @@ class ArmServoNode(Node):
                 return
             if not self.servo:
                 raise ValueError('Select a servo ID first')
-            if action in ('capture', 'configure'):
+            if action == 'configure_motion':
+                if self.servo.torque or self.servo.target is not None or self.sweeping:
+                    raise ValueError('Stop before changing motion limits')
+                speed = command.get('max_speed_deg_s')
+                acceleration = command.get('acceleration_deg_s2')
+                if (isinstance(speed, bool) or not isinstance(speed, (int, float))
+                        or not math.isfinite(speed) or not .684 <= speed <= 1023 * .684):
+                    raise ValueError('Maximum speed must be within 0.684..699.732 degrees/s')
+                if (isinstance(acceleration, bool) or not isinstance(acceleration, (int, float))
+                        or not math.isfinite(acceleration) or not 8.583 <= acceleration <= 254 * 8.583):
+                    raise ValueError('Acceleration must be within 8.583..2180.082 degrees/s^2')
+                self.motion_speed = max(1, math.floor(speed / .684 + 1e-9))
+                self.sweep_acceleration = max(1, math.floor(acceleration / 8.583 + 1e-9))
+                self.sweep_speed = min(self.sweep_speed, self.motion_speed * .684)
+                self.reason = 'Motion limits applied; export launch settings to keep after restart'
+            elif action in ('capture', 'configure'):
                 if self.servo.torque or self.servo.target is not None:
                     raise ValueError('Release the move button before recording or applying limits')
                 if action == 'capture':
@@ -254,7 +372,7 @@ class ArmServoNode(Node):
                         or not self.safety.servo_snapshot()['allowed']):
                     self.stop()
                     raise ValueError('Movement blocked: enable calibration and require fresh PX4 status 4')
-                self.servo.speed = self.get_parameter('speed').value
+                self.servo.speed = self.motion_speed
                 self.servo.max_step = 16
                 if action == 'jog':
                     self.servo.request_jog(command.get('direction'), command.get('speed_deg_s', 2.0))
@@ -294,35 +412,42 @@ class ArmServoNode(Node):
                     if (not self.permission or now - self.permission_at >= .3 or not self.safety.servo_snapshot()['allowed']):
                         self.stop()
                     else:
-                        point = 'maximum' if self.sweep_direction > 0 else 'minimum'
-                        span = self.servo.calibration['maximum'] - self.servo.calibration['minimum']
-                        # Keep turnaround regions separate even for a narrow range.
-                        tolerance = min(self.sweep_endpoint_tolerance, span // 4)
-                        if abs(self.servo.position - self.servo.calibration[point]) <= tolerance:
-                            self.sweep_direction *= -1
-                            point = 'maximum' if self.sweep_direction > 0 else 'minimum'
-                        speed = max(1, min(self.get_parameter('speed').value, round(self.sweep_speed / .684)))
-                        self.servo.request_sweep(point, speed, self.sweep_acceleration)
+                        speed = max(1, min(self.motion_speed, round(self.sweep_speed / .684)))
+                        self.servo.request_sweep('maximum', speed, self.sweep_acceleration,
+                                                 self.sweep_endpoint_tolerance)
                         self.command_at = now
                 self.servo.step(self.allowed)
+                # step already reads position during motion; do not wait for
+                # slower voltage/current diagnostics to publish the arm angle.
+                if self.servo.target is None:
+                    self.servo.position = self.bus.read(self.servo.ident, 36)
                 if now - self.last_poll > .2:
                     self.last_poll = now
                     self.state = self.servo.snapshot()
-                    if self.servo.calibration:
-                        angle = (self.servo.position - self.servo.calibration['center']) * 360.0 / 4096
-                        self.angle_pub.publish(Float32(data=angle))
+                self.state['position'] = self.servo.position
+                if self.active_role == 'arm' and self.servo.calibration:
+                    angle = (self.servo.position - self.servo.calibration['center']) * 360.0 / 4096
+                    self.angle_pub.publish(Float32(data=angle))
             self.sweep_pub.publish(Bool(data=self.sweeping))
             self.speed_pub.publish(Float32(data=self.sweep_speed))
             data = {**self.state, 'reason': self.connection_error or self.reason, 'last_command': self.last_command,
                     'sweeping': self.sweeping,
+                    'active_role': self.active_role, 'role_ids': dict(self.role_ids),
+                    'arm_calibration': self.role_servos['arm'].calibration if 'arm' in self.role_servos else None,
+                    'motion_speed_limit': self.motion_speed,
+                    'telemetry_read_retries': getattr(self.bus, 'read_retries', 0),
                     'sweep_acceleration_deg_s2': self.sweep_acceleration * 8.583,
+                    'sweep_endpoint_tolerance_deg': self.get_parameter('sweep_endpoint_tolerance_deg').value,
                     'connected': self.servo is not None, 'serial_connected': self.bus is not None,
                     'serial_port': self.device, 'discovered_servos': self.discovered_servos,
                     'scanning': self.discovery is not None, 'safety': self.safety.servo_snapshot()}
             self.publisher.publish(String(data=json.dumps(data)))
         except Exception as error:
             self.fail(error)
-            self.publisher.publish(String(data=json.dumps(dict(connected=False, reason=self.reason, last_command=self.last_command))))
+            self.publisher.publish(String(data=json.dumps({**self.state,
+                'connected': self.servo is not None, 'serial_connected': self.bus is not None,
+                'sweeping': False, 'discovered_servos': self.discovered_servos,
+                'reason': self.reason, 'last_command': self.last_command})))
 
     def destroy_node(self):
         self.discovery_stop.set()

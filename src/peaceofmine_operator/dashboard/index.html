@@ -182,7 +182,7 @@
       <nav class="settings-tabs" aria-label="Settings sections" role="tablist">
         <button type="button" class="settings-tab active" role="tab" aria-selected="true" aria-controls="settings-input" data-settings-tab="input">Controls</button>
         <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-cameras" data-settings-tab="cameras">Cameras</button>
-        <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-arm" data-settings-tab="arm">Arm calibration</button>
+        <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-arm" data-settings-tab="arm">Servos</button>
         <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-detector" data-settings-tab="detector">Metal detector</button>
       </nav>
       <section id="settings-input" class="settings-panel active" role="tabpanel" data-settings-panel="input">
@@ -268,16 +268,20 @@
         <details class="metal-debug"><summary>Launch calibration (session changes are not saved)</summary><textarea id="metal-launch" rows="2" readonly spellcheck="false" aria-label="Detector calibration launch values"></textarea></details>
       </section>
       <section id="settings-arm" class="settings-panel" role="tabpanel" data-settings-panel="arm" hidden>
-        <h3>Arm control &amp; calibration</h3>
+        <h3>Servo control &amp; calibration</h3>
         <p id="arm-feedback" class="arm-feedback" role="status" aria-live="polite">Ready. Enable jogging, then hold an arrow to move.</p>
         <div class="arm-workbench">
           <div class="arm-control-panel">
             <h4>Jog controls</h4>
             <button id="arm-take-control" type="button">Take control for calibration</button>
             <p id="arm-calibration-access" class="dialog-help" role="status"></p>
+            <div class="arm-selection"><label for="arm-servo-role">Actuator</label>
+              <select id="arm-servo-role"><option value="arm">Arm servo</option><option value="probe">Probe servo</option></select>
+            </div>
             <div class="arm-selection"><label for="arm-servo-id">Servo ID</label>
               <select id="arm-servo-id"><option value="">Scanning for servos…</option></select>
               <button type="button" id="arm-select-id">Select servo</button>
+              <button type="button" id="arm-reconnect">Reconnect</button>
             </div>
             <div class="arm-enable-controls">
               <button type="button" id="arm-calibration-enable">Enable jogging</button>
@@ -293,7 +297,7 @@
             <label for="arm-position-slider">Target position <output id="arm-position-label">—</output></label>
             <input id="arm-position-slider" type="range" min="0" max="4095" step="1" value="0" disabled>
             <p id="arm-jog-status" class="arm-jog-status" role="status">Jogging disabled</p>
-            <p class="dialog-help">Hold left or right to jog at the selected speed; release to stop. The slider commands its target at full servo speed. Saved limits always apply.</p>
+            <p class="dialog-help">Calibration uses the full EEPROM joint range. Check linkage clearance outside saved sweep limits.</p>
             <p class="dialog-help">Support the arm: stopping releases torque. PX4 status must remain 4.</p>
             <details class="arm-help"><summary>Position units and calibration help</summary>
               <p>The angle is the servo shaft position, not its angle to the ground. 4096 raw ticks = 360°. Left decreases the angle; mounting may reverse physical direction.</p>
@@ -330,6 +334,10 @@
           </tbody>
         </table>
         <button type="button" id="arm-apply-limits">Apply recorded limits</button>
+        <h3>Sweep motion limits</h3>
+        <label>Maximum speed (°/s) <input id="arm-max-speed" type="number" min="0.684" max="699.732" step="any" required></label>
+        <label>Acceleration (°/s²) <input id="arm-acceleration" type="number" min="8.583" max="2180.082" step="any" required></label>
+        <button type="button" id="arm-apply-motion">Apply motion limits</button>
         <details class="arm-help"><summary>Launch settings (save calibration)</summary>
           <p class="dialog-help">Copy these defaults into operator.launch.xml to keep the limits after restart.</p>
           <textarea id="arm-launch-xml" aria-label="Saved launch settings" rows="8" readonly spellcheck="false"></textarea>

@@ -7,9 +7,10 @@ from concurrent.futures import Future
 import json
 
 import rclpy
-from std_msgs.msg import Bool, String
+from rclpy.parameter import Parameter
+from std_msgs.msg import Bool, Float32, String
 from peaceofmine_operator.rc_safety import RcSafety
-from peaceofmine_operator.arm_servo import ArmServo
+from peaceofmine_operator.arm_servo import ArmServo, FirmwareMotionFault
 try:
     from test_arm_servo import Bus
     from test_rc_safety import healthy, state, rc
@@ -42,11 +43,129 @@ class ArmNodeTest(unittest.TestCase):
         self.node.bus = self.bus
         self.node.discovered_servos = [1, 2]
         self.node.servo = ArmServo(self.bus, 1, dict(minimum=1500, center=2000, maximum=2500))
+        self.node.role_ids['arm'] = 1
         self.node.permission_cb(Bool(data=True))
 
     def tearDown(self):
         self.node.destroy_node()
         self.clock.stop()
+
+    def test_motion_fault_retains_connection_without_restarting(self):
+        servo = self.node.servo
+        self.node.sweeping = True
+        servo.request_sweep('maximum', 10, 4)
+        self.node.fail(FirmwareMotionFault(10, 'Endpoint did not settle'))
+        self.assertIs(self.node.bus, self.bus)
+        self.assertIs(self.node.servo, servo)
+        self.assertEqual(self.node.discovered_servos, [1, 2])
+        self.assertFalse(self.node.sweeping)
+        self.assertIsNone(servo.target)
+        self.assertEqual(self.bus.values[24], 0)
+        self.node.tick()
+        self.assertFalse(self.node.sweeping)
+        self.assertEqual(self.bus.values[24], 0)
+
+    def test_failed_fault_stop_verification_disconnects(self):
+        original_read = self.bus.read
+        with patch.object(self.bus, 'read', side_effect=lambda ident, address, size=2:
+                          1 if address == 24 else original_read(ident, address, size)):
+            self.node.fail(FirmwareMotionFault(10, 'Endpoint did not settle'))
+        self.assertIsNone(self.node.bus)
+        self.assertIn('stop verification failed', self.node.reason)
+
+    def test_position_publishes_each_tick_between_diagnostic_polls(self):
+        self.node.last_poll = self.now
+        with patch.object(self.node.angle_pub, 'publish') as publish:
+            for index in range(3):
+                self.now += .05
+                self.bus.values[36] = 2000 + index * 10
+                self.node.tick()
+                self.assertEqual(self.node.state['position'], 2000 + index * 10)
+            self.assertEqual(publish.call_count, 3)
+
+    def test_launch_speed_100_is_supported_without_losing_discovered_servo(self):
+        node = module.ArmServoNode(parameter_overrides=[Parameter('speed', value=100),
+                                                       Parameter('servo_id', value=1)])
+        try:
+            node.discovery = Future()
+            node.discovery.set_result((Bus(), '/dev/fake', [1]))
+            node.poll_discovery()
+            self.assertEqual(node.motion_speed, 100)
+            self.assertEqual(node.servo.ident, 1)
+            self.assertEqual(node.discovered_servos, [1])
+            self.assertIsNotNone(node.bus)
+        finally:
+            node.destroy_node()
+
+    def test_bad_calibration_does_not_clear_servo_discovery(self):
+        node = module.ArmServoNode(parameter_overrides=[Parameter('servo_id', value=1),
+                                                       Parameter('minimum', value=3000),
+                                                       Parameter('center', value=2000),
+                                                       Parameter('maximum', value=1000)])
+        try:
+            node.discovery = Future()
+            node.discovery.set_result((Bus(), '/dev/fake', [1]))
+            node.poll_discovery()
+            self.assertEqual(node.discovered_servos, [1])
+            self.assertIsNotNone(node.bus)
+            self.assertIsNone(node.servo)
+        finally:
+            node.destroy_node()
+
+    def test_unplugged_probe_can_be_viewed_without_losing_arm(self):
+        arm = self.node.servo
+        self.node.discovered_servos = [1]
+        self.node.select_role('probe')
+        self.assertIsNone(self.node.servo)
+        self.assertIn('not connected', self.node.reason)
+        self.assertEqual(self.node.discovered_servos, [1])
+        self.assertIsNotNone(self.node.bus)
+        self.node.select_role('arm')
+        self.assertIs(self.node.servo, arm)
+        self.assertEqual(self.node.servo.calibration['minimum'], 1500)
+
+    def test_role_calibrations_are_independent_and_switch_requires_stop(self):
+        arm = self.node.servo
+        self.node.select_role('probe')
+        self.assertEqual(self.node.servo.ident, 2)
+        self.assertIsNone(self.node.servo.calibration)
+        self.node.servo.configure(dict(minimum=1000, center=1800, maximum=3000))
+        probe = self.node.servo
+        self.node.select_role('arm')
+        self.assertIs(self.node.servo, arm)
+        self.move()
+        with self.assertRaisesRegex(ValueError, 'Stop'):
+            self.node.select_role('probe')
+        self.node.stop()
+        self.node.select_role('probe')
+        self.assertIs(self.node.servo, probe)
+        self.assertEqual(probe.calibration['minimum'], 1000)
+
+    def test_sweep_selects_arm_not_probe(self):
+        self.node.select_role('probe')
+        self.node.sweep_cb(Bool(data=True))
+        self.node.tick()
+        self.assertEqual(self.node.active_role, 'arm')
+        self.assertEqual(self.node.servo.ident, 1)
+        self.assertTrue(self.node.sweeping)
+
+    def test_reconnect_requires_stop_and_never_replays_motion(self):
+        self.move()
+        with self.assertRaisesRegex(ValueError, 'Stop'):
+            self.node.reconnect()
+        self.node.fail(RuntimeError('Telemetry failure'))
+        self.node.reconnect()
+        self.assertFalse(self.node.sweeping)
+        self.assertFalse(self.node.permission)
+        self.assertEqual(self.node.command_at, 0)
+        self.node.discovery_started = True
+        self.node.discovery = Future()
+        self.node.discovery.set_result((Bus(), '/dev/fake', [1]))
+        self.node.poll_discovery()
+        self.node.select(1)
+        self.assertEqual(self.node.servo.calibration['minimum'], 1500)
+        self.assertIsNone(self.node.servo.target)
+        self.assertFalse(self.node.servo.torque)
 
     def move(self):
         self.node.command_cb(String(data=json.dumps(dict(action='move', held=True, point='maximum'))))
@@ -69,6 +188,7 @@ class ArmNodeTest(unittest.TestCase):
 
     def test_pending_scan_does_not_block_tick_or_select_a_servo(self):
         self.node.bus = self.node.servo = None
+        self.node.role_ids['arm'] = -1
         self.node.discovery = Future()
         self.node.tick()
         self.assertIsNone(self.node.servo)
@@ -87,18 +207,20 @@ class ArmNodeTest(unittest.TestCase):
             close.assert_called_once()
         self.assertNotIn((24, 1), self.bus.writes)
 
-    def test_failed_startup_scan_is_not_retried(self):
+    def test_failed_startup_scan_retries_after_backoff(self):
         self.node.bus = self.node.servo = None
         future = Future()
         future.set_exception(RuntimeError('No adapter'))
         with patch.object(self.node.discovery_pool, 'submit', return_value=future) as submit:
             self.node.tick()  # Schedule once without blocking the ROS callback.
             self.node.tick()  # Report failure.
-            for _ in range(5):
-                self.now += 10
-                self.node.tick()
+            self.now += 1
+            self.node.tick()
             submit.assert_called_once_with(self.node.discover, 'auto')
-        self.assertEqual(self.node.reason, 'No adapter')
+            self.now += 1
+            self.node.tick()
+            self.assertEqual(submit.call_count, 2)
+            self.node.tick()  # Consume the failed retry before shutdown.
 
     def test_stop_does_not_hide_discovery_failure(self):
         self.node.fail(RuntimeError('Adapter did not answer'))
@@ -106,16 +228,21 @@ class ArmNodeTest(unittest.TestCase):
         self.assertEqual(self.node.reason, 'Adapter did not answer')
         self.assertEqual(self.node.connection_error, 'Adapter did not answer')
 
-    def test_disconnect_after_scan_does_not_restart_discovery(self):
-        self.node.bus = self.node.servo = None
-        self.node.discovery = Future()
-        self.node.discovery.set_result((self.bus, '/dev/fake', [1, 2]))
-        self.node.tick()
+    def test_disconnect_recovers_calibration_without_resuming(self):
         self.node.fail(RuntimeError('Disconnected'))
-        with patch.object(self.node.discovery_pool, 'submit') as submit:
-            self.now += 10
+        recovered = Bus()
+        future = Future()
+        future.set_result((recovered, '/dev/fake', [1, 2]))
+        with patch.object(self.node.discovery_pool, 'submit', return_value=future) as submit:
+            self.now += 2
             self.node.tick()
-            submit.assert_not_called()
+            submit.assert_called_once()
+            self.node.tick()
+        self.assertIs(self.node.bus, recovered)
+        self.assertEqual(self.node.servo.calibration['center'], 2000)
+        self.assertFalse(self.node.sweeping)
+        self.assertIsNone(self.node.servo.target)
+        self.assertEqual(recovered.values[24], 0)
 
     def test_jog_without_limits_and_command_feedback(self):
         self.node.servo.calibration = None
@@ -126,6 +253,20 @@ class ArmNodeTest(unittest.TestCase):
         self.now += .26
         self.node.tick()
         self.assertFalse(self.node.servo.torque)
+
+    def test_motion_settings_and_unclipped_sweep_speed(self):
+        self.node.command_cb(String(data=json.dumps(dict(action='configure_motion',
+            max_speed_deg_s=200, acceleration_deg_s2=100))))
+        self.assertEqual(self.node.motion_speed, 292)
+        self.assertEqual(self.node.sweep_acceleration, 11)
+        self.node.sweep_speed_cb(Float32(data=150))
+        self.assertEqual(self.node.sweep_speed, 150)
+        self.node.sweep_speed_cb(Float32(data=600))
+        self.assertAlmostEqual(self.node.sweep_speed, 292 * .684)
+        self.node.servo.torque = True
+        self.node.command_cb(String(data=json.dumps(dict(action='configure_motion',
+            max_speed_deg_s=50, acceleration_deg_s2=100))))
+        self.assertEqual(self.node.motion_speed, 292)
 
     def test_slider_command_full_speed_and_timeout(self):
         self.node.command_cb(String(data=json.dumps(dict(action='position', position=2030,
@@ -198,7 +339,7 @@ class ArmNodeTest(unittest.TestCase):
         self.node.servo.position = 2500
         self.now += .05
         self.node.tick()
-        self.assertEqual(self.bus.values[30], 1500)
+        self.assertEqual(self.bus.gateway_writes.count((94, 1)), 1)
         self.node.rc_cb(rc(3000000, pwm=2000))
         self.assertFalse(self.node.sweeping)
         self.assertFalse(self.node.servo.torque)
@@ -212,13 +353,14 @@ class ArmNodeTest(unittest.TestCase):
         self.node.tick()
         self.assertFalse(self.node.servo.torque)
 
-    def test_sweep_reverses_when_servo_settles_short_of_each_endpoint(self):
+    def test_sweep_delegates_endpoint_reversals_to_firmware(self):
         self.node.sweep_cb(Bool(data=True))
-        for position, goal in ((2480, 1500), (1520, 2500)):
+        for position in (2480, 1520):
             self.bus.values[36] = self.node.servo.position = position
             self.node.tick()
             self.assertTrue(self.node.sweeping)
-            self.assertEqual(self.bus.values[30], goal)
+        self.assertEqual(self.bus.gateway_writes.count((94, 1)), 1)
+        self.assertEqual(self.bus.gateway[91], self.node.sweep_endpoint_tolerance)
 
     def test_sweep_does_not_reverse_early_or_chatter_in_a_narrow_range(self):
         self.node.sweep_cb(Bool(data=True))
@@ -231,6 +373,6 @@ class ArmNodeTest(unittest.TestCase):
         self.assertEqual(self.bus.values[30], 2020)
         self.bus.values[36] = self.node.servo.position = 2015
         self.node.tick()
-        self.assertEqual(self.bus.values[30], 1980)
+        self.assertEqual(self.bus.gateway[91], 10)
         self.node.tick()
-        self.assertEqual(self.bus.values[30], 1980)
+        self.assertEqual(self.bus.gateway_writes.count((94, 1)), 2)

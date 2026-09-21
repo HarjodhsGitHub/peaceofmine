@@ -39,6 +39,12 @@
   <arg name="arm_sweep_endpoint_tolerance_deg" default="2.0"/>
   <arg name="arm_sweep_acceleration_deg_s2" default="40.0"/>
 
+  <!-- Probe servo on the same ArbotiX; calibration is independent of the arm. -->
+  <arg name="probe_servo_id" default="2"/>
+  <arg name="probe_minimum" default="-1"/>
+  <arg name="probe_center" default="-1"/>
+  <arg name="probe_maximum" default="-1"/>
+
   <!-- Arduino detector -->
   <arg name="use_sensor_serial" default="true"/>
   <arg name="sensor_serial_port" default="/dev/serial/by-id/usb-Arduino_Srl_Arduino_Uno_7543134333435170D1E2-if00"/>
@@ -109,6 +115,10 @@
     <include if="$(var use_arm_servo)" file="$(find-pkg-share peaceofmine_operator)/launch/arm_servo.launch.xml">
       <arg name="serial_port" value="$(var arm_serial_port)"/>
       <arg name="servo_id" value="$(var arm_servo_id)"/>
+      <arg name="probe_servo_id" value="$(var probe_servo_id)"/>
+      <arg name="probe_minimum" value="$(var probe_minimum)"/>
+      <arg name="probe_center" value="$(var probe_center)"/>
+      <arg name="probe_maximum" value="$(var probe_maximum)"/>
       <arg name="minimum" value="$(var arm_minimum)"/>
       <arg name="center" value="$(var arm_center)"/>
       <arg name="maximum" value="$(var arm_maximum)"/>

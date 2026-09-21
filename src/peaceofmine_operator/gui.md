@@ -158,6 +158,25 @@ HTTPS for a remote laptop as above.
 
 ## Settings
 
+Settings -> Servos selects Arm (default ID 1) or Probe (default ID 2) on the
+shared ArbotiX. Each has independent captured positions and calibration;
+switching requires stopped motion. An unplugged probe is labelled not connected
+without removing the detected arm. Connect it and restart the arm driver to
+rescan, or use Reconnect while stopped. Saved launch calibration uses `arm_*` or `probe_*` arguments respectively.
+This selection controls servo calibration/jogging; it does not establish the
+probe linkage's conversion from shaft angle to millimetres of depth.
+
+The launch `arm_speed` is in servo register units, not degrees/s. Values above
+the firmware limit of 80 are capped with a warning rather than disconnecting
+the adapter. Calibration setup errors retain the detected ID list.
+
+One failed servo-bus read reported as gateway status 32 is retried once, without
+retrying motion writes or renewing permission. A repeated failure still stops
+and disconnects the driver. Settings -> Servos -> Reconnect explicitly rescans
+with targets cleared; it does not resume a sweep or jogging. Session calibration
+is retained for the same role/ID. Fresh RC/owner permission and a new movement
+request are required after reconnection.
+
 | Controller mapping | When to use |
 | --- | --- |
 | Auto | Default. Browser `standard` layout if the pad reports it, otherwise Linux Xbox 360 (triggers on axes 2 and 5). |
@@ -174,6 +193,33 @@ sweeping requires minimum, center and maximum calibration. The Drive panel shows
 RC channel input in override mode. Visualization defaults to steering CH1 and
 throttle CH2; adjust `rc_steering_channel` and `rc_throttle_channel` in launch XML
 to match your transmitter. PWM visualization assumes 1000/1500/2000 endpoints.
+
+Settings calibration jog/position controls use the full EEPROM joint range,
+not the saved sweep endpoints. Check mechanical clearance before extending the
+calibration range. Normal sweeps still enforce saved minimum/maximum bounds.
+The Servos tab also exposes maximum sweep speed and acceleration while stopped.
+The main sweep slider spans that configured speed range with no separate 28
+degrees/s clamp. Speed register values 1..1023 are supported; actual achievable
+speed depends on load, acceleration and travel distance. Motion settings apply
+for this driver session; the launch XML export includes speed and acceleration
+for persistence across restarts.
+
+The arm driver requires [safe_arm firmware v1](../../DevTools/servodemo/firmware/safe_arm/README.md).
+It sends a sweep profile once and refreshes permission every 50 ms while the
+ROS safety gate allows motion. Firmware slows near each endpoint and waits for
+low measured speed before reversing. If permission heartbeats stop for 350 ms,
+it cancels motion and releases torque. RC kill still uses ROS/USB; no extra
+wiring is required. The firmware must be flashed separately before this driver
+can move the arm. See the linked build and commissioning instructions.
+
+Arm position is published on each 50 ms control tick, independent of the slower
+electrical diagnostics. Dashboard telemetry targets 20 Hz; the radar redraws
+at 30 Hz. These are scheduling targets, not guaranteed measured rates.
+Confirmed firmware motion stops retain the connection after torque-off is
+verified and require a new user motion request, not adapter rediscovery.
+Transport disconnects retry discovery in the background after a two-second
+backoff. Reconnection restores the selected role and session calibration but
+never resumes an old sweep or jog. RC kill keeps a healthy connection open.
 
 Settings → Metal detector shows a 30-second raw ADC graph, receive rate, packet
 log, rejected-line count, freshness and estimated peak voltage. Only the control

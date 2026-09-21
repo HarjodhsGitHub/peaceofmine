@@ -3,11 +3,12 @@
 Audited firmware: [nilskiefer/SVEA-PX4-Autopilot revision 53453cddf93ad8f691a6032849447c116cdceb7c](https://github.com/nilskiefer/SVEA-PX4-Autopilot/tree/53453cddf93ad8f691a6032849447c116cdceb7c).
 This describes source behavior, not verification of the firmware currently flashed on the car.
 
-**Current hardware status:** position telemetry updates when the arm is moved by
-hand, but the operator reports no movement while holding the dashboard jog
-buttons. Physical jogging remains unresolved. Passing fake-bus and simulation
-tests does not establish that the servo moves. Use the standalone servo demo
-described in the repository's `DevTools/servodemo/README.md` to compare behavior.
+**Current rollout:** the operator reported working jogging/sweeping but rough
+turnarounds. The new [safe arm firmware](../../DevTools/servodemo/firmware/safe_arm/README.md)
+adds locally eased sweeps and a communication watchdog. It was flashed and
+read-back verified on 2026-09-21; runtime reports stopped with no fault.
+Motion behavior is tested with fake IO, not yet physically validated. Deploy it with
+the matching ROS driver; legacy firmware is rejected before enabling motion.
 
 ## What ROS mode actually means
 
@@ -33,11 +34,11 @@ The fork's `src/modules/mavlink/streams/HEARTBEAT.hpp` already maps
 `actuator_armed.kill`, `termination`, or non-HIL `lockdown` to
 `MAV_STATE_FLIGHT_TERMINATION` (8). Armed failsafe maps to CRITICAL (5).
 Vehicle drive requires connected, armed, ACTIVE (4), and fresh RC in the low
-CH5 position. The servo independently subscribes only to `mavros/state`: its
-PX4 gate is simply a fresh connected status of **4**. Every other status,
-including 0 and 8, blocks servo motion. It does not additionally require the
-`armed` flag, an RC channel stream, or ROS mode on CH5. It does not require uORB safety streams,
-schema overrides, a firmware patch, or reflashing. The generic uORB tunnel
+CH5 position. The servo independently subscribes to both state and RC input:
+it requires fresh connected status **4** and fresh RC with CH5 low or middle.
+Every other status, including 0 and 8, blocks servo motion. It does not
+additionally require the `armed` flag or ROS mode on CH5. No PX4 patch, uORB safety
+streams or schema overrides are required. The generic uORB tunnel
 remains available for its existing power telemetry.
 
 CH5 acceptance uses a conservative 800–1100 us low band within mode slot 1;
@@ -51,11 +52,11 @@ stamps do not refresh permission; disconnect clears permission immediately.
 The stock HEARTBEAT rate is 1 Hz and onboard RC_CHANNELS is 20 Hz, so a PX4
 arming-state change can take roughly one heartbeat period to reach ROS.
 Vehicle drive also checks kill/override through the faster CH5 stream.
-Servo permission follows the heartbeat status only. This mirrors
+Servo permission also checks kill/RC loss through the faster RC stream. This mirrors
 the reported PX4 state, not the instantaneous internal power-gate timing.
 `RCIn` does not expose every receiver failsafe flag; PX4 heartbeat failsafe,
 RC freshness, and zero RSSI inhibit control. RSSI 255 means unknown, not loss.
-Returning to ROS never re-arms the website or replays a servo target.
+Returning from kill never replays a servo target.
 
 ## Bring up the actual PX4 connection
 
@@ -82,25 +83,29 @@ actions avoid these issues for the hardware/simulation selection.
 
 ## Servo behavior
 
-The Protocol 1.0 transport follows `DevTools/servodemo`: ArbotiX ROS gateway ID
-253, host baud 115200, gateway model byte 44, and Dynamixel bus baud 1000000
-(default) or 57600. It is not a transparent USB adapter. The driver requires
+The Protocol 1.0 transport uses ArbotiX gateway ID 253, host baud 115200,
+gateway model byte 44, safe arm protocol version 1 at register 80, and fixed
+Dynamixel bus baud 1000000. It is not a transparent USB adapter. The driver requires
 MX-64 model 310 in joint position-control mode and never rewrites EEPROM angle limits or mode. It addresses one
 explicit servo ID; no automatic actuator selection or full-range move occurs.
 
 The servo independently checks PX4 safety plus the gateway's short-lived
 website permission. Any PX4 status other than 4 disables torque. RC override alone does not block
-servo motion or disable torque. The website's existing disarm and
+servo motion or disable torque. RC kill, RC loss and website
 lease-loss paths stop the servo too. This is not a separate physical servo
 arming mode. Calibration movement requires a held command refreshed within
 0.25 s; gateway permission expires within 0.3 s. A stopped target is discarded.
-Each goal advances by at most 16 ticks rather than sending an unattended
-full-range move. Sweeping uses the calibrated range and reports fixture angle.
+Preset moves use a bounded goal lead; the settings slider sends its requested
+position directly. Sweeping runs locally in the ArbotiX using full endpoint
+goals, eased speed and a low-speed settling period before reversal. Every
+motion requires a renewable 350 ms firmware lease. Unchanged sweep profiles
+are not resent, and ordinary reads cannot refresh that lease.
 
-**Hardware limit:** software cannot deliver torque-off if the Pi crashes,
-loses power, or its serial link fails. The demo firmware provides no independent
-host watchdog. To mirror PX4 disarm even in those failures, servo power must be
-on a PX4-controlled switched rail or an independent hardware cutoff. The fork's
+**Hardware limit:** the new controller watchdog attempts torque-off if the Pi
+crashes, loses power or USB fails, without needing additional wiring. RC kill
+still travels through ROS. A frozen controller or broken servo bus cannot be
+made safe by this communication watchdog alone; an independent cutoff would be
+needed for that guarantee. The fork's
 `svea_power_gate` uses `armed && !kill && !lockdown && !termination`; verify the
 actual wiring and rail behavior before a loaded test. Torque-off can let a
 loaded arm fall, so support it during setup. No physical servo motion has been
@@ -135,7 +140,7 @@ performed as part of these changes.
    defaults into `operator.launch.xml` to persist calibration across restarts.
    These changes were tested using a fake servo bus, not physical jogging.
 
-Hardware Python launch also accepts `use_arm_servo`, `arm_serial_port`,
+Hardware XML launch also accepts `use_arm_servo`, `arm_serial_port`,
 `arm_servo_id`, `arm_minimum`, `arm_center`, and `arm_maximum`. Simulation
 launch explicitly enables simulated safety **only in the gateway**. The real
 serial servo node has no simulation bypass. Do not enable a real servo alongside

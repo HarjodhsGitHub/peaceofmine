@@ -50,7 +50,7 @@ from peaceofmine_operator.detector import DetectorTelemetry
 SWEEP_SPEED_MIN_DEG_S = 5.0
 SWEEP_SPEED_MAX_DEG_S = 180.0
 
-# The detector beam trace covers +/-BEAM_HALF_ANGLE_DEG in one-degree bins.
+# Default sector before arm calibration arrives (also used by simulation).
 BEAM_HALF_ANGLE_DEG = 45
 BEAM_BINS = 2 * BEAM_HALF_ANGLE_DEG + 1
 
@@ -58,7 +58,7 @@ PRESSURE_SAMPLE_PERIOD_S = 0.2
 PRESSURE_WINDOW_S = 30.0
 PRESSURE_SAMPLES = int(PRESSURE_WINDOW_S / PRESSURE_SAMPLE_PERIOD_S)
 
-TELEMETRY_PERIOD_S = 0.1
+TELEMETRY_PERIOD_S = 0.05
 
 # After the drive command stops being valid, keep publishing zeros for this
 # long and then go silent, so an idle gateway does not hold the downstream
@@ -159,6 +159,9 @@ class OperatorGateway(Node):
         self._fixture_sweep_enabled = False
         self._fixture_sweep_speed = 60.0
         self._beam = [0.0] * BEAM_BINS
+        self._beam_min = -BEAM_HALF_ANGLE_DEG
+        self._beam_max = BEAM_HALF_ANGLE_DEG
+        self._beam_calibration = None
         self._pressure_history = [0.0] * PRESSURE_SAMPLES
         self._last_pressure_sample = 0.0
         self._probe_fault = False
@@ -212,6 +215,18 @@ class OperatorGateway(Node):
                 with self._lock:
                     self._arm_state = value
                     self._arm_state_at = time.monotonic()
+                    calibration = value.get('arm_calibration')
+                    if calibration is None and value.get('active_role', 'arm') == 'arm':
+                        calibration = value.get('calibration')
+                    if isinstance(calibration, dict):
+                        points = tuple(calibration.get(key) for key in ('minimum', 'center', 'maximum'))
+                        if (all(type(point) is int for point in points)
+                                and 0 <= points[0] < points[1] < points[2] <= 4095
+                                and points != self._beam_calibration):
+                            self._beam_min = (points[0] - points[1]) * 360 / 4096
+                            self._beam_max = (points[2] - points[1]) * 360 / 4096
+                            self._beam = [0.0] * (math.ceil(self._beam_max - self._beam_min) + 1)
+                            self._beam_calibration = points
         except (ValueError, TypeError):
             pass
 
@@ -277,8 +292,9 @@ class OperatorGateway(Node):
         with self._lock:
             self._detector_at = time.monotonic()
             self._detector = max(0.0, min(1.0, float(message.data)))
-            bin_index = round(self._fixture_angle_deg) + BEAM_HALF_ANGLE_DEG
-            if 0 <= bin_index < BEAM_BINS:
+            bin_index = round((self._fixture_angle_deg - self._beam_min)
+                              / (self._beam_max - self._beam_min) * (len(self._beam) - 1))
+            if self._beam_min <= self._fixture_angle_deg <= self._beam_max:
                 self._beam[bin_index] = self._detector
             detected = self._detector >= self._detector_threshold
             if detected and not self._was_detected:
@@ -520,9 +536,11 @@ class OperatorGateway(Node):
                     'fixture_angle_deg': self._fixture_angle_deg,
                     'sweep_enabled': self._fixture_sweep_enabled,
                     'sweep_speed_deg_s': self._fixture_sweep_speed,
-                    'sweep_speed_min': SWEEP_SPEED_MIN_DEG_S,
-                    'sweep_speed_max': SWEEP_SPEED_MAX_DEG_S,
+                    'sweep_speed_min': .684 if self._arm_state.get('connected') else SWEEP_SPEED_MIN_DEG_S,
+                    'sweep_speed_max': self._arm_state.get('motion_speed_limit', SWEEP_SPEED_MAX_DEG_S / .684) * .684,
                     'beam_half_angle_deg': BEAM_HALF_ANGLE_DEG,
+                    'beam_min_angle_deg': self._beam_min,
+                    'beam_max_angle_deg': self._beam_max,
                     'beam': list(self._beam),
                 },
                 'probe': {
@@ -591,8 +609,8 @@ class OperatorGateway(Node):
                     return {'type': 'error', 'message': 'Fresh Arduino readings required for calibration.'}
                 command = {key: payload[key] for key in ('action', 'request_id', 'baseline_adc', 'full_response_adc', 'reference_voltage') if key in payload}
                 self._detector_command_pub.publish(String(data=json.dumps(command)))
-            elif message_type == 'arm_servo' and payload.get('action') in ('select', 'capture', 'configure', 'stop'):
-                command = {key: payload[key] for key in ('action', 'request_id', 'servo_id', 'point', 'minimum', 'center', 'maximum') if key in payload}
+            elif message_type == 'arm_servo' and payload.get('action') in ('select', 'select_role', 'reconnect', 'capture', 'configure', 'configure_motion', 'stop'):
+                command = {key: payload[key] for key in ('action', 'request_id', 'servo_id', 'role', 'point', 'minimum', 'center', 'maximum', 'max_speed_deg_s', 'acceleration_deg_s2') if key in payload}
                 self._arm_command_pub.publish(String(data=json.dumps(command)))
             elif message_type == 'drive' and not safety['allowed']:
                 return {'type': 'error', 'message': safety['reason']}
@@ -645,8 +663,9 @@ class OperatorGateway(Node):
                 self._permission_pub.publish(Bool(data=True))
                 self._sweep_enabled_pub.publish(Bool(data=bool(payload.get('enabled', False))))
             elif message_type == 'sweep_speed':
-                speed = max(SWEEP_SPEED_MIN_DEG_S,
-                            min(SWEEP_SPEED_MAX_DEG_S, float(payload.get('deg_s', 60.0))))
+                maximum = self._arm_state.get('motion_speed_limit', SWEEP_SPEED_MAX_DEG_S / .684) * .684
+                minimum = .684 if self._arm_state.get('connected') else SWEEP_SPEED_MIN_DEG_S
+                speed = max(minimum, min(maximum, float(payload.get('deg_s', 60.0))))
                 self._sweep_speed_pub.publish(Float32(data=speed))
             else:
                 error = {'type': 'error', 'message': 'Unsupported operator command.'}

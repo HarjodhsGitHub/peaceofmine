@@ -238,7 +238,10 @@ The header distinguishes ROS mode, RC override, kill, disarmed, and unknown/lost
 status. Settings → Arm calibration records safe limits and exports launch XML.
 See [the safety audit and setup](../../docs/development/arm-servo-safety.md) before
 enabling the hardware driver. Safety uses existing `mavros/state` and `mavros/rc/in`;
-no firmware changes are required. Missing or stale MAVROS state leaves actuation locked.
+no PX4 firmware changes are required. The ArbotiX requires
+[safe_arm firmware v1](../../DevTools/servodemo/firmware/safe_arm/README.md) for
+the permission watchdog and locally eased sweep. Legacy ArbotiX firmware is
+rejected before motion. Missing or stale MAVROS state leaves actuation locked.
 The XML defaults to hardware mode with the verified FTDI adapter and servo ID 1 enabled.
 Use `is_sim:=true` for simulation; this excludes the hardware arm driver.
 Servo limits remain unset until calibration.
