@@ -273,6 +273,7 @@ function connect() {
     if (!state.connected) setConnection(true, 'Raspberry Pi connected');
     Object.assign(state, message);
     state.connected = true;
+    recordDetectorAngle(lastTelemetryAt);
     updateNetworkCameraOptions();
     updateCameraLatency();
     updateHud();
@@ -369,7 +370,11 @@ function updateHud() {
 
   const signalPercent = detector.signal_ratio * 100;
   $('signal').textContent = detector.fresh === false ? '--' : Math.round(signalPercent);
+  const rawAdc = detector.sensor?.packet?.amplitude_adc;
+  $('detector-raw').textContent = detector.fresh !== false && detector.sensor?.fresh === true && Number.isFinite(rawAdc)
+    ? `${rawAdc} ADC` : '-- ADC';
   $('meter-fill').style.width = `${detector.fresh === false ? 0 : signalPercent}%`;
+  $('meter-fill').style.background = detectorColor(detector.signal_ratio);
   $('threshold').style.left = `${detector.threshold_ratio * 100}%`;
   $('detector-detail').textContent =
     `Threshold ${Math.round(detector.threshold_ratio * 100)}% · fixture ${detector.fixture_angle_deg.toFixed(0)}°`;
@@ -1166,7 +1171,7 @@ function drawRadar() {
     const step = (maximum - minimum) / (beam.length - 1);
     const from = beamScreenAngle(minimum + (index + 1) * step);
     const to = beamScreenAngle(minimum + index * step);
-    context.strokeStyle = `hsl(${(1 - ratio) * 120} 78% 55%)`;
+    context.strokeStyle = detectorColor(ratio);
     context.beginPath();
     context.arc(cx, cy, radius * 0.84, from, to);
     context.stroke();
@@ -1762,7 +1767,6 @@ function updateMetalSettings() {
     metalCalibrationKey = key;
     $('metal-baseline').value = sensor.baseline_adc.toFixed(2);
     $('metal-full').value = (sensor.baseline_adc + (sensor.full_response_adc - sensor.baseline_adc) * threshold).toFixed(2);
-    $('metal-reference').value = reference.toFixed(2);
     $('metal-launch').value = `<arg name="sensor_baseline_adc" default="${sensor.baseline_adc}"/>\n<arg name="sensor_full_response_adc" default="${sensor.full_response_adc}"/>\n<arg name="sensor_reference_voltage" default="${reference}"/>\n<arg name="detector_threshold_ratio" default="${threshold}"/>`;
   }
   if (metalPending && sensor.command_result?.request_id === metalPending.id) {
@@ -1779,7 +1783,7 @@ function updateMetalSettings() {
   $('metal-control').disabled = !state.connected;
   $('metal-feedback').textContent = !fresh ? 'Fresh Arduino readings required for calibration.'
     : !owner ? 'Take control to calibrate.' : moving ? 'Stop the vehicle to calibrate.'
-    : metalPending ? 'Applying calibration...' : metalFeedback || 'Ready. Zero uses the last second of readings.';
+    : metalPending ? 'Applying calibration...' : metalFeedback || 'Ready';
   const packetKey = JSON.stringify(sensor.packet);
   if (fresh && sensor.packet && packetKey !== metalPacketKey) {
     metalPacketKey = packetKey;
@@ -1795,6 +1799,56 @@ function updateMetalSettings() {
 }
 
 let metalChart = null;
+let detectorChart = null;
+let detectorHistoryAt = 0;
+let detectorChartAt = 0;
+const detectorAngles = [];
+
+function recordDetectorAngle(now) {
+  detectorHistoryAt = now;
+  const angle = state.detector.fixture_angle_deg;
+  const available = state.safety?.simulated || (state.arm_servo?.connected && state.arm_servo?.active_role === 'arm');
+  detectorAngles.push({at: now, angle: available && Number.isFinite(angle) ? angle : null});
+  while (detectorAngles.length && now - detectorAngles[0].at > 30000) detectorAngles.shift();
+}
+
+function drawDetectorHistory(now = performance.now()) {
+  if (now - detectorChartAt < 200) return;
+  detectorChartAt = now;
+  const sensor = state.detector.sensor || {};
+  const elapsed = Math.max(0, (now - detectorHistoryAt) / 1000);
+  const samples = (sensor.history || []).filter(p => p.age_s + elapsed <= 30);
+  const zero = sensor.baseline_adc;
+  const trigger = zero + (sensor.full_response_adc - zero) * state.detector.threshold_ratio;
+  if (!detectorChart) {
+    detectorChart = new Chart($('detector-history'), {
+      type: 'line',
+      data: {datasets: [
+        {label: 'ADC', yAxisID: 'adc', borderColor: '#6edcc7', borderWidth: 1.5, data: []},
+        {label: 'Angle (deg)', yAxisID: 'angle', borderColor: '#b9a0ef', borderWidth: 1.5, data: []},
+        {label: 'Zero', yAxisID: 'adc', borderColor: '#efbb63', borderDash: [4, 4], borderWidth: 1, data: []},
+        {label: 'Trigger', yAxisID: 'adc', borderColor: '#ed7770', borderDash: [4, 4], borderWidth: 1, data: []},
+      ]},
+      options: {responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+        elements: {point: {radius: 0, hitRadius: 6}, line: {spanGaps: .25}},
+        plugins: {legend: {labels: {color: '#a4b5bb', boxWidth: 10, font: {size: 9}}}},
+        scales: {
+          x: {type: 'linear', min: -30, max: 0, ticks: {color: '#a4b5bb', count: 3, maxRotation: 0,
+            callback: v => v === 0 ? 'now' : `${v}s`}, grid: {color: '#2b3d46'}},
+          adc: {position: 'left', ticks: {color: '#6edcc7', maxTicksLimit: 4}, grid: {color: '#2b3d46'}},
+          angle: {position: 'right', suggestedMin: -1, suggestedMax: 1,
+            ticks: {color: '#b9a0ef', maxTicksLimit: 4, callback: v => `${v}\u00b0`}, grid: {drawOnChartArea: false}},
+        }},
+    });
+  }
+  detectorChart.data.datasets[0].data = samples.map(p => ({x: -p.age_s - elapsed, y: p.adc}));
+  while (detectorAngles.length && now - detectorAngles[0].at > 30000) detectorAngles.shift();
+  detectorChart.data.datasets[1].data = detectorAngles.map(p => ({x: (p.at - now) / 1000, y: p.angle}));
+  for (const [index, value] of [[2, zero], [3, trigger]]) {
+    detectorChart.data.datasets[index].data = Number.isFinite(value) ? [{x: -30, y: value}, {x: 0, y: value}] : [];
+  }
+  detectorChart.update('none');
+}
 
 function drawMetalHistory() {
   const canvas = $('metal-history');
@@ -1852,21 +1906,22 @@ function drawMetalHistory() {
     : `No raw readings in the last ${seconds} seconds`;
 }
 
+function detectorColor(signalRatio) {
+  const fraction = Math.max(0, Math.min(1, signalRatio / Math.max(state.detector.threshold_ratio, 0.001)));
+  return `hsl(${(1 - fraction) * 120} 78% 55%)`;
+}
+
 function initializeMetalSettings() {
   const command = action => {
     const id = `metal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const payload = {type: 'detector_calibrate', action, request_id: id};
     if (action === 'apply') {
-      if (!$('metal-baseline').value || !$('metal-full').value) { metalFeedback = 'Enter both endpoints.'; updateMetalSettings(); return; }
+      if (!$('metal-baseline').value || !$('metal-full').value) { metalFeedback = 'Enter a zero level and mine trigger.'; updateMetalSettings(); return; }
       payload.baseline_adc = Number($('metal-baseline').value);
       payload.full_response_adc = Number($('metal-full').value);
-      payload.reference_voltage = Number($('metal-reference').value);
-      if (!Number.isFinite(payload.reference_voltage) || payload.reference_voltage <= 0 || payload.reference_voltage > 5.5) {
-        metalFeedback = 'Enter an ADC reference between 0 and 5.5 V.'; updateMetalSettings(); return;
-      }
       if (![payload.baseline_adc, payload.full_response_adc].every(v => Number.isFinite(v) && v >= 0 && v <= 255)
           || Math.abs(payload.full_response_adc - payload.baseline_adc) < 1) {
-        metalFeedback = 'Endpoints must be within 0..255 and at least one count apart.'; updateMetalSettings(); return;
+        metalFeedback = 'Zero level and mine trigger must be within 0..255 and at least one count apart.'; updateMetalSettings(); return;
       }
     }
     metalPending = {id, at: performance.now()};
@@ -2018,6 +2073,7 @@ function drawDashboard(now) {
       lastInstrumentFrame = now;
       drawMap();
       drawPressureHistory();
+      drawDetectorHistory(now);
     }
   }
   requestAnimationFrame(drawDashboard);

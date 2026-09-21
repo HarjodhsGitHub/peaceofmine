@@ -49,7 +49,8 @@ class SensorSerialNode(Node):
         self.fresh_pub = self.create_publisher(Bool, values['fresh_topic'], 10)
         self.previous_status = None
         self.initial_calibration = (self.baseline, self.full_response, self.reference_voltage)
-        self.recent_samples = deque(maxlen=200)
+        self.recent_samples = deque()
+        self.zero_window_seconds = 10.0
         self.latest_packet = None
         self.received = 0
         self.command_result = None
@@ -66,6 +67,7 @@ class SensorSerialNode(Node):
             self.latest_packet = {key: samples[-1][key] for key in ('v', 'seq', 'uptime_ms', 'amplitude_adc')}
             for sample in samples:
                 self.recent_samples.append((now, sample['amplitude_adc']))
+            self.trim_samples(now)
             # Publish the newest sample after a scheduling delay, not a backlog.
             raw = samples[-1]['amplitude_adc']
             ratio = (raw - self.baseline) / (self.full_response - self.baseline)
@@ -82,6 +84,10 @@ class SensorSerialNode(Node):
             else:
                 self.get_logger().warning(self.sensor.error or 'Waiting for valid sensor telemetry')
 
+    def trim_samples(self, now):
+        while self.recent_samples and now - self.recent_samples[0][0] > self.zero_window_seconds:
+            self.recent_samples.popleft()
+
     def calibrate(self, message):
         request_id = None
         try:
@@ -97,7 +103,9 @@ class SensorSerialNode(Node):
             reference = self.reference_voltage
             action = command.get('action')
             if action == 'zero':
-                recent = [raw for at, raw in self.recent_samples if time.monotonic() - at <= 1.0]
+                now = time.monotonic()
+                self.trim_samples(now)
+                recent = [raw for _, raw in self.recent_samples]
                 if len(recent) < 5:
                     raise ValueError('Wait for at least five recent readings')
                 baseline = sum(recent) / len(recent)
@@ -115,14 +123,19 @@ class SensorSerialNode(Node):
                 raise ValueError('ADC reference voltage must be within 0..5.5 V')
             self.baseline, self.full_response = float(baseline), float(full)
             self.reference_voltage = float(reference)
-            self.command_result = dict(request_id=request_id, ok=True, message='Calibration applied')
-            self.get_logger().info(f'Detector calibration: baseline={baseline:.2f}, full={full:.2f}')
+            message = 'Zero level and detection trigger applied'
+            if action == 'zero':
+                span = now - self.recent_samples[0][0]
+                message = f'Zero level {baseline:.2f} ADC: averaged {len(recent)} readings over {span:.1f} s'
+            self.command_result = dict(request_id=request_id, ok=True, message=message)
+            self.get_logger().info(f'Detector calibration: zero={baseline:.2f}, trigger={full:.2f}')
         except (ValueError, TypeError) as exc:
             self.command_result = dict(request_id=request_id, ok=False, message=str(exc))
         self.publish_state()
 
     def publish_state(self):
         now = time.monotonic()
+        self.trim_samples(now)
         recent = [at for at, _ in self.recent_samples if now - at <= 2.0]
         rate = (len(recent) - 1) / (recent[-1] - recent[0]) if len(recent) > 1 and recent[-1] > recent[0] else 0.0
         value = dict(connected=self.sensor.connection is not None, fresh=self.sensor.fresh,

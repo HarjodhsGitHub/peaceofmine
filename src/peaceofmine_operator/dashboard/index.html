@@ -101,11 +101,13 @@
         <section class="panel detector-panel">
           <div class="panel-heading">
             <h2>Metal detector</h2>
+            <span id="sweep-status" class="safety-note" role="status"></span>
             <span id="detector-status" class="badge neutral">CLEAR</span>
           </div>
           <div class="signal-value">
             <strong id="signal">0</strong>
             <span>%</span>
+            <span id="detector-raw">-- ADC</span>
           </div>
           <div class="meter" aria-label="Detector signal">
             <span id="meter-fill"></span>
@@ -118,7 +120,7 @@
             <label for="sweep-speed">Sweep <output id="sweep-speed-value">60&deg;/s</output></label>
             <input id="sweep-speed" type="range">
           </div>
-          <p id="sweep-status" class="safety-note" role="status"></p>
+          <div class="detector-chart"><canvas id="detector-history" role="img" aria-label="Metal detector ADC and servo angle over the last 30 seconds"></canvas></div>
         </section>
 
         <section class="panel probe-panel">
@@ -242,12 +244,11 @@
         <p id="metal-range">No readings</p>
         <h3>Calibration</h3>
         <div class="metal-calibration">
-          <label>Zero (ADC)<input id="metal-baseline" type="number" min="0" max="255" step="0.01"></label>
+          <label>Zero level (ADC)<input id="metal-baseline" type="number" min="0" max="255" step="0.01"></label>
           <label>Mine trigger (ADC)<input id="metal-full" type="number" min="0" max="255" step="0.01"></label>
-          <input id="metal-reference" type="hidden" value="5">
         </div>
         <div class="metal-actions">
-          <button id="metal-zero" type="button">Zero now</button>
+          <button id="metal-zero" type="button">Zero from last 10 s</button>
           <button id="metal-apply" type="button">Apply</button>
           <button id="metal-reset" type="button" class="quiet">Restore launch values</button>
           <button id="metal-control" type="button" class="quiet">Take control</button>

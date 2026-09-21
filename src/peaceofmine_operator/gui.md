@@ -228,8 +228,10 @@ updates the baseline without changing an applied mine-trigger endpoint.
 
 Settings → Metal detector shows a 30-second raw ADC graph, receive rate, packet
 log, rejected-line count, freshness and estimated peak voltage. Only the control
-owner can zero or apply calibration. Zero averages the last second of fresh
-samples; the full-response endpoint maps to 100%. Changes affect the ROS
+owner can zero or apply calibration. Zero averages the available readings from
+the last 10 seconds; the mine trigger maps to 100%. The meter and sweep trace
+blend from green at zero through yellow to red at the trigger. ADC reference
+voltage is hardware configuration, not a dashboard input. Changes affect the ROS
 signal-ratio topic for all clients. They last for the node session; the tab
 exports launch XML for persistence. With a 5 V reference, 20 ADC is about
 0.392 V peak and 150 ADC about 2.941 V peak. This is the firmware's sine-equivalent
