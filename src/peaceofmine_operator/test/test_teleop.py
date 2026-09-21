@@ -44,6 +44,21 @@ class TeleopTest(unittest.TestCase):
         self.command('take_control')
         self.command('arm')
 
+    def test_mine_trigger_applies_after_successful_calibration(self):
+        self.node._detector_threshold = .65
+        command = dict(action='apply', request_id='trigger', baseline_adc=20, full_response_adc=150)
+        self.assertIsNotNone(self.command('detector_calibrate', **command))
+        self.command('take_control')
+        with patch.object(self.node._detector_telemetry, 'snapshot', return_value={'fresh': True}):
+            self.assertIsNone(self.command('detector_calibrate', **command))
+        self.assertEqual(self.node._detector_threshold, .65)
+        self.node._detector_state_cb(String(data=json.dumps({'command_result': {'request_id': 'trigger', 'ok': True}})))
+        self.assertEqual(self.node._detector_threshold, 1)
+        self.node._detector_cb(Float32(data=.99))
+        self.assertFalse(self.node.snapshot()['detector']['detected'])
+        self.node._detector_cb(Float32(data=1))
+        self.assertTrue(self.node.snapshot()['detector']['detected'])
+
     def test_radar_calibration_bounds_bins_and_probe_selection(self):
         calibration = dict(minimum=100, center=1500, maximum=4000)
         self.node._arm_state_cb(String(data=json.dumps(dict(active_role='arm', calibration=calibration))))

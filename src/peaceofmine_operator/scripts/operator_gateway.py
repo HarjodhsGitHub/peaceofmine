@@ -97,7 +97,7 @@ class OperatorGateway(Node):
         self.declare_parameter('max_yaw_rate_rad_s', 1.4)
         self.declare_parameter('probe_motion_speed_limit_mps', 0.03)
         self.declare_parameter('max_probe_depth_mm', 110.0)
-        self.declare_parameter('detector_threshold_ratio', 0.65)
+        self.declare_parameter('detector_threshold_ratio', 1.0)
         self.declare_parameter('rc_steering_channel', 1)
         self.declare_parameter('rc_throttle_channel', 2)
 
@@ -179,6 +179,7 @@ class OperatorGateway(Node):
         self._probe_speed_limit = float(self.get_parameter('probe_motion_speed_limit_mps').value)
         self._max_probe_depth = float(self.get_parameter('max_probe_depth_mm').value)
         self._detector_threshold = float(self.get_parameter('detector_threshold_ratio').value)
+        self._detector_threshold_request = None
 
         self._cmd_pub = self.create_publisher(Twist, str(self.get_parameter('cmd_vel_topic').value), 10)
         self._probe_pub = self.create_publisher(Float32, str(self.get_parameter('probe_target_topic').value), 10)
@@ -285,6 +286,11 @@ class OperatorGateway(Node):
             if isinstance(value, dict):
                 with self._lock:
                     self._detector_telemetry.update(value)
+                    result = value.get('command_result') or {}
+                    if self._detector_threshold_request and result.get('request_id') == self._detector_threshold_request:
+                        if result.get('ok'):
+                            self._detector_threshold = 1.0
+                        self._detector_threshold_request = None
         except (ValueError, TypeError):
             pass
 
@@ -608,6 +614,8 @@ class OperatorGateway(Node):
                 if not self._detector_telemetry.snapshot()['fresh']:
                     return {'type': 'error', 'message': 'Fresh Arduino readings required for calibration.'}
                 command = {key: payload[key] for key in ('action', 'request_id', 'baseline_adc', 'full_response_adc', 'reference_voltage') if key in payload}
+                if command.get('action') == 'apply':
+                    self._detector_threshold_request = command.get('request_id')
                 self._detector_command_pub.publish(String(data=json.dumps(command)))
             elif message_type == 'arm_servo' and payload.get('action') in ('select', 'select_role', 'reconnect', 'capture', 'configure', 'configure_motion', 'stop'):
                 command = {key: payload[key] for key in ('action', 'request_id', 'servo_id', 'role', 'point', 'minimum', 'center', 'maximum', 'max_speed_deg_s', 'acceleration_deg_s2') if key in payload}
@@ -739,7 +747,7 @@ def build_app(node: OperatorGateway) -> web.Application:
         # development, and aiohttp's generic static route refuses symlinks by
         # design, so serve this small explicit allow-list instead.
         filename = request.match_info['filename']
-        if filename not in {'app.js', 'style.css', 'keydrown-1.3.0.js'}:
+        if filename not in {'app.js', 'style.css', 'keydrown-1.3.0.js', 'chart-4.4.8.umd.js'}:
             raise web.HTTPNotFound()
         return web.FileResponse(dashboard / filename, headers={'Cache-Control': 'no-store'})
 

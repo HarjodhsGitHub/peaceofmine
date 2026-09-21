@@ -3,7 +3,7 @@
 .metal-metrics dd { margin: 6px 0 0; font-size: 1.1rem; font-variant-numeric: tabular-nums; }
 .metal-chart-heading, .metal-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .metal-chart-heading { font-size: .8rem; margin: 16px 0 8px; }
-#metal-history { display: block; width: 100%; height: 210px; background: #0b171d; border: 1px solid #35434b; border-radius: 4px; }
+.metal-chart-container { position: relative; width: 100%; min-width: 0; height: 250px; background: #0b171d; border: 1px solid #35434b; border-radius: 4px; }
 #metal-range, #metal-feedback { min-height: 1.4em; margin: 10px 0 16px; font-size: .8rem; color: #b8c9ce; }
 .metal-calibration { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 12px; }
 .metal-calibration input { width: 100%; min-width: 0; }
@@ -1094,3 +1094,6 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .power-note { color: #8fa8a1; font-size: .62rem; line-height: 1.45; margin-top: .55rem; }
 @media (max-width: 1100px) { .lower-panels { grid-template-columns: 1fr; overflow: auto; } .lower-panels .map-panel { min-height: 12rem; } .power-panel { min-height: 17rem; overflow: visible; } }
 @media (max-width: 900px) { .lower-panels { grid-column: auto; grid-row: auto; overflow: visible; } }
+
+#metal-history { display: block; }
+#metal-time-range { width: auto; }

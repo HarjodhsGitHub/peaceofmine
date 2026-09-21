@@ -32,7 +32,7 @@ const state = {
   robot: {x: 0, y: 0, yaw: 0, speed_mps: 0},
   detector: {
     signal_ratio: 0,
-    threshold_ratio: 0.65,
+    threshold_ratio: 1.0,
     detected: false,
     fixture_angle_deg: 0,
     sweep_enabled: false,
@@ -1756,13 +1756,14 @@ function updateMetalSettings() {
   $('metal-voltage-note').textContent = fresh && voltage > reference / 2
     ? 'Above the centered sine range: check clipping or waveform shape. Voltage is an amplitude estimate.'
     : `Sine-equivalent AC peak, excluding DC bias. Reference ${reference.toFixed(2)} V.`;
-  const key = `${sensor.baseline_adc}:${sensor.full_response_adc}:${reference}`;
+  const threshold = state.detector.threshold_ratio;
+  const key = `${sensor.baseline_adc}:${sensor.full_response_adc}:${reference}:${threshold}`;
   if (key !== metalCalibrationKey && Number.isFinite(sensor.baseline_adc)) {
     metalCalibrationKey = key;
     $('metal-baseline').value = sensor.baseline_adc.toFixed(2);
-    $('metal-full').value = sensor.full_response_adc.toFixed(2);
+    $('metal-full').value = (sensor.baseline_adc + (sensor.full_response_adc - sensor.baseline_adc) * threshold).toFixed(2);
     $('metal-reference').value = reference.toFixed(2);
-    $('metal-launch').value = `<arg name="sensor_baseline_adc" default="${sensor.baseline_adc}"/>\n<arg name="sensor_full_response_adc" default="${sensor.full_response_adc}"/>\n<arg name="sensor_reference_voltage" default="${reference}"/>`;
+    $('metal-launch').value = `<arg name="sensor_baseline_adc" default="${sensor.baseline_adc}"/>\n<arg name="sensor_full_response_adc" default="${sensor.full_response_adc}"/>\n<arg name="sensor_reference_voltage" default="${reference}"/>\n<arg name="detector_threshold_ratio" default="${threshold}"/>`;
   }
   if (metalPending && sensor.command_result?.request_id === metalPending.id) {
     metalFeedback = sensor.command_result.message;
@@ -1793,44 +1794,62 @@ function updateMetalSettings() {
   if ($('settings-dialog').open && !$('settings-detector').hidden) drawMetalHistory();
 }
 
+let metalChart = null;
+
 function drawMetalHistory() {
   const canvas = $('metal-history');
-  const ctx = resize(canvas);
-  const width = canvas.clientWidth, height = canvas.clientHeight;
-  if (!width || !height) return;
-  const samples = state.detector.sensor?.history || [];
+  if (!canvas.parentElement.clientWidth || !canvas.parentElement.clientHeight) return;
+  const seconds = Number($('metal-time-range').value) || 30;
+  const samples = (state.detector.sensor?.history || []).filter(sample => sample.age_s <= seconds);
   const values = samples.map(sample => sample.adc);
   const baseline = state.detector.sensor?.baseline_adc;
+  const trigger = baseline + (state.detector.sensor?.full_response_adc - baseline) * state.detector.threshold_ratio;
+  const plotValues = [...values, baseline, trigger].filter(Number.isFinite);
   let low = 0, high = 255;
-  if ($('metal-autoscale').checked && values.length) {
-    low = Math.max(0, Math.floor(Math.min(...values) - 3));
-    high = Math.min(255, Math.ceil(Math.max(...values) + 3));
+  if ($('metal-autoscale').checked && plotValues.length) {
+    low = Math.max(0, Math.floor(Math.min(...plotValues) - 3));
+    high = Math.min(255, Math.ceil(Math.max(...plotValues) + 3));
   }
-  const left = 38, right = width - 12, top = 16, bottom = height - 26;
-  const x = age => right - age / 30 * (right - left);
-  const y = adc => bottom - (adc - low) / (high - low) * (bottom - top);
-  ctx.clearRect(0, 0, width, height);
-  ctx.font = '11px sans-serif';
-  for (let i = 0; i <= 4; i++) {
-    const value = low + (high - low) * i / 4;
-    ctx.strokeStyle = '#2b3d46'; ctx.beginPath(); ctx.moveTo(left, y(value)); ctx.lineTo(right, y(value)); ctx.stroke();
-    ctx.fillStyle = '#a4b5bb'; ctx.fillText(value.toFixed(0), 3, y(value) + 4);
+  if (!metalChart) {
+    metalChart = new Chart(canvas, {
+      type: 'line',
+      data: {datasets: [
+        {label: 'Amplitude (ADC)', data: [], borderColor: '#6edcc7', borderWidth: 2,
+          pointRadius: 0, pointHitRadius: 8, spanGaps: 0.5},
+        {label: 'Zero (ADC)', data: [], borderColor: '#efbb63', borderWidth: 1,
+          borderDash: [5, 4], pointRadius: 0},
+        {label: 'Mine trigger (ADC)', data: [], borderColor: '#ed7770', borderWidth: 1,
+          borderDash: [5, 4], pointRadius: 0},
+      ]},
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+        plugins: {legend: {display: true, labels: {color: '#a4b5bb', boxWidth: 16}}, tooltip: {callbacks: {
+          title: items => items.length ? `${(-items[0].parsed.x).toFixed(2)} seconds ago` : '',
+        }}},
+        scales: {
+          x: {type: 'linear', min: -30, max: 0, grid: {color: '#2b3d46'},
+            ticks: {color: '#a4b5bb', maxRotation: 0, count: 4,
+              callback: value => value === 0 ? 'now' : `${value}s`}},
+          y: {min: 0, max: 255, grid: {color: '#2b3d46'},
+            ticks: {color: '#a4b5bb', precision: 0, maxTicksLimit: 6}},
+        },
+      },
+    });
   }
-  for (const age of [30, 20, 10, 0]) {
-    ctx.fillStyle = '#a4b5bb'; ctx.fillText(age ? `-${age}s` : 'now', Math.min(right - 22, x(age)), height - 6);
-  }
-  if (Number.isFinite(baseline) && baseline >= low && baseline <= high) {
-    ctx.strokeStyle = '#efbb63'; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(left, y(baseline)); ctx.lineTo(right, y(baseline)); ctx.stroke(); ctx.setLineDash([]);
-  }
-  ctx.strokeStyle = '#6edcc7'; ctx.lineWidth = 2; ctx.beginPath();
-  samples.forEach((sample, i) => {
-    if (!i || samples[i - 1].age_s - sample.age_s > 0.5) ctx.moveTo(x(sample.age_s), y(sample.adc));
-    else ctx.lineTo(x(sample.age_s), y(sample.adc));
-  });
-  ctx.stroke();
+  metalChart.data.datasets[0].data = samples.map(sample => ({x: -sample.age_s, y: sample.adc}));
+  metalChart.data.datasets[1].data = Number.isFinite(baseline) && baseline >= low && baseline <= high
+    ? [{x: -seconds, y: baseline}, {x: 0, y: baseline}] : [];
+  metalChart.data.datasets[2].data = Number.isFinite(trigger)
+    ? [{x: -seconds, y: trigger}, {x: 0, y: trigger}] : [];
+  metalChart.options.scales.x.min = -seconds;
+  metalChart.options.scales.y.min = low;
+  metalChart.options.scales.y.max = high;
+  metalChart.resize();
+  metalChart.update('none');
+  canvas.setAttribute('aria-label', `Raw metal detector amplitude over the last ${seconds} seconds`);
   $('metal-range').textContent = values.length
     ? `Min ${Math.min(...values)} · Max ${Math.max(...values)} · Peak-to-peak ${Math.max(...values) - Math.min(...values)} ADC`
-    : 'No raw readings in the last 30 seconds';
+    : `No raw readings in the last ${seconds} seconds`;
 }
 
 function initializeMetalSettings() {
@@ -1858,15 +1877,13 @@ function initializeMetalSettings() {
   $('metal-reset').onclick = () => command('reset');
   $('metal-control').onclick = () => send({type: 'take_control'});
   $('metal-autoscale').onchange = drawMetalHistory;
+  $('metal-time-range').onchange = drawMetalHistory;
   $('metal-export').onclick = () => {
     const rows = ['age_seconds,amplitude_adc', ...(state.detector.sensor?.history || []).map(s => `${s.age_s},${s.adc}`)];
     const url = URL.createObjectURL(new Blob([rows.join('\n')], {type: 'text/csv'}));
     const link = document.createElement('a'); link.href = url; link.download = 'detector-readings.csv'; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  new ResizeObserver(() => {
-    if ($('settings-dialog').open && !$('settings-detector').hidden) drawMetalHistory();
-  }).observe($('metal-history'));
 }
 
 function initializeInputs() {

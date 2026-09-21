@@ -52,6 +52,7 @@
   <arg name="sensor_baseline_adc" default="0.0"/>
   <arg name="sensor_full_response_adc" default="255.0"/>
   <arg name="sensor_reference_voltage" default="5.0"/>
+  <arg name="detector_threshold_ratio" default="1.0"/>
 
   <!-- Controller connected to the vehicle's USB port -->
   <arg name="use_joy" default="false"/>
@@ -139,6 +140,7 @@
     </node>
     <node pkg="peaceofmine_operator" exec="operator_gateway.py" name="operator_gateway" output="screen">
       <param name="safety_simulation" value="$(var is_sim)"/>
+      <param name="detector_threshold_ratio" value="$(var detector_threshold_ratio)"/>
       <param name="rc_steering_channel" value="$(var rc_steering_channel)" type="int"/>
       <param name="rc_throttle_channel" value="$(var rc_throttle_channel)" type="int"/>
       <param name="host" value="$(var host)"/>

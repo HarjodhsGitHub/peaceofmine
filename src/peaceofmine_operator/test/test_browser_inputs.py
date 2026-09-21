@@ -333,6 +333,34 @@ document.querySelector('[data-settings-tab="detector"]').click();
 updateMetalSettings();
 assert($('metal-voltage').textContent === '0.392 V', 'ADC peak converted to volts');
 assert(!$('metal-zero').disabled && !$('settings-detector').hidden, 'detector tab and zero available');
+assert($('metal-full').value === '150.00', 'mine trigger shown as raw ADC');
+assert(metalChart.data.datasets[1].data[0].y === 20, 'zero line shown');
+assert(metalChart.data.datasets[2].data[0].y === 150, 'trigger line shown');
+assert(metalChart.scales.y.max >= 150, 'autoscale includes trigger');
+assert($('metal-launch').value.includes('detector_threshold_ratio'), 'threshold included in launch export');
+assert(metalChart.scales.x.min === -30 && metalChart.scales.x.max === 0, 'default full 30 second axis');
+state.detector.sensor.history = [{age_s: 119, adc: 10}, {age_s: 29.9, adc: 0}, {age_s: .1, adc: 255}];
+drawMetalHistory();
+assert(metalChart.data.datasets[0].data.length === 2, 'default filters older history');
+$('metal-time-range').value = '120';
+$('metal-time-range').dispatchEvent(new Event('change'));
+assert(metalChart.scales.x.min === -120 && metalChart.scales.x.max === 0, 'expanded full axis');
+assert(metalChart.data.datasets[0].data.length === 3, 'expanded range includes retained history');
+assert(metalChart.scales.y.min === 0 && metalChart.scales.y.max === 255, 'ADC endpoints visible');
+const area = metalChart.chartArea;
+assert(area.left > 0 && area.right < metalChart.width && area.bottom < metalChart.height, 'axes fit inside canvas');
+assert(metalChart.scales.x.getPixelForValue(-120) === area.left, 'oldest time uses left plot edge');
+assert(metalChart.scales.x.getPixelForValue(0) === area.right, 'now uses right plot edge');
+const chartContainer = $('metal-history').parentElement;
+chartContainer.style.width = '280px'; drawMetalHistory();
+assert(metalChart.width <= 280 && metalChart.chartArea.right < metalChart.width, 'narrow chart fits container');
+chartContainer.style.width = ''; drawMetalHistory();
+state.detector.sensor.history = [{age_s: .1, adc: 42}]; drawMetalHistory();
+assert(metalChart.scales.y.min < 42 && metalChart.scales.y.max > 42, 'flat signal has vertical padding');
+state.detector.sensor.history = []; drawMetalHistory();
+assert($('metal-range').textContent.includes('120 seconds'), 'empty state follows selected range');
+$('metal-autoscale').checked = false; drawMetalHistory();
+assert(metalChart.scales.y.min === 0 && metalChart.scales.y.max === 255, 'manual ADC scale');
 $('metal-zero').click();
 assert(sent.at(-1).type === 'detector_calibrate' && sent.at(-1).action === 'zero', 'zero reaches gateway');
 metalPending = null;
@@ -345,7 +373,7 @@ document.body.textContent = 'BROWSER TESTS PASSED';
         import json
         source = (DASHBOARD / 'app.js').read_text()
         gamepad_checks = (DASHBOARD.parent / 'test/test_gamepad.cjs').read_text().split("if (typeof require")[0]
-        script = setup + (DASHBOARD / 'keydrown-1.3.0.js').read_text() + source + gamepad_checks + '\nconst dashboardSource = ' + json.dumps(source) + ';\n'
+        script = setup + (DASHBOARD / 'chart-4.4.8.umd.js').read_text() + (DASHBOARD / 'keydrown-1.3.0.js').read_text() + source + gamepad_checks + '\nconst dashboardSource = ' + json.dumps(source) + ';\n'
         html += '<script>(async () => {try {' + script + checks + "} catch(e) {document.body.textContent = 'TEST FAILED: ' + e.stack;}})();</script>"
         with tempfile.TemporaryDirectory() as tmp:
             page = pathlib.Path(tmp) / 'test.html'

@@ -221,6 +221,11 @@ Transport disconnects retry discovery in the background after a two-second
 backoff. Reconnection restores the selected role and session calibration but
 never resumes an old sweep or jog. RC kill keeps a healthy connection open.
 
+Metal detector calibration uses two ADC values: Zero and Mine trigger. Apply
+sets the trigger to the calibrated full response; detection starts at that
+value. Both levels are plotted and included in chart autoscaling. Zero now
+updates the baseline without changing an applied mine-trigger endpoint.
+
 Settings → Metal detector shows a 30-second raw ADC graph, receive rate, packet
 log, rejected-line count, freshness and estimated peak voltage. Only the control
 owner can zero or apply calibration. Zero averages the last second of fresh
