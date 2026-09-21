@@ -12,6 +12,9 @@ Desktop.ini
 # VS Code
 .vscode/
 
+# PlatformIO build outputs
+**/.pio/
+
 # Python
 __pycache__/
 *.pyc
@@ -22,4 +25,3 @@ DevTools/gnss_viewer/.env
 # mkdocs
 venv/
 site/
-

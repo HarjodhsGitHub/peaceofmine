@@ -1,0 +1,8 @@
+# The Seeed XIAO ESP32-C6 board profile has 4 MB of flash. Without this
+# explicit ESP-IDF setting, PlatformIO's generic C6 default selects 2 MB and
+# emits a flash-size mismatch warning during every build.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# Permit ESP-IDF to update the bootloader header with the flash size it sees
+# during upload. This also keeps the image digest valid when PlatformIO's
+# board setting and ESP-IDF's generated setting differ.
+CONFIG_ESPTOOLPY_HEADER_FLASHSIZE_UPDATE=y
