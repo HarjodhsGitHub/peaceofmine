@@ -35,6 +35,15 @@ def main(
     datum_file: str = '',
     datum_data: str = '[]',
 ):
+    # The ROS/BetterLaunch adapter can pass CLI booleans as strings.
+    is_sim = str(is_sim).lower() == 'true'
+    is_indoor = str(is_indoor).lower() == 'true'
+    use_map = str(use_map).lower() == 'true'
+    use_two_encoders = str(use_two_encoders).lower() == 'true'
+    use_lidar = str(use_lidar).lower() == 'true'
+    use_rtk = str(use_rtk).lower() == 'true'
+    use_datum = str(use_datum).lower() == 'true'
+    initial_pose_x, initial_pose_y, initial_pose_a = map(float, (initial_pose_x, initial_pose_y, initial_pose_a))
     bl = BetterLaunch()
 
     # Format the coordinate frames with the robot name

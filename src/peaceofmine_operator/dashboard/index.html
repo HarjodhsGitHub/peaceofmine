@@ -37,6 +37,7 @@
           <canvas id="latency-graph" width="96" height="28" aria-label="Recent connection latency"></canvas>
         </div>
         <div id="client-count" class="client-count">1 viewer</div>
+        <span id="rc-safety" class="badge neutral" title="PX4 safety status">RC UNKNOWN · LOCKED</span>
         <span id="control-owner" class="badge neutral">SPECTATING</span>
         <button id="take-control" class="primary">Take control</button>
         <button id="settings" class="quiet">Settings</button>
@@ -70,11 +71,35 @@
             <span id="arm-state" class="badge neutral">DISARMED</span>
           </div>
           <p class="controller-text" id="controller">No controller connected</p>
+          <p class="controller-mapping" id="controller-mapping">Plug the Xbox 360 into this computer or the SVEA USB, then press any button.</p>
+          <p class="pad-raw" id="pad-raw">Waiting for Gamepad API…</p>
+          <svg class="pad-visual" viewBox="0 0 280 132" role="img" aria-label="Xbox controller input preview">
+            <rect class="pad-shell" x="18" y="30" width="244" height="86" rx="32"/>
+            <rect id="pad-lt" class="pad-trigger" x="36" y="8" width="46" height="16" rx="5"/>
+            <rect id="pad-rt" class="pad-trigger" x="198" y="8" width="46" height="16" rx="5"/>
+            <rect id="pad-lb" class="pad-bumper" x="36" y="28" width="46" height="10" rx="3"/>
+            <rect id="pad-rb" class="pad-bumper" x="198" y="28" width="46" height="10" rx="3"/>
+            <text class="pad-label" x="59" y="20">LT</text>
+            <text class="pad-label" x="221" y="20">RT</text>
+            <text class="pad-label" x="59" y="37">LB</text>
+            <text class="pad-label" x="221" y="37">RB</text>
+            <circle class="pad-well" cx="78" cy="82" r="24"/>
+            <circle id="pad-ls" class="pad-stick" cx="78" cy="82" r="9"/>
+            <circle id="pad-y" class="pad-face" cx="202" cy="62" r="7"/>
+            <circle id="pad-b" class="pad-face" cx="220" cy="80" r="7"/>
+            <circle id="pad-a" class="pad-face" cx="202" cy="98" r="7"/>
+            <circle id="pad-x" class="pad-face" cx="184" cy="80" r="7"/>
+            <text class="pad-face-label" x="202" y="65">Y</text>
+            <text class="pad-face-label" x="220" y="83">B</text>
+            <text class="pad-face-label" x="202" y="101">A</text>
+            <text class="pad-face-label" x="184" y="83">X</text>
+          </svg>
+          <p id="drive-block">Take control, arm, then hold a trigger or bumper to drive.</p>
           <div class="buttons">
             <button id="arm" class="primary">Arm</button>
             <button id="estop" class="danger">Disarm / stop</button>
           </div>
-          <p id="drive-help" class="safety-note">Hold the right bumper to send throttle and steering. Releasing it stops the rover.</p>
+          <p id="drive-help" class="safety-note">Take control, then arm (or press A). Left stick steers, RT forward, LT reverse. A trigger or bumper is the deadman. Releasing it stops the rover.</p>
         </section>
 
         <section class="panel detector-panel">
@@ -124,6 +149,7 @@
         </section>
       </aside>
 
+      <div class="lower-panels">
       <section class="panel map-panel">
         <div class="panel-heading">
           <h2>Field map</h2>
@@ -132,6 +158,18 @@
         <canvas id="map-view" aria-label="Local field map"></canvas>
         <p id="position">X 0.0 &middot; Y 0.0 &middot; heading 0&deg;</p>
       </section>
+      <section class="panel power-panel" aria-labelledby="power-heading">
+        <div class="panel-heading"><h2 id="power-heading">Power</h2><span id="power-status" class="badge neutral">NO DATA</span></div>
+        <div class="power-summary"><div><span>Battery draw</span><strong id="battery-watts">—</strong></div><div><span>Charge</span><strong id="battery-charge">—</strong></div></div>
+        <progress id="battery-level" max="100" aria-label="Battery charge" hidden></progress>
+        <svg id="power-history" viewBox="0 0 300 38" preserveAspectRatio="none" role="img" aria-label="Battery power over the last sixty seconds"><polyline id="power-history-line" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+        <div class="power-metrics"><span>Voltage <b id="battery-voltage">—</b></span><span>Current <b id="battery-current">—</b></span><span>Temperature <b id="battery-temperature">—</b></span><span>Cell spread <b id="battery-cells">—</b></span></div>
+        <div class="power-subheading">ESC <span id="esc-status">No telemetry</span></div>
+        <div id="esc-readings" class="power-esc">Waiting for ESC telemetry</div>
+        <div class="power-subheading">Arm servo <span id="power-arm">No telemetry</span></div>
+        <p class="power-note">Battery watts = V × A · negative draw means charging. ESC and arm readings are separate, not added to battery draw.</p>
+      </section>
+      </div>
     </section>
   </main>
 
@@ -147,7 +185,7 @@
       <nav class="settings-tabs" aria-label="Settings sections" role="tablist">
         <button type="button" class="settings-tab active" role="tab" aria-selected="true" aria-controls="settings-input" data-settings-tab="input">Controls</button>
         <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-cameras" data-settings-tab="cameras">Cameras</button>
-        <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-connection" data-settings-tab="connection">Connection</button>
+        <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-arm" data-settings-tab="arm">Arm calibration</button>
       </nav>
       <section id="settings-input" class="settings-panel active" role="tabpanel" data-settings-panel="input">
       <label for="control-source">Control source</label>
@@ -155,6 +193,12 @@
         <option value="controller">Xbox / standard gamepad</option>
         <option value="wheel">Steering wheel</option>
         <option value="keyboard">WASD keyboard</option>
+      </select>
+      <label for="pad-mapping">Controller mapping</label>
+      <select id="pad-mapping">
+        <option value="auto">Auto (standard or Xbox 360)</option>
+        <option value="standard">Standard gamepad</option>
+        <option value="xbox360">Xbox 360 (Linux)</option>
       </select>
       <label for="steering-sensitivity">Steering sensitivity <output id="sensitivity-value">100%</output></label>
       <input id="steering-sensitivity" type="range" min="50" max="150" value="100" step="5">
@@ -175,7 +219,7 @@
       <div id="key-preview" class="key-preview" aria-label="Keyboard input preview"></div>
       <div class="input-preview">
         <svg viewBox="0 0 160 160" role="img" aria-label="Steering input preview"><g id="steering-preview" transform="rotate(0 80 80)"><circle cx="80" cy="80" r="65"/><path d="M15 80 H145 M80 80 V145 M80 15 V35"/><circle cx="80" cy="80" r="16"/></g></svg>
-        <div><h3>Mapped input</h3><pre id="mapped-input"></pre><p class="dialog-help">Preview before drive gating and smoothing.</p></div>
+        <div><h3>Mapped input</h3><pre id="mapped-input"></pre><p class="dialog-help">Live input preview. WASD ramps up and recenters smoothly; releasing Shift stops immediately.</p></div>
       </div>
       <h3>Raw browser input</h3>
       <div id="raw-axes" class="raw-axes"></div>
@@ -185,21 +229,111 @@
         <p class="dialog-help"><a href="https://googlechrome.github.io/samples/gamepad-demo/" target="_blank" rel="noopener">Chrome Gamepad tester</a> · <a href="https://github.com/GoogleChrome/samples/tree/gh-pages/gamepad-demo" target="_blank" rel="noopener">GitHub sample</a> · <a href="https://developer.chrome.com/docs/capabilities/hid" target="_blank" rel="noopener">Chrome WebHID documentation</a></p>
       </details>
       </section>
+      <section id="settings-arm" class="settings-panel" role="tabpanel" data-settings-panel="arm" hidden>
+        <h3>Arm control &amp; calibration</h3>
+        <p id="arm-feedback" class="arm-feedback" role="status" aria-live="polite">Ready. Enable jogging, then hold an arrow to move.</p>
+        <div class="arm-workbench">
+          <div class="arm-control-panel">
+            <h4>Jog controls</h4>
+            <button id="arm-take-control" type="button">Take control for calibration</button>
+            <p id="arm-calibration-access" class="dialog-help" role="status"></p>
+            <div class="arm-selection"><label for="arm-servo-id">Servo ID</label>
+              <select id="arm-servo-id"><option value="">Scanning for servos…</option></select>
+              <button type="button" id="arm-select-id">Select servo</button>
+            </div>
+            <div class="arm-enable-controls">
+              <button type="button" id="arm-calibration-enable">Enable jogging</button>
+              <button type="button" id="arm-calibration-stop" class="danger">Stop / release torque</button>
+            </div>
+            <div class="arm-jog-controls">
+              <button type="button" id="arm-jog-left">← Hold left</button>
+              <button type="button" id="arm-jog-right">Hold right →</button>
+            </div>
+            <div class="arm-enable-controls">
+              <label>Jog speed (°/s) <input id="arm-jog-speed" type="number" step="any" value="2" required></label>
+            </div>
+            <label for="arm-position-slider">Target position <output id="arm-position-label">—</output></label>
+            <input id="arm-position-slider" type="range" min="0" max="4095" step="1" value="0" disabled>
+            <p id="arm-jog-status" class="arm-jog-status" role="status">Jogging disabled</p>
+            <p class="dialog-help">Hold left or right to jog at the selected speed; release to stop. The slider commands its target at full servo speed. Saved limits always apply.</p>
+            <p class="dialog-help">Support the arm: stopping releases torque. PX4 status must remain 4.</p>
+            <details class="arm-help"><summary>Position units and calibration help</summary>
+              <p>The angle is the servo shaft position, not its angle to the ground. 4096 raw ticks = 360°. Left decreases the angle; mounting may reverse physical direction.</p>
+              <p>With clear space and the linkage supported, jog to a safe position, release, and record it below. Leave clearance from mechanical stops. Recording does not move the servo.</p>
+              <p>RC override is allowed for the arm. Vehicle driving is blocked during calibration. Selecting another servo requires website controls to be disarmed.</p>
+            </details>
+          </div>
+          <div class="arm-telemetry-panel">
+            <table class="arm-table" id="arm-telemetry"><caption>Live servo telemetry</caption><tbody>
+              <tr><th scope="row">Driver</th><td id="arm-servo-status">Waiting for driver</td></tr>
+              <tr><th scope="row">Position</th><td id="arm-servo-position">—</td></tr>
+              <tr><th scope="row">Goal position</th><td id="arm-goal">—</td></tr>
+              <tr><th scope="row">Torque enabled</th><td id="arm-torque">—</td></tr>
+              <tr><th scope="row">Estimated load</th><td id="arm-load">—</td></tr>
+              <tr><th scope="row">Torque limit</th><td id="arm-torque-limit">—</td></tr>
+              <tr><th scope="row">Maximum torque setting</th><td id="arm-max-torque">—</td></tr>
+              <tr><th scope="row">Current</th><td id="arm-current">—</td></tr>
+              <tr><th scope="row">Speed / limit</th><td id="arm-speed">—</td></tr>
+              <tr><th scope="row">Moving</th><td id="arm-moving">—</td></tr>
+              <tr><th scope="row">Voltage / temperature</th><td id="arm-power">—</td></tr>
+              <tr><th scope="row">Model / firmware</th><td id="arm-model">—</td></tr>
+              <tr><th scope="row">PX4 permission</th><td id="arm-px4">—</td></tr>
+            </tbody></table>
+            <p id="arm-servo-details" class="dialog-help"></p>
+            <p class="dialog-help">Load % is the servo’s estimate, not measured torque. Missing telemetry is shown as —.</p>
+          </div>
+        </div>
+        <table class="arm-table arm-points-table"><caption>Calibration limits</caption>
+          <thead><tr><th scope="col">Limit</th><th scope="col">Recorded angle</th><th scope="col">Record</th><th scope="col">Test saved limit</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Minimum</th><td><output id="arm-recorded-minimum">—</output></td><td><button type="button" id="arm-capture-minimum">Record here</button></td><td><button type="button" id="arm-move-minimum">Hold to minimum</button></td></tr>
+            <tr><th scope="row">Centre</th><td><output id="arm-recorded-center">—</output></td><td><button type="button" id="arm-capture-center">Record here</button></td><td><button type="button" id="arm-move-center">Hold to centre</button></td></tr>
+            <tr><th scope="row">Maximum</th><td><output id="arm-recorded-maximum">—</output></td><td><button type="button" id="arm-capture-maximum">Record here</button></td><td><button type="button" id="arm-move-maximum">Hold to maximum</button></td></tr>
+          </tbody>
+        </table>
+        <button type="button" id="arm-apply-limits">Apply recorded limits</button>
+        <details class="arm-help"><summary>Launch settings (save calibration)</summary>
+          <p class="dialog-help">Copy these defaults into operator.launch.xml to keep the limits after restart.</p>
+          <textarea id="arm-launch-xml" aria-label="Saved launch settings" rows="8" readonly spellcheck="false"></textarea>
+        </details>
+      </section>
       <section id="settings-cameras" class="settings-panel" role="tabpanel" data-settings-panel="cameras" hidden>
         <div class="settings-section-heading">
           <div>
             <h3>Camera previews</h3>
-            <p class="dialog-help">Assign a Raspberry Pi ROS camera or a camera connected directly to this browser.</p>
+            <p class="dialog-help">Preview each selection and adjust its orientation. Rotation applies to this browser’s view and is saved automatically.</p>
           </div>
           <button id="refresh-cameras" type="button" class="quiet">Allow laptop cameras</button>
         </div>
-        <div class="mapping-grid">
-          <label for="forward-camera-source">Main preview
+        <div class="camera-cards">
+          <article class="camera-card">
+            <div class="camera-card-heading"><h3>Main camera</h3><span id="forward-preview-state" class="camera-state">Waiting</span></div>
+            <label for="forward-camera-source">Camera source</label>
             <select id="forward-camera-source"><option value="virtual">Virtual forward camera</option></select>
-          </label>
-          <label for="aux-camera-source">Inset preview
+            <div class="camera-settings-preview"><canvas id="forward-settings-preview" width="640" height="360" aria-label="Main camera live preview"></canvas><p id="forward-preview-empty">Waiting for camera</p></div>
+            <div class="camera-actions"><button type="button" id="forward-rotate">Rotate 90°</button><output id="forward-rotation">0°</output><button type="button" id="forward-camera-retry" class="quiet">Reconnect</button></div>
+            <dl class="camera-stats">
+              <div><dt>Resolution</dt><dd id="forward-dimensions">—</dd></div>
+              <div><dt>Frame rate</dt><dd id="forward-fps">—</dd></div>
+              <div><dt>Source frame age</dt><dd id="forward-age">—</dd></div>
+              <div><dt>Source</dt><dd id="forward-source-kind">—</dd></div>
+            </dl>
+            <p id="forward-source-detail" class="camera-source-detail"></p>
+          </article>
+          <article class="camera-card">
+            <div class="camera-card-heading"><h3>Inset camera</h3><span id="auxiliary-preview-state" class="camera-state">Waiting</span></div>
+            <label for="aux-camera-source">Camera source</label>
             <select id="aux-camera-source"><option value="off">Off</option></select>
-          </label>
+            <div class="camera-settings-preview"><canvas id="auxiliary-settings-preview" width="640" height="360" aria-label="Inset camera live preview"></canvas><p id="auxiliary-preview-empty">Waiting for camera</p></div>
+            <div class="camera-actions"><button type="button" id="auxiliary-rotate">Rotate 90°</button><output id="auxiliary-rotation">0°</output><button type="button" id="auxiliary-camera-retry" class="quiet">Reconnect</button></div>
+            <dl class="camera-stats">
+              <div><dt>Resolution</dt><dd id="auxiliary-dimensions">—</dd></div>
+              <div><dt>Frame rate</dt><dd id="auxiliary-fps">—</dd></div>
+              <div><dt>Source frame age</dt><dd id="auxiliary-age">—</dd></div>
+              <div><dt>Source</dt><dd id="auxiliary-source-kind">—</dd></div>
+            </dl>
+            <p id="auxiliary-source-detail" class="camera-source-detail"></p>
+          </article>
         </div>
         <p id="camera-source-status" class="dialog-help">Checking camera sources…</p>
         <div class="source-help">
@@ -209,15 +343,11 @@
           <span>Require browser permission and HTTPS or localhost.</span>
         </div>
       </section>
-      <section id="settings-connection" class="settings-panel" role="tabpanel" data-settings-panel="connection" hidden>
-        <h3>Raspberry Pi connection</h3>
-        <p id="settings-connection-state" class="connection-summary">Connecting…</p>
-        <p class="dialog-help">The dashboard reconnects automatically. If the gateway or ROS launch stops, controls are disabled and a disconnect screen appears.</p>
-        <button id="settings-retry-connection" type="button" class="primary">Retry connection</button>
-      </section>
+      <p class="dialog-help">Pad on this browser: Gamepad API needs http://localhost or HTTPS. Pad on the SVEA: joy_node publishes /joy and the gateway drives from that, so a LAN http:// address still works. Auto uses the browser standard mapping when the pad reports it, otherwise Linux Xbox 360 (triggers on axes). Left stick steers, RT forward, LT reverse, LB/RB deadman. Keyboard: click the forward camera, then WASD while holding Shift.</p>
     </form>
   </dialog>
 
+  <script src="/assets/keydrown-1.3.0.js"></script>
   <script src="/assets/app.js"></script>
 </body>
 </html>

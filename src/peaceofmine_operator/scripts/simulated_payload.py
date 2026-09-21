@@ -8,10 +8,14 @@ real drivers does not touch the gateway or the dashboard.
 from __future__ import annotations
 
 import math
+import signal
+import threading
+import time
 
 import rclpy
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool, Float32
 
 
@@ -46,7 +50,10 @@ class SimulatedPayload(Node):
         self._fixture_offset = float(self.get_parameter('fixture_angle_offset_deg').value)
         self._fixture_half_angle = float(self.get_parameter('fixture_sweep_half_angle_deg').value)
         self._fixture_angle = self._fixture_offset
-        self._fixture_sweep_enabled = True
+        self._fixture_sweep_enabled = False
+        self._permission_at = 0.0
+        self._permission = False
+        self.create_subscription(Bool, 'operator/actuation_enabled', self._permission_cb, 1)
         self._fixture_sweep_speed = float(self.get_parameter('fixture_sweep_speed_deg_s').value)
         self._fixture_sweep_direction = 1.0
 
@@ -83,6 +90,13 @@ class SimulatedPayload(Node):
             1.0 - 2.0 * (orientation.y ** 2 + orientation.z ** 2))
         self._speed = message.twist.twist.linear.x
 
+    def _permission_cb(self, message):
+        self._permission_at = time.monotonic()
+        self._permission = bool(message.data)
+        if not self._permission:
+            self._fixture_sweep_enabled = False
+            self._target_depth = self._depth
+
     def _probe_target(self, message: Float32) -> None:
         self._target_depth = max(0.0, min(self._max_depth, float(message.data)))
 
@@ -96,6 +110,9 @@ class SimulatedPayload(Node):
         # The operator starts and stops the sweep; it scans +/- 45 degrees
         # around the forward-arm offset whenever it is enabled, regardless of
         # whether the rover is moving.
+        if not self._permission or time.monotonic() - self._permission_at > .3:
+            self._fixture_sweep_enabled = False
+            self._target_depth = self._depth
         if self._fixture_sweep_enabled:
             self._fixture_angle += self._fixture_sweep_direction * self._fixture_sweep_speed * 0.05
             lower, upper = self._fixture_offset - self._fixture_half_angle, self._fixture_offset + self._fixture_half_angle
@@ -137,16 +154,20 @@ class SimulatedPayload(Node):
 
 
 def main() -> None:
-    rclpy.init()
-    node = SimulatedPayload()
+    stop = threading.Event()
+    # Keep this handler through interpreter exit: launch may forward SIGINT twice.
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.set())
+    node = None
     try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
+        rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+        node = SimulatedPayload()
+        while not stop.is_set():
+            rclpy.spin_once(node, timeout_sec=0.05)
     finally:
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        if node is not None:
+            node.destroy_node()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

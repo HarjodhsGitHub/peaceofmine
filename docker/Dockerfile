@@ -41,3 +41,7 @@ rosdep install \
     -qry
 colcon build --symlink-install
 EOF
+
+# Catch broken base-image Python dependencies before shipping a GUI that
+# crashes at startup. Run after rosdep has installed system packages too.
+RUN python3 -c "from aiohttp import web; import aiodns; assert callable(aiodns.DNSResolver)"

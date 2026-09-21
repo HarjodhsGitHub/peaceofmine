@@ -86,12 +86,25 @@ take or steal control at any time; ownership transfers immediately, the
 previous owner becomes a spectator, and the gateway disarms so the new owner
 must arm before sending motion.
 
-The default controller mapping is the browser `standard` mapping: left stick
-steers, right trigger drives forward, left trigger reverses, and the right
-bumper is the deadman. For keyboard driving, choose **WASD keyboard** in
-Settings, click the forward camera to focus it, then hold Shift while using
-WASD. Both input paths share the same response smoothing and publish drive
-commands at 20 Hz.
+Plug the Xbox 360 (or another gamepad) into the computer that is showing this
+dashboard, then press any button if the Drive panel still says no controller
+is connected. Chrome often ignores a pad until that first press.
+
+The default **Auto** mapping uses the browser `standard` layout when the pad
+reports it: left stick steers, right trigger drives forward, left trigger
+reverses, and a trigger or bumper is the deadman. An Xbox 360 on Linux often
+reports an empty mapping and puts the triggers on axes; Auto then uses that
+Xbox 360 layout. Settings → **Controller mapping** can force Standard or
+Xbox 360 (Linux) if the steer/throttle meters do not follow the pad. For
+keyboard driving, choose **WASD keyboard** in Settings, click the forward
+camera to focus it, then hold Shift while using WASD. Gamepad sticks map linearly (0.12 deadzone, no extra smoothing). WASD
+throttle and steering ramp progressively. Both send changed commands promptly,
+plus a 20 Hz keepalive while moving.
+
+Browser gamepad input on a non-localhost URL requires HTTPS (`tls_cert` and
+`tls_key`). Alternatively, connect the Xbox to the SVEA USB and launch with
+`use_joy:=true`: ROS joystick input works over plain HTTP and takes priority
+over browser drive commands while the joystick is live.
 
 The gateway publishes `cmd_vel` only while a lease is held, armed, and the
 deadman is down. It publishes zeros for 0.5 s after that stops and then goes
@@ -121,8 +134,11 @@ reads them from telemetry, so the browser holds no copy of its own.
 
 The gateway commands `cmd_vel`, which `svea_examples/twist_consumer.py`
 consumes, so the simulator's `sim_svea.py` and the real PX4 path share one
-drive interface. A real camera replaces the virtual canvas with a WebRTC
-`MediaStream` without changing telemetry or controls.
+drive interface. Network cameras replace the virtual canvas with a same-origin MJPEG preview;
+laptop cameras use a local `MediaStream`. Neither changes telemetry or controls.
+The gateway shares one upstream encoder per topic and retains only the newest
+queued frame per viewer. Camera badges show source FPS, source frame age and
+WebSocket RTT; these are not camera-to-display latency measurements.
 
 ## Known simulator artifacts
 
@@ -138,9 +154,11 @@ arming again. Losing browser focus or hiding the page also stops and disarms.
 
 Choose one of three schemes:
 
-- **Xbox / standard gamepad**: explicitly select a browser device with the
-  `standard` mapping. Left stick steers, RT drives forward, LT reverses, RB is
-  the deadman. Non-standard mappings are blocked in this scheme.
+- **Xbox / standard gamepad**: the dashboard selects an active browser pad
+  automatically; Settings can select a specific device and override the
+  automatically detected `standard` or Xbox 360 mapping.
+  Left stick steers, RT drives forward, LT reverses, and either trigger or
+  bumper acts as the deadman. A arms when you own control.
 - **WASD keyboard**: focus the test button to preview keys, or close Settings
   and focus the forward camera to drive while holding Shift.
 - **Steering wheel**: select the wheel, inspect raw axes and buttons, then set
@@ -177,3 +195,37 @@ python3 -m unittest discover -s src/peaceofmine_operator/test -v
 The test uses synthetic devices in headless Chromium; actual G27 enumeration,
 axis mapping, and ROS simulation still need verification in the deployment
 environment before hardware driving.
+
+See [the UI audit](../../docs/development/operator-ui-audit.md) for fixes,
+validation results, and the running nils simulation configuration.
+
+### Camera settings and keyboard response
+
+Settings → Cameras shows the current main and inset selections using the
+existing capture streams. Each card includes a live preview, source details,
+resolution, and source frame age for ROS cameras. FPS is labeled as measured
+source FPS for ROS, configured capture FPS for browser cameras, or the rendering
+target for the virtual camera. Unavailable metadata is shown as a dash.
+Rotate changes the local view by 90° and saves the orientation independently for
+each slot; it does not modify the camera sensor or steering directions.
+
+WASD uses bundled Keydrown 1.3.0 for held-key input. While Shift is held,
+throttle reaches full scale in about 0.63 seconds and steering in about 0.31
+seconds. Releasing WASD ramps throttle down and recenters steering. Releasing
+Shift, losing focus, disconnecting, or opening Settings bypasses the ramp and
+stops immediately. The Settings keyboard test previews the same ramp without
+sending motion. Xbox and wheel mappings are unchanged. Connection status and
+retry remain in the main dashboard; the redundant Connection settings tab is removed.
+
+### Arm servo and RC authority
+
+Servo motion requires fresh connected PX4 `system_status == 4`; RC override does
+not block servos. Vehicle drive additionally requires RC ROS authority and arming.
+The header distinguishes ROS mode, RC override, kill, disarmed, and unknown/lost
+status. Settings → Arm calibration records safe limits and exports launch XML.
+See [the safety audit and setup](../../docs/development/arm-servo-safety.md) before
+enabling the hardware driver. Safety uses existing `mavros/state` and `mavros/rc/in`;
+no firmware changes are required. Missing or stale MAVROS state leaves actuation locked.
+The XML defaults to hardware mode with the verified FTDI adapter and servo ID 1 enabled.
+Use `is_sim:=true` for simulation; this excludes the hardware arm driver.
+Servo limits remain unset until calibration.

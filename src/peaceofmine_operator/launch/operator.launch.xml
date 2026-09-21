@@ -3,10 +3,18 @@
   <!-- Edit these defaults for this setup, then run:
        ros2 launch peaceofmine_operator operator.launch.xml
        Stop the previous launch before switching vehicle modes. -->
+  <arg name="use_arm_servo" default="true"/>
+  <arg name="arm_serial_port" default="auto"/>
+  <arg name="arm_servo_id" default="-1"/>
+  <!-- Record mechanical limits in Settings before preset moves or sweeping. -->
+  <arg name="arm_minimum" default="-1"/>
+  <arg name="arm_center" default="-1"/>
+  <arg name="arm_maximum" default="-1"/>
+  <arg name="arm_speed" default="20"/>
   <arg name="name" default="self"/>
-  <arg name="is_sim" default="true"/>
-  <!-- Payload simulation follows the vehicle by default. False means external
-       payload drivers must be launched separately; none are bundled here. -->
+  <arg name="is_sim" default="false"/>
+  <!-- Payload simulation follows the vehicle by default. Hardware arm launch
+       is controlled by use_arm_servo; other payload drivers launch separately. -->
   <arg name="simulate_payload" default="$(var is_sim)"/>
   <arg name="host" default="0.0.0.0"/>
   <arg name="port" default="8080"/>
@@ -43,7 +51,7 @@
   <arg name="auxiliary_camera_pixel_format" default="yuyv2rgb"/>
   <arg name="camera_stream_port" default="8081"/>
 
-  <include file="$(find-pkg-share svea_core)/launch/svea.launch.py">
+  <include file="$(find-pkg-share peaceofmine_operator)/launch/operator_vehicle.launch.py">
     <arg name="name" value="$(var name)"/>
     <arg name="is_sim" value="$(var is_sim)"/>
     <arg name="initial_pose_x" value="$(var initial_pose_x)"/>
@@ -57,8 +65,21 @@
     <arg name="use_rtk" value="$(var use_rtk)"/>
   </include>
 
+
   <group>
     <push_ros_namespace namespace="$(var name)"/>
+    <group unless="$(var is_sim)">
+    <group unless="$(var simulate_payload)">
+    <include if="$(var use_arm_servo)" file="$(find-pkg-share peaceofmine_operator)/launch/arm_servo.launch.xml">
+      <arg name="serial_port" value="$(var arm_serial_port)"/>
+      <arg name="servo_id" value="$(var arm_servo_id)"/>
+      <arg name="minimum" value="$(var arm_minimum)"/>
+      <arg name="center" value="$(var arm_center)"/>
+      <arg name="maximum" value="$(var arm_maximum)"/>
+      <arg name="speed" value="$(var arm_speed)"/>
+    </include>
+    </group>
+    </group>
     <node pkg="svea_examples" exec="twist_consumer.py" name="operator_twist_consumer" output="screen">
       <param name="twist_top" value="cmd_vel"/>
       <param name="max_velocity" value="$(var max_velocity)"/>
@@ -69,6 +90,7 @@
       <param name="fixture_angle_offset_deg" value="$(var fixture_angle_offset_deg)"/>
     </node>
     <node pkg="peaceofmine_operator" exec="operator_gateway.py" name="operator_gateway" output="screen">
+      <param name="safety_simulation" value="$(var is_sim)"/>
       <param name="host" value="$(var host)"/>
       <param name="port" value="$(var port)"/>
       <param name="tls_cert" value="$(var tls_cert)" type="str"/>

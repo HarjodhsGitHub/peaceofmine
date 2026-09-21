@@ -9,6 +9,7 @@ independent safety layers.
 from __future__ import annotations
 
 import asyncio
+import signal
 import contextlib
 import json
 import math
@@ -28,14 +29,20 @@ except ImportError as error:  # pragma: no cover - depends on target image
     raise RuntimeError('aiohttp is required; install the workspace requirements first.') from error
 
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Twist
+from mavros_msgs.msg import State, RCIn
 from nav_msgs.msg import Odometry
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import CameraInfo
-from std_msgs.msg import Bool, Float32
+from sensor_msgs.msg import CameraInfo, BatteryState
+from sensor_msgs.msg import Joy
+from std_msgs.msg import Bool, Float32, String
+from peaceofmine_operator.rc_safety import RcSafety
+from peaceofmine_operator.power import PowerTelemetry
+from peaceofmine_operator.camera_stream import CameraStreams
 
 # Authoritative actuator limits. The dashboard reads these from telemetry so
 # the browser never carries its own copy.
@@ -61,11 +68,13 @@ STOP_TAIL_S = 0.5
 class OperatorGateway(Node):
     def __init__(self) -> None:
         super().__init__('operator_gateway')
+        self.declare_parameter('safety_simulation', False)
         self.declare_parameter('host', '0.0.0.0')
         self.declare_parameter('port', 8080)
         self.declare_parameter('tls_cert', '')
         self.declare_parameter('tls_key', '')
         self.declare_parameter('cmd_vel_topic', 'cmd_vel')
+        self.declare_parameter('joy_topic', 'joy')
         self.declare_parameter('odometry_topic', 'odometry/local')
         self.declare_parameter('detector_signal_topic', 'detector/signal_ratio')
         self.declare_parameter('probe_depth_topic', 'probe/depth_mm')
@@ -89,15 +98,52 @@ class OperatorGateway(Node):
         self.declare_parameter('max_probe_depth_mm', 110.0)
         self.declare_parameter('detector_threshold_ratio', 0.65)
 
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._power = PowerTelemetry()
+        self.create_subscription(BatteryState, 'mavros/battery', self._battery_cb, qos_profile_sensor_data)
+        # PX4 tunnel messages are optional on installations without px4_msgs.
+        try:
+            from px4_msgs.msg import EscStatus
+        except ImportError:
+            pass
+        else:
+            self.create_subscription(EscStatus, 'px4/uorb/esc_status', self._esc_cb, qos_profile_sensor_data)
+        self._shutting_down = False
+        self._rc_safety = RcSafety(bool(self.get_parameter('safety_simulation').value), clock=lambda: time.monotonic())
+        self._arm_state = {'connected': False, 'reason': 'Arm driver not running'}
+        self._arm_state_at = 0.0
+        self._permission_pub = self.create_publisher(Bool, 'operator/actuation_enabled', 1)
+        self._arm_command_pub = self.create_publisher(String, 'arm/command', 1)
+        self.create_subscription(State, 'mavros/state', self._state_cb, 10)
+        self.create_subscription(RCIn, 'mavros/rc/in', self._rc_cb, 10)
+        self.create_subscription(String, 'arm/state', self._arm_state_cb, 1)
         self._lease: web.WebSocketResponse | None = None
         # Do not call this `_clients`: rclpy Node uses that private attribute
         # for ROS service clients while its executor spins.
         self._connected_sockets: set[web.WebSocketResponse] = set()
+        self._calibrating = False
         self._armed = False
         self._deadman = False
         self._command = (0.0, 0.0)
         self._last_command = 0.0
+        self._last_joy = 0.0
+        self._joy_prev_a = False
+        self._trigger_seen = {'lt': False, 'rt': False}
+        self._joy = {
+            'seen': False,
+            'age_ms': None,
+            'stick_x': 0.0,
+            'stick_y': 0.0,
+            'lt': 0.0,
+            'rt': 0.0,
+            'lb': False,
+            'rb': False,
+            'a': False,
+            'b': False,
+            'x': False,
+            'y': False,
+            'deadman': False,
+        }
         self._stop_until = 0.0
         self._detector = 0.0
         self._probe_depth = 0.0
@@ -140,8 +186,66 @@ class OperatorGateway(Node):
         # this Python gateway to raw RGB images caused costly full-frame DDS
         # copies and starved both the dashboard and MJPEG proxy.
         self.create_timer(1.0, self._discover_cameras)
+        self.create_subscription(Joy, str(self.get_parameter('joy_topic').value), self._joy_cb, 10)
         self.create_timer(0.05, self._drive_watchdog)
         self._discover_cameras()
+
+    def _battery_cb(self, message):
+        with self._lock:
+            self._power.update_battery(message)
+
+    def _esc_cb(self, message):
+        with self._lock:
+            self._power.update_esc(message)
+
+    def _arm_state_cb(self, message):
+        try:
+            value = json.loads(message.data)
+            if isinstance(value, dict):
+                with self._lock:
+                    self._arm_state = value
+                    self._arm_state_at = time.monotonic()
+        except (ValueError, TypeError):
+            pass
+
+    def _state_cb(self, message):
+        with self._lock:
+            self._rc_safety.update_state(message)
+            self._enforce_safety_locked()
+        self._emit_cmd_vel()
+
+    def _rc_cb(self, message):
+        with self._lock:
+            self._rc_safety.update_rc(message)
+            self._enforce_safety_locked()
+        self._emit_cmd_vel()
+
+    def _disable_actuation_locked(self):
+        self._calibrating = False
+        self._armed = False
+        self._deadman = False
+        self._command = (0.0, 0.0)
+        self._permission_pub.publish(Bool(data=False))
+        self._sweep_enabled_pub.publish(Bool(data=False))
+        self._arm_command_pub.publish(String(data='{"action":"stop"}'))
+
+    def begin_shutdown(self):
+        """Revoke control before closing transports or invalidating ROS publishers."""
+        with self._lock:
+            self._shutting_down = True
+            self._lease = None
+            self._disable_actuation_locked()
+            self._stop_until = time.monotonic() + STOP_TAIL_S
+            self._publish_twist(0.0, 0.0)
+
+    def _enforce_safety_locked(self):
+        safety = self._rc_safety.snapshot()
+        if not safety['servo_allowed']:
+            self._disable_actuation_locked()
+        elif not safety['allowed']:
+            self._deadman = False
+            self._command = (0.0, 0.0)
+        return safety
 
     ## ROS callbacks ##
 
@@ -202,10 +306,12 @@ class OperatorGateway(Node):
         with self._lock:
             self._probe_fault = bool(message.data)
 
-    def _camera_frame_cb(self, camera: str) -> None:
+    def _camera_frame_cb(self, camera: str, message: CameraInfo) -> None:
         now = time.monotonic()
         with self._lock:
             sample = self._camera_frames[camera]
+            sample['width'] = int(message.width)
+            sample['height'] = int(message.height)
             sample['last_frame'] = now
             sample['window_frames'] += 1
             elapsed = now - sample['window_started']
@@ -232,13 +338,81 @@ class OperatorGateway(Node):
                 }
             if camera_id not in self._camera_subscriptions:
                 self._camera_subscriptions[camera_id] = self.create_subscription(
-                    CameraInfo, topic, lambda _, camera=camera_id: self._camera_frame_cb(camera),
+                    CameraInfo, topic, lambda message, camera=camera_id: self._camera_frame_cb(camera, message),
                     qos_profile_sensor_data)
 
-    def _drive_watchdog(self) -> None:
+    def _axis_trigger(self, key: str, axes: Any, index: int) -> float:
+        if index >= len(axes):
+            return 0.0
+        value = float(axes[index])
+        if not self._trigger_seen[key]:
+            if value == 0.0:
+                return 0.0
+            self._trigger_seen[key] = True
+        # joy_node inverts SDL axes: released is +1, pressed is -1.
+        return max(0.0, min(1.0, (1.0 - value) / 2.0))
+
+    @staticmethod
+    def _deadzone(value: float) -> float:
+        return 0.0 if abs(value) < 0.12 else value
+
+    @staticmethod
+    def _finite(value: float) -> float:
+        return value if math.isfinite(value) else 0.0
+
+    def _parse_xbox_joy(self, message: Joy) -> dict[str, Any]:
+        axes = message.axes
+        buttons = message.buttons
+
+        def pressed(index: int) -> bool:
+            return index < len(buttons) and bool(buttons[index])
+
+        # ROS Xbox buttons 6/7 are Back/Start, not browser triggers.
+        left_trigger = self._axis_trigger('lt', axes, 2)
+        right_trigger = self._axis_trigger('rt', axes, 5)
+        stick_x = float(axes[0]) if axes else 0.0
+        stick_y = float(axes[1]) if len(axes) > 1 else 0.0
+        steering = self._deadzone(stick_x)
+        throttle = right_trigger - left_trigger
+        left_bumper = pressed(4)
+        right_bumper = pressed(5)
+        return {
+            'seen': True,
+            'age_ms': 0,
+            'stick_x': stick_x,
+            'stick_y': stick_y,
+            'lt': left_trigger,
+            'rt': right_trigger,
+            'lb': left_bumper,
+            'rb': right_bumper,
+            'a': pressed(0),
+            'b': pressed(1),
+            'x': pressed(2),
+            'y': pressed(3),
+            'deadman': left_bumper or right_bumper or abs(throttle) > 0.12,
+            'linear': throttle * self._max_velocity,
+            'angular': steering * self._max_yaw_rate,
+        }
+
+    def _apply_drive_locked(self, linear: float, angular: float, deadman: bool) -> None:
+        self._deadman = deadman
+        self._command = (
+            max(-self._max_velocity, min(self._max_velocity, self._finite(linear))),
+            max(-self._max_yaw_rate, min(self._max_yaw_rate, self._finite(angular))),
+        )
+        self._last_command = time.monotonic()
+
+    def _publish_twist(self, linear: float, angular: float) -> None:
+        command = Twist()
+        command.linear.x = linear
+        command.angular.z = angular
+        self._cmd_pub.publish(command)
+
+    def _emit_cmd_vel(self) -> None:
         now = time.monotonic()
         with self._lock:
-            active = (self._lease is not None
+            safety = self._enforce_safety_locked()
+            active = (safety['allowed'] and not self._calibrating and self._lease is not None
                       and self._armed
                       and self._deadman
                       and now - self._last_command <= self._timeout)
@@ -249,10 +423,35 @@ class OperatorGateway(Node):
                 linear, angular = 0.0, 0.0
             else:
                 return
-        command = Twist()
-        command.linear.x = linear
-        command.angular.z = angular
-        self._cmd_pub.publish(command)
+            self._publish_twist(linear, angular)
+
+    def _joy_cb(self, message: Joy) -> None:
+        flush = False
+        with self._lock:
+            parsed = self._parse_xbox_joy(message)
+            self._joy = parsed
+            self._last_joy = time.monotonic()
+            if self._lease is None or self._calibrating or not self._enforce_safety_locked()['allowed']:
+                self._joy_prev_a = bool(parsed['a'])
+                return
+            if parsed['a'] and not self._joy_prev_a and not self._armed:
+                self._armed = True
+            self._joy_prev_a = bool(parsed['a'])
+            if not self._armed:
+                return
+            self._apply_drive_locked(float(parsed['linear']), float(parsed['angular']), bool(parsed['deadman']))
+            flush = True
+        if flush:
+            self._emit_cmd_vel()
+
+    def _joy_live(self, now: float) -> bool:
+        return self._last_joy > 0.0 and now - self._last_joy < 0.4
+
+    def _drive_watchdog(self) -> None:
+        with self._lock:
+            safety = self._enforce_safety_locked()
+            self._permission_pub.publish(Bool(data=bool(safety['servo_allowed'] and self._armed and self._lease is not None)))
+        self._emit_cmd_vel()
 
     ## Dashboard protocol ##
 
@@ -268,12 +467,32 @@ class OperatorGateway(Node):
                         'topic': sample['topic'],
                         'frame_age_ms': round((now - sample['last_frame']) * 1000),
                         'fps': round(sample['fps'], 1),
+                        'width': sample.get('width', 0),
+                        'height': sample.get('height', 0),
                     }
+            publishing = (self._rc_safety.snapshot()['allowed'] and not self._calibrating and self._lease is not None
+                          and self._armed
+                          and self._deadman
+                          and now - self._last_command <= self._timeout)
+            joy_live = self._joy_live(now)
+            joy = {**self._joy, 'seen': joy_live}
+            if self._last_joy:
+                joy['age_ms'] = round((now - self._last_joy) * 1000)
             return {
                 'type': 'state',
+                'power': self._power.snapshot(),
+                'safety': self._rc_safety.snapshot(),
+                'arm_servo': self._arm_state if time.monotonic() - self._arm_state_at < 1.0 else {'connected': False, 'reason': 'Arm driver unavailable'},
                 'drive': {
                     'armed': self._armed,
+                    'calibrating': self._calibrating,
                     'deadman': self._deadman,
+                    'publishing': publishing,
+                    'command_source': 'joy' if joy_live and publishing else ('browser' if publishing else 'none'),
+                    'joy': joy,
+                    'cmd_linear_x': self._command[0] if publishing else 0.0,
+                    'cmd_angular_z': self._command[1] if publishing else 0.0,
+                    'cmd_vel_topic': 'cmd_vel',
                     'timeout_ms': round(self._timeout * 1000),
                     'client_count': len(self._connected_sockets),
                     'control_owner_present': self._lease is not None,
@@ -319,50 +538,86 @@ class OperatorGateway(Node):
             self._connected_sockets.add(ws)
 
     def release(self, ws: web.WebSocketResponse) -> None:
+        dropped = False
         with self._lock:
             self._connected_sockets.discard(ws)
             if self._lease is ws:
+                dropped = True
+                self._disable_actuation_locked()
                 self._lease = None
                 self._armed = False
                 self._deadman = False
                 self._command = (0.0, 0.0)
+                self._joy_prev_a = False
+        if dropped:
+            self._emit_cmd_vel()
 
     def handle_command(self, ws: web.WebSocketResponse, payload: dict[str, Any]) -> dict[str, Any] | None:
         message_type = payload.get('type')
+        error: dict[str, Any] | None = None
+        flush_drive = False
         with self._lock:
+            if self._shutting_down:
+                return {'type': 'error', 'message': 'Operator gateway is shutting down.'}
+            safety = self._enforce_safety_locked()
             if message_type == 'take_control':
                 # Transferring a lease stops the rover; the new operator must
                 # consciously arm again before commands can take effect.
+                self._disable_actuation_locked()
                 self._lease = ws
                 self._armed = False
                 self._deadman = False
                 self._command = (0.0, 0.0)
-                return None
-            if self._lease is not ws:
-                return {'type': 'error', 'message': 'Spectator mode: take control before sending commands.'}
-            if message_type == 'arm':
+                flush_drive = True
+            elif self._lease is not ws:
+                error = {'type': 'error', 'message': 'Spectator mode: take control before sending commands.'}
+            elif message_type == 'arm_servo' and payload.get('action') in ('select', 'capture', 'configure', 'stop'):
+                if self._armed and payload.get('action') != 'stop' and not (self._calibrating and payload.get('action') in ('capture', 'configure')):
+                    return {'type': 'error', 'message': 'Disarm before changing calibration or servo ID.'}
+                command = {key: payload[key] for key in ('action', 'request_id', 'servo_id', 'point', 'minimum', 'center', 'maximum') if key in payload}
+                self._arm_command_pub.publish(String(data=json.dumps(command)))
+            elif message_type == 'drive' and not safety['allowed']:
+                return {'type': 'error', 'message': safety['reason']}
+            elif message_type not in ('disarm', 'estop') and not safety['servo_allowed']:
+                return {'type': 'error', 'message': self._rc_safety.servo_snapshot()['reason']}
+            elif message_type == 'arm':
+                self._calibrating = payload.get('calibration') is True
                 self._armed = True
+                flush_drive = True
             elif message_type in ('disarm', 'estop'):
+                self._disable_actuation_locked()
                 self._armed = False
                 self._deadman = False
                 self._command = (0.0, 0.0)
+                flush_drive = True
+            elif self._calibrating and message_type in ('drive', 'probe_target', 'sweep_enabled', 'sweep_speed'):
+                return {'type': 'error', 'message': 'Vehicle and probe motion are blocked during arm calibration.'}
             elif message_type == 'drive':
-                linear = float(payload.get('linear_x', 0.0))
-                angular = float(payload.get('angular_z', 0.0))
-                self._deadman = bool(payload.get('deadman', False))
-                self._command = (
-                    max(-self._max_velocity, min(self._max_velocity, linear)),
-                    max(-self._max_yaw_rate, min(self._max_yaw_rate, angular)),
-                )
-                self._last_command = time.monotonic()
+                # A live ROS pad on the SVEA owns the sticks so the browser
+                # Gamepad API is not required on http://<lan-ip>.
+                if not self._joy_live(time.monotonic()):
+                    self._apply_drive_locked(
+                        float(payload.get('linear_x', 0.0)),
+                        float(payload.get('angular_z', 0.0)),
+                        bool(payload.get('deadman', False)),
+                    )
+                    flush_drive = True
+            elif message_type in ('probe_target', 'sweep_enabled', 'sweep_speed', 'arm_servo') and not self._armed:
+                return {'type': 'error', 'message': 'Arm the website controls before actuating.'}
+            elif message_type == 'arm_servo':
+                if payload.get('action') in ('jog', 'position') and not self._calibrating:
+                    return {'type': 'error', 'message': 'Enable calibration before jogging.'}
+                command = {key: payload[key] for key in ('action', 'request_id', 'point', 'held', 'direction', 'position', 'speed_deg_s') if key in payload}
+                self._arm_command_pub.publish(String(data=json.dumps(command)))
             elif message_type == 'probe_target':
                 requested = float(payload.get('depth_mm', 0.0))
                 if abs(self._speed) > self._probe_speed_limit:
-                    return {'type': 'error', 'message': 'Probe motion is blocked while the rover is moving.'}
-                if self._probe_fault:
-                    return {'type': 'error', 'message': 'Probe motion is blocked by a probe fault.'}
-                self._probe_target = max(0.0, min(self._max_probe_depth, requested))
-                self._probe_pub.publish(Float32(data=self._probe_target))
+                    error = {'type': 'error', 'message': 'Probe motion is blocked while the rover is moving.'}
+                elif self._probe_fault:
+                    error = {'type': 'error', 'message': 'Probe motion is blocked by a probe fault.'}
+                else:
+                    self._probe_target = max(0.0, min(self._max_probe_depth, requested))
+                    self._probe_pub.publish(Float32(data=self._probe_target))
             elif message_type == 'sweep_enabled':
                 self._sweep_enabled_pub.publish(Bool(data=bool(payload.get('enabled', False))))
             elif message_type == 'sweep_speed':
@@ -370,8 +625,10 @@ class OperatorGateway(Node):
                             min(SWEEP_SPEED_MAX_DEG_S, float(payload.get('deg_s', 60.0))))
                 self._sweep_speed_pub.publish(Float32(data=speed))
             else:
-                return {'type': 'error', 'message': 'Unsupported operator command.'}
-        return None
+                error = {'type': 'error', 'message': 'Unsupported operator command.'}
+        if flush_drive:
+            self._emit_cmd_vel()
+        return error
 
 
 def dashboard_directory() -> Path:
@@ -381,7 +638,11 @@ def dashboard_directory() -> Path:
 def local_ipv4_addresses() -> list[str]:
     """Return non-loopback IPv4 addresses visible from this process."""
     addresses: set[str] = set()
-    for result in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+    try:
+        results = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except OSError:
+        return []  # LAN URL discovery must not prevent the dashboard starting.
+    for result in results:
         address = result[4][0]
         if not address.startswith('127.'):
             addresses.add(address)
@@ -418,6 +679,14 @@ def build_ssl_context(cert: str, key: str) -> ssl.SSLContext | None:
 def build_app(node: OperatorGateway) -> web.Application:
     app = web.Application()
     dashboard = dashboard_directory()
+    cameras = CameraStreams(str(node.get_parameter('camera_stream_base_url').value))
+    app.on_shutdown.append(cameras.close)
+
+    async def close_sockets(_app):
+        await asyncio.gather(*(ws.close(code=1001, message=b'Server shutting down')
+                               for ws in node.connected_sockets()))
+
+    app.on_shutdown.append(close_sockets)
 
     async def index_handler(_: web.Request) -> web.FileResponse:
         return web.FileResponse(dashboard / 'index.html', headers={'Cache-Control': 'no-store'})
@@ -427,7 +696,7 @@ def build_app(node: OperatorGateway) -> web.Application:
         # development, and aiohttp's generic static route refuses symlinks by
         # design, so serve this small explicit allow-list instead.
         filename = request.match_info['filename']
-        if filename not in {'app.js', 'style.css'}:
+        if filename not in {'app.js', 'style.css', 'keydrown-1.3.0.js'}:
             raise web.HTTPNotFound()
         return web.FileResponse(dashboard / filename, headers={'Cache-Control': 'no-store'})
 
@@ -436,36 +705,13 @@ def build_app(node: OperatorGateway) -> web.Application:
         if camera is None:
             raise web.HTTPNotFound()
         topic = camera['topic'].replace('/camera_info', '/image_raw')
-        base_url = str(node.get_parameter('camera_stream_base_url').value).rstrip('/')
-        timeout = aiohttp.ClientTimeout(total=None, sock_connect=4.0, sock_read=None)
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    f'{base_url}/stream',
-                    params={
-                        'topic': topic,
-                        'type': 'mjpeg',
-                        'quality': '60',
-                        'qos_profile': 'default',
-                    },
-                ) as upstream:
-                    if upstream.status != 200:
-                        raise web.HTTPBadGateway(text=f'Camera stream returned HTTP {upstream.status}.')
-                    response = web.StreamResponse(
-                        headers={
-                            'Content-Type': upstream.headers.get('Content-Type', 'multipart/x-mixed-replace'),
-                            'Cache-Control': 'no-store',
-                            'X-Accel-Buffering': 'no',
-                        })
-                    await response.prepare(request)
-                    async for chunk in upstream.content.iter_any():
-                        await response.write(chunk)
-                    return response
-        except (aiohttp.ClientError, asyncio.TimeoutError) as error:
-            raise web.HTTPBadGateway(text=f'Camera streaming service unavailable: {error}') from error
+        return await cameras.serve(request, topic)
 
     async def socket_handler(request: web.Request) -> web.WebSocketResponse:
-        ws = web.WebSocketResponse(heartbeat=10.0)
+        # Per-message deflate on the same socket as 20+ Hz drive commands
+        # costs CPU on the Pi and delays the event loop. LAN bandwidth is
+        # cheap; leave the frames uncompressed.
+        ws = web.WebSocketResponse(heartbeat=10.0, compress=False, timeout=0.5)
         await ws.prepare(request)
         node.connect_client(ws)
         try:
@@ -507,57 +753,68 @@ async def broadcast_telemetry(node: OperatorGateway) -> None:
         if not sockets:
             continue
         shared = node.snapshot()
+        drive = shared['drive']
         for ws in sockets:
             if ws.closed:
                 continue
-            message = {**shared, 'drive': {**shared['drive'], 'you_control_owner': node.owns_lease(ws)}}
+            drive['you_control_owner'] = node.owns_lease(ws)
             try:
-                await ws.send_json(message)
+                await ws.send_str(json.dumps(shared, separators=(',', ':')))
             except (ConnectionResetError, RuntimeError):
                 pass
 
 
-async def start_server(node: OperatorGateway) -> None:
+async def start_server(node: OperatorGateway, stop: threading.Event) -> None:
     runner = web.AppRunner(build_app(node), shutdown_timeout=1.0)
-    await runner.setup()
-
-    cert = str(node.get_parameter('tls_cert').value)
-    key = str(node.get_parameter('tls_key').value)
-    ssl_context = build_ssl_context(cert, key)
-    if ssl_context is None:
-        node.get_logger().warn('Dashboard is running without TLS; use TLS before remote controller operation.')
-
-    host = str(node.get_parameter('host').value)
-    port = int(node.get_parameter('port').value)
-    site = web.TCPSite(runner, host, port, ssl_context=ssl_context)
-    await site.start()
-    log_dashboard_urls(node, 'https' if ssl_context else 'http', host, port)
-
-    broadcaster = asyncio.create_task(broadcast_telemetry(node))
+    broadcaster = None
     try:
-        while rclpy.ok():
-            await asyncio.sleep(0.5)
+        await runner.setup()
+        cert = str(node.get_parameter('tls_cert').value)
+        key = str(node.get_parameter('tls_key').value)
+        ssl_context = build_ssl_context(cert, key)
+        if ssl_context is None:
+            node.get_logger().warn('Dashboard is running without TLS; use TLS before remote controller operation.')
+        host = str(node.get_parameter('host').value)
+        port = int(node.get_parameter('port').value)
+        site = web.TCPSite(runner, host, port, ssl_context=ssl_context)
+        await site.start()
+        log_dashboard_urls(node, 'https' if ssl_context else 'http', host, port)
+        broadcaster = asyncio.create_task(broadcast_telemetry(node))
+        while not stop.is_set():
+            await asyncio.sleep(0.05)
     finally:
-        broadcaster.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await broadcaster
+        node.begin_shutdown()
+        if broadcaster is not None:
+            broadcaster.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await broadcaster
+        # Keep ROS alive for the stop heartbeat while HTTP clients disconnect.
+        await asyncio.sleep(0.15)
         await runner.cleanup()
 
 
 def main() -> None:
-    rclpy.init()
-    node = OperatorGateway()
-    executor = MultiThreadedExecutor()
-    executor.add_node(node)
-    spinner = threading.Thread(target=executor.spin, daemon=True)
-    spinner.start()
+    stop = threading.Event()
+    # Keep this handler through interpreter exit: launch may forward SIGINT twice.
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.set())
+    node = executor = spinner = None
     try:
-        asyncio.run(start_server(node))
+        rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+        node = OperatorGateway()
+        executor = MultiThreadedExecutor()
+        executor.add_node(node)
+        spinner = threading.Thread(target=executor.spin, daemon=True)
+        spinner.start()
+        asyncio.run(start_server(node, stop))
     finally:
-        executor.shutdown(timeout_sec=2.0)
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        if executor is not None:
+            executor.shutdown()
+        if spinner is not None:
+            spinner.join()
+        if node is not None:
+            node.destroy_node()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

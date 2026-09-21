@@ -4,6 +4,8 @@ import json
 import os
 import re
 import struct
+import signal
+import threading
 import time
 from importlib import import_module
 from dataclasses import dataclass
@@ -11,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rosidl_runtime_py.set_message import set_message_fields
@@ -987,16 +990,20 @@ class Px4UorbTunnelNode(Node):
 
 
 def main(args=None) -> None:
-    rclpy.init(args=args)
-    node = Px4UorbTunnelNode()
+    stop = threading.Event()
+    # Keep the handler through process exit; launch can forward Ctrl-C twice.
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.set())
+    node = None
     try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
+        rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+        node = Px4UorbTunnelNode()
+        while not stop.is_set():
+            rclpy.spin_once(node, timeout_sec=0.05)
     finally:
-        if rclpy.ok():
+        if node is not None:
             node.destroy_node()
-            rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":
