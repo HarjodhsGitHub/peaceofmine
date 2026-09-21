@@ -1,6 +1,6 @@
 # XIAO ESP32-C6 sensor ADC test
 
-This is a first hardware test for the buffered metal-sensor signal. It uses the XIAO ESP32-C6's internal ADC1 in continuous DMA mode at 100 kSPS and prints one summary per second over USB serial.
+This is a first hardware test for the buffered metal-sensor signal. It uses the XIAO ESP32-C6's internal ADC1 in continuous DMA mode at 80 kSPS and prints one summary per second over USB serial. The stable ESP-IDF driver used by this project limits continuous C6 sampling to below 83,333 S/s.
 
 It is deliberately a measurement test, not the final metal-classification firmware.
 
@@ -40,12 +40,12 @@ The C6 uses its continuous ADC/DMA driver. Do not add Wi-Fi, Bluetooth, Zigbee, 
 Every second, the monitor prints an amplitude summary similar to:
 
 ```text
-I (...) sensor_adc: rate=100000 S/s samples=100000 raw[min=...] amplitude=... ...
+I (...) sensor_adc: rate=80000 S/s samples=80000 raw[min=...] amplitude=... ...
 ```
 
 Useful checks:
 
-- `rate` should be close to `100000 S/s`.
+- `rate` should be close to `80000 S/s`.
 - `p2p` is the peak-to-peak size of the waveform in raw ADC counts.
 - `amplitude` is `p2p / 2`: the approximate peak amplitude around the waveform's centre line.
 - `ac_rms` is a convenient measure of the sine-wave strength after its DC baseline is removed.
@@ -54,6 +54,6 @@ Useful checks:
 
 For the metal test, record the `p2p` and `ac_rms` values with no target, aluminium, and iron at the same distance. That will show whether the C6's internal ADC is adequate before adding the ADS7042.
 
-Every five seconds, the program also prints a CSV waveform block containing 256 consecutive samples. At 100 kSPS, that block covers 2.56 ms (about 17 cycles of your 6.71 kHz waveform). Copy everything from `# waveform_begin` through `# waveform_end` into a text file or spreadsheet to plot it.
+Every five seconds, the program also prints a CSV waveform block containing 256 consecutive samples. At 80 kSPS, that block covers 3.2 ms (about 21 cycles of your 6.71 kHz waveform). Copy everything from `# waveform_begin` through `# waveform_end` into a text file or spreadsheet to plot it. With no signal wired in yet, expect only a mostly flat/noisy reading rather than a waveform.
 
 The ADC is paused only while this short block is printed, then restarts automatically. To alter the frequency or number of printed samples, change `WAVEFORM_REPORT_INTERVAL_MS` or `WAVEFORM_SAMPLE_COUNT` in `platformio.ini`.

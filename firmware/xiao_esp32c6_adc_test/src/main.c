@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "esp_adc/adc_continuous.h"
 #include "esp_err.h"
@@ -23,7 +24,11 @@
 #endif
 
 #ifndef ADC_SAMPLE_RATE_HZ
-#define ADC_SAMPLE_RATE_HZ 100000
+#define ADC_SAMPLE_RATE_HZ 80000
+#endif
+
+#if ADC_SAMPLE_RATE_HZ > SOC_ADC_SAMPLE_FREQ_THRES_HIGH
+#error "ADC_SAMPLE_RATE_HZ exceeds this ESP-IDF driver's supported continuous ADC rate"
 #endif
 
 #ifndef WAVEFORM_REPORT_INTERVAL_MS
@@ -181,7 +186,6 @@ void app_main(void)
     ESP_ERROR_CHECK(adc_continuous_start(adc_handle));
 
     uint8_t dma_buffer[ADC_READ_BUFFER_BYTES];
-    adc_continuous_data_t parsed_samples[ADC_READ_BUFFER_BYTES / SOC_ADC_DIGI_RESULT_BYTES];
     uint16_t waveform[WAVEFORM_SAMPLE_COUNT];
     uint32_t waveform_count = 0;
     sample_stats_t stats;
@@ -195,16 +199,21 @@ void app_main(void)
             adc_handle, dma_buffer, sizeof(dma_buffer), &bytes_read, 1000);
 
         if (read_status == ESP_OK && bytes_read > 0) {
-            uint32_t parsed_count = 0;
-            ESP_ERROR_CHECK(adc_continuous_parse_data(
-                adc_handle, dma_buffer, bytes_read, parsed_samples, &parsed_count));
+            for (uint32_t offset = 0;
+                 offset + SOC_ADC_DIGI_RESULT_BYTES <= bytes_read;
+                 offset += SOC_ADC_DIGI_RESULT_BYTES) {
+                // ESP-IDF 5.4 exposes each C6 DMA result directly as a
+                // type-2 ADC word. Copy it first so this remains safe even
+                // if the DMA buffer itself is not naturally aligned.
+                adc_digi_output_data_t sample;
+                memcpy(&sample, &dma_buffer[offset], sizeof(sample));
 
-            for (uint32_t i = 0; i < parsed_count; i++) {
-                const adc_continuous_data_t sample = parsed_samples[i];
-                if (sample.valid && sample.unit == ADC_UNIT_1 && sample.channel == adc_channel) {
-                    add_sample(&stats, sample.raw_data);
+                if (sample.type2.channel < SOC_ADC_CHANNEL_NUM(ADC_UNIT_1) &&
+                    sample.type2.channel == adc_channel) {
+                    const uint16_t raw = sample.type2.data;
+                    add_sample(&stats, raw);
                     if (waveform_count < WAVEFORM_SAMPLE_COUNT) {
-                        waveform[waveform_count++] = sample.raw_data;
+                        waveform[waveform_count++] = raw;
                     }
                 }
             }
