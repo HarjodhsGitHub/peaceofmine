@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <avr/interrupt.h>
 
 namespace {
@@ -11,21 +12,26 @@ constexpr uint8_t kAdcMidpoint = 128;
 
 // Both quantities use Q8 fixed point.  The DC tracker is intentionally much
 // slower than the envelope tracker so the 60 kHz signal is not absorbed as DC.
-volatile int32_t dcQ8 = static_cast<int32_t>(kAdcMidpoint) << 8;
+uint16_t dcQ8 = static_cast<uint16_t>(kAdcMidpoint) << 8;
 volatile uint16_t envelopeQ8 = 0;
 
 ISR(ADC_vect) {
-  const int32_t sampleQ8 = static_cast<int32_t>(ADCH) << 8;
-  const int32_t dcError = sampleQ8 - dcQ8;
-  dcQ8 += dcError >> 12;  // About a 3 Hz DC-tracking cutoff.
-
-  const int32_t signedMagnitude = sampleQ8 - dcQ8;
-  const uint16_t magnitudeQ8 = signedMagnitude < 0
-      ? static_cast<uint16_t>(-signedMagnitude)
-      : static_cast<uint16_t>(signedMagnitude);
-
-  // Rectify, then apply a one-pole low-pass filter (~48 Hz envelope cutoff).
-  envelopeQ8 += (static_cast<int32_t>(magnitudeQ8) - envelopeQ8) >> 8;
+  const uint16_t sampleQ8 = static_cast<uint16_t>(ADCH) << 8;
+  // Unsigned differences avoid costly 32-bit shifts on the 8-bit AVR.
+  // Round downward updates up to preserve signed arithmetic-shift behavior.
+  if (sampleQ8 >= dcQ8) {
+    dcQ8 += (sampleQ8 - dcQ8) >> 12;
+  } else {
+    dcQ8 -= ((dcQ8 - sampleQ8 - 1U) >> 12) + 1U;
+  }
+  const uint16_t magnitudeQ8 = sampleQ8 >= dcQ8
+      ? sampleQ8 - dcQ8 : dcQ8 - sampleQ8;
+  const uint16_t envelope = envelopeQ8;
+  if (magnitudeQ8 >= envelope) {
+    envelopeQ8 = envelope + ((magnitudeQ8 - envelope) >> 8);
+  } else {
+    envelopeQ8 = envelope - (((envelope - magnitudeQ8 - 1U) >> 8) + 1U);
+  }
 }
 
 uint8_t readPeakAmplitude() {
@@ -56,13 +62,20 @@ void setup() {
 }
 
 void loop() {
-  // Printing is deliberately infrequent; sampling and filtering remain in the
-  // ADC ISR at full speed.  Each line is the estimated sine peak in 8-bit ADC
-  // counts (0..255).
+  // Reuse the document; serialization stays outside the ADC interrupt.
+  static JsonDocument message;
+  static uint32_t sequence = 0;
   static uint32_t previousPrintMs = 0;
   const uint32_t now = millis();
-  if (now - previousPrintMs >= 50) {
+  if (now - previousPrintMs >= 10) {
     previousPrintMs = now;
-    Serial.println(readPeakAmplitude());
+    message["v"] = 1;
+    message["seq"] = sequence++;
+    message["uptime_ms"] = now;
+    message["amplitude_adc"] = readPeakAmplitude();
+    if (!message.overflowed()) {
+      serializeJson(message, Serial);
+      Serial.println();
+    }
   }
 }
