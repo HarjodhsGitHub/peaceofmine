@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Browser-to-ROS gateway for the PeaceOfMine operator dashboard.
 
-One browser holds the drive lease, must explicitly arm, and must hold a
-deadman input. Physical RC override and the downstream SVEA watchdog remain
-independent safety layers.
+One browser holds the control lease. Physical RC state grants drive and servo
+authority; command timeouts and the downstream SVEA watchdog remain independent
+safety layers.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from std_msgs.msg import Bool, Float32, String
 from peaceofmine_operator.rc_safety import RcSafety
 from peaceofmine_operator.power import PowerTelemetry
 from peaceofmine_operator.camera_stream import CameraStreams
+from peaceofmine_operator.detector import DetectorTelemetry
 
 # Authoritative actuator limits. The dashboard reads these from telemetry so
 # the browser never carries its own copy.
@@ -97,6 +98,8 @@ class OperatorGateway(Node):
         self.declare_parameter('probe_motion_speed_limit_mps', 0.03)
         self.declare_parameter('max_probe_depth_mm', 110.0)
         self.declare_parameter('detector_threshold_ratio', 0.65)
+        self.declare_parameter('rc_steering_channel', 1)
+        self.declare_parameter('rc_throttle_channel', 2)
 
         self._lock = threading.RLock()
         self._power = PowerTelemetry()
@@ -146,6 +149,10 @@ class OperatorGateway(Node):
         }
         self._stop_until = 0.0
         self._detector = 0.0
+        self._detector_at = None
+        self._detector_telemetry = DetectorTelemetry()
+        self._detector_command_pub = self.create_publisher(String, 'detector/command', 10)
+        self.create_subscription(String, 'detector/state', self._detector_state_cb, 10)
         self._probe_depth = 0.0
         self._probe_pressure_ratio = 0.0
         self._fixture_angle_deg = 0.0
@@ -257,8 +264,18 @@ class OperatorGateway(Node):
             self._pose = {'x': message.pose.pose.position.x, 'y': message.pose.pose.position.y, 'yaw': yaw}
             self._speed = message.twist.twist.linear.x
 
+    def _detector_state_cb(self, message):
+        try:
+            value = json.loads(message.data)
+            if isinstance(value, dict):
+                with self._lock:
+                    self._detector_telemetry.update(value)
+        except (ValueError, TypeError):
+            pass
+
     def _detector_cb(self, message: Float32) -> None:
         with self._lock:
+            self._detector_at = time.monotonic()
             self._detector = max(0.0, min(1.0, float(message.data)))
             bin_index = round(self._fixture_angle_deg) + BEAM_HALF_ANGLE_DEG
             if 0 <= bin_index < BEAM_BINS:
@@ -413,8 +430,6 @@ class OperatorGateway(Node):
         with self._lock:
             safety = self._enforce_safety_locked()
             active = (safety['allowed'] and not self._calibrating and self._lease is not None
-                      and self._armed
-                      and self._deadman
                       and now - self._last_command <= self._timeout)
             if active:
                 self._stop_until = now + STOP_TAIL_S
@@ -434,12 +449,8 @@ class OperatorGateway(Node):
             if self._lease is None or self._calibrating or not self._enforce_safety_locked()['allowed']:
                 self._joy_prev_a = bool(parsed['a'])
                 return
-            if parsed['a'] and not self._joy_prev_a and not self._armed:
-                self._armed = True
             self._joy_prev_a = bool(parsed['a'])
-            if not self._armed:
-                return
-            self._apply_drive_locked(float(parsed['linear']), float(parsed['angular']), bool(parsed['deadman']))
+            self._apply_drive_locked(float(parsed['linear']), float(parsed['angular']), True)
             flush = True
         if flush:
             self._emit_cmd_vel()
@@ -450,7 +461,7 @@ class OperatorGateway(Node):
     def _drive_watchdog(self) -> None:
         with self._lock:
             safety = self._enforce_safety_locked()
-            self._permission_pub.publish(Bool(data=bool(safety['servo_allowed'] and self._armed and self._lease is not None)))
+            self._permission_pub.publish(Bool(data=bool(safety['servo_allowed'] and self._lease is not None)))
         self._emit_cmd_vel()
 
     ## Dashboard protocol ##
@@ -471,8 +482,6 @@ class OperatorGateway(Node):
                         'height': sample.get('height', 0),
                     }
             publishing = (self._rc_safety.snapshot()['allowed'] and not self._calibrating and self._lease is not None
-                          and self._armed
-                          and self._deadman
                           and now - self._last_command <= self._timeout)
             joy_live = self._joy_live(now)
             joy = {**self._joy, 'seen': joy_live}
@@ -484,7 +493,9 @@ class OperatorGateway(Node):
                 'safety': self._rc_safety.snapshot(),
                 'arm_servo': self._arm_state if time.monotonic() - self._arm_state_at < 1.0 else {'connected': False, 'reason': 'Arm driver unavailable'},
                 'drive': {
-                    'armed': self._armed,
+                    'armed': self._rc_safety.snapshot()['allowed'],
+                    'rc': self._rc_safety.controls(int(self.get_parameter('rc_steering_channel').value),
+                                                   int(self.get_parameter('rc_throttle_channel').value)),
                     'calibrating': self._calibrating,
                     'deadman': self._deadman,
                     'publishing': publishing,
@@ -501,9 +512,11 @@ class OperatorGateway(Node):
                 },
                 'robot': {**self._pose, 'speed_mps': self._speed},
                 'detector': {
+                    'fresh': self._detector_at is not None and now - self._detector_at < 0.5,
+                    'sensor': self._detector_telemetry.snapshot(),
                     'signal_ratio': self._detector,
                     'threshold_ratio': self._detector_threshold,
-                    'detected': self._detector >= self._detector_threshold,
+                    'detected': self._detector_at is not None and now - self._detector_at < 0.5 and self._detector >= self._detector_threshold,
                     'fixture_angle_deg': self._fixture_angle_deg,
                     'sweep_enabled': self._fixture_sweep_enabled,
                     'sweep_speed_deg_s': self._fixture_sweep_speed,
@@ -571,9 +584,14 @@ class OperatorGateway(Node):
                 flush_drive = True
             elif self._lease is not ws:
                 error = {'type': 'error', 'message': 'Spectator mode: take control before sending commands.'}
+            elif message_type == 'detector_calibrate':
+                if abs(self._speed) > self._probe_speed_limit:
+                    return {'type': 'error', 'message': 'Stop the vehicle before detector calibration.'}
+                if not self._detector_telemetry.snapshot()['fresh']:
+                    return {'type': 'error', 'message': 'Fresh Arduino readings required for calibration.'}
+                command = {key: payload[key] for key in ('action', 'request_id', 'baseline_adc', 'full_response_adc', 'reference_voltage') if key in payload}
+                self._detector_command_pub.publish(String(data=json.dumps(command)))
             elif message_type == 'arm_servo' and payload.get('action') in ('select', 'capture', 'configure', 'stop'):
-                if self._armed and payload.get('action') != 'stop' and not (self._calibrating and payload.get('action') in ('capture', 'configure')):
-                    return {'type': 'error', 'message': 'Disarm before changing calibration or servo ID.'}
                 command = {key: payload[key] for key in ('action', 'request_id', 'servo_id', 'point', 'minimum', 'center', 'maximum') if key in payload}
                 self._arm_command_pub.publish(String(data=json.dumps(command)))
             elif message_type == 'drive' and not safety['allowed']:
@@ -597,13 +615,11 @@ class OperatorGateway(Node):
                 # Gamepad API is not required on http://<lan-ip>.
                 if not self._joy_live(time.monotonic()):
                     self._apply_drive_locked(
-                        float(payload.get('linear_x', 0.0)),
-                        float(payload.get('angular_z', 0.0)),
-                        bool(payload.get('deadman', False)),
+                            float(payload.get('linear_x', 0.0)),
+                            float(payload.get('angular_z', 0.0)),
+                            True,
                     )
                     flush_drive = True
-            elif message_type in ('probe_target', 'sweep_enabled', 'sweep_speed', 'arm_servo') and not self._armed:
-                return {'type': 'error', 'message': 'Arm the website controls before actuating.'}
             elif message_type == 'arm_servo':
                 if payload.get('action') in ('jog', 'position') and not self._calibrating:
                     return {'type': 'error', 'message': 'Enable calibration before jogging.'}
@@ -619,6 +635,14 @@ class OperatorGateway(Node):
                     self._probe_target = max(0.0, min(self._max_probe_depth, requested))
                     self._probe_pub.publish(Float32(data=self._probe_target))
             elif message_type == 'sweep_enabled':
+                if payload.get('enabled') and not self._rc_safety.simulation:
+                    if time.monotonic() - self._arm_state_at >= 1 or not self._arm_state.get('connected'):
+                        return {'type': 'error', 'message': 'Select a connected arm servo in Settings first.'}
+                    if not self._arm_state.get('calibration'):
+                        return {'type': 'error', 'message': 'Record and apply arm limits in Settings before sweeping.'}
+                # Publish permission before the sweep request; separate topics may
+                # still arrive out of order, so the periodic watchdog renews it.
+                self._permission_pub.publish(Bool(data=True))
                 self._sweep_enabled_pub.publish(Bool(data=bool(payload.get('enabled', False))))
             elif message_type == 'sweep_speed':
                 speed = max(SWEEP_SPEED_MIN_DEG_S,

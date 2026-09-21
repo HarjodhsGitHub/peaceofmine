@@ -264,6 +264,7 @@ function connect() {
     }
     if (message.type === 'error') {
       showNotice(message.message);
+      if (metalPending) { metalPending = null; metalFeedback = message.message; }
       if (armPending) { armPending = null; setArmFeedback(message.message, 'error'); }
       return;
     }
@@ -344,6 +345,7 @@ function updatePower() {
 function updateHud() {
   updatePower();
   updateArmSettings();
+  updateMetalSettings();
   const {drive, robot, detector, probe} = state;
   const owner = state.connected && drive.you_control_owner;
 
@@ -359,24 +361,26 @@ function updateHud() {
   if (servoSafe && !safe) $('rc-safety').textContent += ' · SERVOS READY';
   $('rc-safety').title = state.safety?.reason || 'Waiting for PX4 safety status';
   $('rc-safety').className = `badge ${safe ? 'ready' : 'blocked'}`;
-  $('arm').disabled = !owner || drive.armed || !servoSafe;
-  $('estop').disabled = !owner;
-  $('probe-slider').disabled = !owner || !drive.armed || !servoSafe;
-  $('sweep-toggle').disabled = !owner || !drive.armed || !servoSafe;
-  $('sweep-speed').disabled = !owner || !drive.armed || !servoSafe;
+  $('probe-slider').disabled = !owner || !servoSafe;
+  $('sweep-toggle').disabled = !owner || !servoSafe;
+  $('sweep-speed').disabled = !owner || !servoSafe;
 
   $('speed').textContent = `${Math.abs(robot.speed_mps).toFixed(2)} m/s`;
 
   const signalPercent = detector.signal_ratio * 100;
-  $('signal').textContent = Math.round(signalPercent);
-  $('meter-fill').style.width = `${signalPercent}%`;
+  $('signal').textContent = detector.fresh === false ? '--' : Math.round(signalPercent);
+  $('meter-fill').style.width = `${detector.fresh === false ? 0 : signalPercent}%`;
   $('threshold').style.left = `${detector.threshold_ratio * 100}%`;
   $('detector-detail').textContent =
     `Threshold ${Math.round(detector.threshold_ratio * 100)}% · fixture ${detector.fixture_angle_deg.toFixed(0)}°`;
-  $('detector-status').textContent = detector.detected ? 'DETECTION' : 'CLEAR';
-  $('detector-status').className = `badge ${detector.detected ? 'active' : 'safe'}`;
+  $('detector-status').textContent = detector.fresh === false ? 'NO DATA' : detector.detected ? 'DETECTION' : 'CLEAR';
+  $('detector-status').className = `badge ${detector.fresh === false ? 'neutral' : detector.detected ? 'active' : 'safe'}`;
 
   $('sweep-toggle').textContent = detector.sweep_enabled ? 'Stop sweep' : 'Start sweep';
+  $('sweep-status').textContent = detector.sweep_enabled ? 'Sweeping'
+    : !owner ? 'Take control to sweep'
+    : !servoSafe ? state.safety?.reason || 'RC blocks servo movement'
+    : state.arm_servo?.reason || (state.safety?.simulated ? 'Ready' : 'Waiting for arm driver');
   setRange($('sweep-speed'), detector.sweep_speed_min, detector.sweep_speed_max, 5);
   if (!activeSliders.has('sweep-speed')) $('sweep-speed').value = detector.sweep_speed_deg_s;
   $('sweep-speed-value').textContent = `${Math.round(detector.sweep_speed_deg_s)}°/s`;
@@ -390,13 +394,10 @@ function updateHud() {
   $('probe-status').textContent = probe.fault ? 'FAULT' : probe.depth_mm > 2 ? 'DEPLOYED' : 'STOWED';
   $('probe-status').className = `badge ${probe.fault ? 'active' : probe.depth_mm > 2 ? 'safe' : 'neutral'}`;
 
-  $('arm-state').textContent = !owner ? 'SPECTATOR' : (drive.armed ? (drive.deadman ? 'DRIVING' : 'ARMED') : 'DISARMED');
+  $('arm-state').textContent = state.safety?.mode === 'override' ? 'RC CONTROL' : !owner ? 'SPECTATOR' : safe ? (drive.publishing ? 'ROS CONTROL' : 'READY') : 'RC LOCKED';
   $('arm-state').className = `badge ${owner && drive.armed ? 'active' : 'neutral'}`;
-  $('camera-notice').textContent = !owner
-    ? 'Spectator mode · take control to arm or actuate.'
-    : drive.armed
-      ? (drive.deadman ? 'Deadman held · command stream active.' : `Armed · ${deadmanHint()}`)
-      : 'Disarmed · arm only after the lane is clear.';
+  $('camera-notice').textContent = state.safety?.mode === 'override' ? 'Remote control drives the vehicle.'
+    : !owner ? 'Spectator mode' : safe ? 'RC permits ROS driving' : state.safety?.reason || 'Waiting for RC';
 
   const heading = ((robot.yaw * 180 / Math.PI % 360) + 360) % 360;
   $('position').textContent = `X ${robot.x.toFixed(1)} · Y ${robot.y.toFixed(1)} · heading ${heading.toFixed(0)}°`;
@@ -405,7 +406,7 @@ function updateHud() {
 }
 
 function deadmanHint() {
-  return preferences.input === 'keyboard' ? 'Hold Shift to drive.' : preferences.input === 'wheel' ? `Hold wheel button ${preferences.wheel.deadman} to drive.` : 'Hold a trigger or bumper to drive.';
+  return 'RC switch controls drive authority.';
 }
 
 function padDisplayName(pad) {
@@ -441,6 +442,7 @@ function rosJoyLive() {
 }
 
 function driveBlockMessage() {
+  if (state.safety?.mode === 'override') return {text: state.drive.rc?.fresh ? 'Remote control active' : 'RC input stale', kind: 'ready'};
   const owner = state.connected && state.drive.you_control_owner;
   const padReady = Boolean(gamepad) || rosJoyLive();
   if (preferences.input === 'controller' && gamepadApiBlocked() && !rosJoyLive()) {
@@ -450,17 +452,13 @@ function driveBlockMessage() {
     };
   }
   if (preferences.input === 'keyboard' && !cameraFocused) {
-    return {text: 'Click the forward camera, then hold Shift and WASD.', kind: 'blocked'};
+    return {text: 'Click the forward camera for WASD.', kind: 'blocked'};
   }
   if (preferences.input === 'controller' && !padReady) {
     return {text: 'No pad seen. Plug the Xbox into this computer or the SVEA USB, then press a button.', kind: 'blocked'};
   }
   if (!state.safety?.allowed) return {text: state.safety?.reason || 'Waiting for PX4 safety status', kind: 'blocked'};
   if (!owner) return {text: 'Spectator · take control. Pad input stays local until then.', kind: 'blocked'};
-  if (!state.drive.armed) return {text: 'Disarmed · press Arm or A, then use RT/LT.', kind: 'blocked'};
-  if (!lastInput.deadman && !state.drive.deadman) {
-    return {text: 'Armed · pull RT/LT or hold a bumper to publish cmd_vel.', kind: 'blocked'};
-  }
   if (!state.drive.publishing) {
     return {text: 'Commands leaving the browser · waiting for ROS cmd_vel…', kind: 'blocked'};
   }
@@ -475,7 +473,7 @@ function setText(el, text) {
 }
 
 function updateInputHint() {
-  $('drive-help').textContent = `${deadmanHint()} Releasing it stops the rover.`;
+  $('drive-help').textContent = deadmanHint();
   const keyboard = preferences.input === 'keyboard';
   const lock = padEls.inputLock;
   if (lock) {
@@ -484,22 +482,27 @@ function updateInputHint() {
     setText(lock, cameraFocused ? 'WASD INPUT ACTIVE' : 'CLICK CAMERA FOR INPUT');
   }
 
-  if (rosJoyLive() && !keyboard && !gamepad) {
+  const rcOverride = state.safety?.mode === 'override';
+  const rc = state.drive.rc || {};
+  if (rcOverride) {
+    setText(padEls.controller, 'Physical RC transmitter');
+    setText(padEls.mapping, `Steering CH${rc.steering_channel ?? 1} · throttle CH${rc.throttle_channel ?? 2}`);
+  } else if (rosJoyLive() && !keyboard && !gamepad) {
     setText(padEls.controller, 'Xbox via ROS /joy (SVEA USB)');
-    setText(padEls.mapping, 'Pad is on the rover. LS steer · LT/RT throttle · LB/RB deadman · A arm');
+    setText(padEls.mapping, 'LS steer · LT/RT throttle');
   } else if (gamepadApiBlocked() && !keyboard) {
     setText(padEls.controller, 'Browser Gamepad API blocked');
     setText(padEls.mapping,
       'Open http://localhost:8080 on this computer, or plug the Xbox into the SVEA so ROS /joy can drive.');
   } else if (keyboard) {
     setText(padEls.controller, cameraFocused
-      ? 'WASD active · hold Shift to drive'
+      ? 'WASD active'
       : 'Click the forward camera to use WASD');
-    setText(padEls.mapping, 'WASD steer/throttle · Shift is the deadman (shown as RB).');
+    setText(padEls.mapping, 'WASD steer/throttle');
   } else if (gamepad) {
     setText(padEls.controller, padDisplayName(gamepad));
     setText(padEls.mapping,
-      `${mappingLabel(resolveMapping(gamepad))} · LS steer · LT/RT throttle · LB/RB deadman · A arm`);
+      `${mappingLabel(resolveMapping(gamepad))} · LS steer · LT/RT throttle`);
   } else {
     setText(padEls.controller, 'No controller connected');
     setText(padEls.mapping,
@@ -507,7 +510,9 @@ function updateInputHint() {
   }
 
   if (padEls.raw) {
-    if (gamepad) {
+    if (rcOverride) {
+      setText(padEls.raw, rc.fresh ? `RC PWM: ${(rc.channels || []).join(' ')}` : 'RC input stale');
+    } else if (gamepad) {
       let axes = '';
       for (let i = 0; i < gamepad.axes.length; i++) {
         if (i) axes += ' ';
@@ -532,7 +537,10 @@ function updateInputHint() {
     }
   }
 
-  const visual = (!gamepad && rosJoyLive()) ? {
+  const visual = rcOverride ? {
+    stickX: rc.fresh ? rc.steering : 0, stickY: 0,
+    lt: rc.fresh ? Math.max(0, -rc.throttle) : 0, rt: rc.fresh ? Math.max(0, rc.throttle) : 0,
+  } : (!gamepad && rosJoyLive()) ? {
     stickX: state.drive.joy.stick_x || 0,
     stickY: state.drive.joy.stick_y || 0,
     lt: state.drive.joy.lt || 0,
@@ -655,7 +663,7 @@ function readGamepad(target) {
   target.linear = throttle * MAX_LINEAR_MPS;
   // Browser axes are positive right; ROS yaw is positive left.
   target.angular = -steering * MAX_ANGULAR_RAD_S * preferences.sensitivity / 100;
-  target.deadman = lb || rb || Math.abs(throttle) > 0.12;
+  target.deadman = Math.abs(throttle) > 0 || steering !== 0;
   target.steer = steering;
   target.throttle = throttle;
   target.mapping = kind;
@@ -672,7 +680,7 @@ function readGamepad(target) {
 function readKeyboard(target = {}) {
   const throttle = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
   const steer = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
-  const deadman = keys.has('ShiftLeft') || keys.has('ShiftRight');
+  const deadman = throttle !== 0 || steer !== 0;
   target.linear = throttle * MAX_LINEAR_MPS;
   target.angular = -steer * MAX_ANGULAR_RAD_S * preferences.sensitivity / 100;
   target.deadman = deadman;
@@ -684,7 +692,7 @@ function readKeyboard(target = {}) {
   target.lt = keys.has('KeyS') ? 1 : 0;
   target.rt = keys.has('KeyW') ? 1 : 0;
   target.lb = false;
-  target.rb = deadman;
+  target.rb = false;
   target.a = false;
   target.b = false;
   target.x = false;
@@ -729,13 +737,6 @@ function pickGamepad() {
   return previous || xbox || best;
 }
 
-function maybeArmFromPad(target) {
-  if (target.a && !prevA && state.drive.you_control_owner && !state.drive.armed) {
-    send({type: 'arm'});
-  }
-  prevA = Boolean(target.a);
-}
-
 function sendDriveIfNeeded(target, now) {
   if (!state.drive.you_control_owner) return;
   const linear = Math.round(finite(target.linear) * 1e4) / 1e4;
@@ -774,7 +775,6 @@ function inputLoop() {
     if (!stamp || stamp !== lastPadTimestamp || gamepad.id !== lastPadId) {
       lastPadTimestamp = stamp;
       readGamepad(lastInput);
-      if (!$('settings-dialog').open && !document.hidden && document.hasFocus()) maybeArmFromPad(lastInput);
     }
   } else if (preferences.input === 'wheel' && gamepad) {
     zeroInput(lastInput);
@@ -787,7 +787,7 @@ function inputLoop() {
   }
 
   renderInputs(pads, lastInput);
-  const canDrive = state.connected && state.safety?.allowed && state.drive.you_control_owner && state.drive.armed
+  const canDrive = state.connected && state.safety?.allowed && state.drive.you_control_owner
     && !$('settings-dialog').open && !document.hidden && document.hasFocus();
   if (!canDrive && !keyboardPreview) resetKeyboardRamp(now);
   // Opening Settings already sends a stop. Do not flood calibration with rejected drive commands.
@@ -813,8 +813,6 @@ function stopLocalInput() {
 }
 
 $('take-control').onclick = () => send({type: 'take_control'});
-$('arm').onclick = () => send({type: 'arm'});
-$('estop').onclick = () => send({type: 'estop'});
 
 for (const [id, type, field] of [['probe-slider', 'probe_target', 'depth_mm'], ['sweep-speed', 'sweep_speed', 'deg_s']]) {
   const commit = event => {
@@ -882,7 +880,7 @@ for (const preview of [forward, $('forward-video'), $('forward-network-camera')]
 }
 
 // Keydrown tracks held keys without relying on OS key-repeat timing.
-for (const [name, code] of [['W', 'KeyW'], ['A', 'KeyA'], ['S', 'KeyS'], ['D', 'KeyD'], ['SHIFT', 'ShiftLeft']]) {
+for (const [name, code] of [['W', 'KeyW'], ['A', 'KeyA'], ['S', 'KeyS'], ['D', 'KeyD']]) {
   kd[name].press(event => {
     if (preferences.input !== 'keyboard' || !(cameraFocused || document.activeElement === $('keyboard-test'))) return;
     if (event?.repeat) return;
@@ -1188,14 +1186,13 @@ function readWheel(pad, mapping) {
   if (!indices.every(key => Number.isInteger(mapping[key]) && mapping[key] >= 0 &&
       Number.isFinite(pad.axes[mapping[key]])) ||
       new Set(indices.map(key => mapping[key])).size !== 3 ||
-      !Number.isInteger(mapping.deadman) || mapping.deadman < 0 || !pad.buttons[mapping.deadman] ||
       !Number.isFinite(mapping.deadzone) || mapping.deadzone < 0 || mapping.deadzone >= 1) return zero;
   const pedal = (key, inverted) => Math.max(0, Math.min(1, (pad.axes[mapping[key]] * (inverted ? -1 : 1) + 1) / 2));
   const raw = pad.axes[mapping.steering] * (mapping.invertSteering ? -1 : 1);
   const steering = Math.sign(raw) * Math.max(0, Math.min(1, (Math.abs(raw) - mapping.deadzone) / (1 - mapping.deadzone)));
   return {linear: (pedal('throttle', mapping.invertThrottle) - pedal('brake', mapping.invertBrake)) * MAX_LINEAR_MPS,
     angular: -steering * MAX_ANGULAR_RAD_S * preferences.sensitivity / 100,
-    deadman: Boolean(pad.buttons[mapping.deadman].pressed)};
+    deadman: true};
 }
 
 function stopInput() {
@@ -1539,7 +1536,7 @@ function updateArmSettings() {
       setArmFeedback('No confirmation received. Check the driver connection and retry.', 'error'); armPending = null;
     }
   }
-  const ready = owner && state.safety?.servo_allowed && state.drive.armed && servo.connected;
+  const ready = owner && state.safety?.servo_allowed && servo.connected;
   const slider = $('arm-position-slider');
   if (servo.connected) {
     slider.min = Math.max(servo.eeprom_minimum ?? 0, servo.calibration?.minimum ?? 0);
@@ -1568,26 +1565,26 @@ function updateArmSettings() {
   metric('arm-power', `${number(servo.voltage, 1, ' V')} / ${number(servo.temperature_c, 0, ' °C')}`);
   metric('arm-model', `${servo.model ?? '—'} / ${servo.firmware ?? '—'}`);
   $('arm-px4').textContent = state.safety?.servo_allowed ? 'Movement permitted (status 4)' : 'Movement blocked';
-  $('arm-calibration-enable').disabled = !owner || !state.safety?.servo_allowed || state.drive.armed || !servo.connected;
+  $('arm-calibration-enable').disabled = !owner || !state.safety?.servo_allowed || state.drive.calibrating || !servo.connected;
   $('arm-calibration-stop').disabled = !owner;
-  $('arm-calibration-enable').textContent = state.drive.armed && state.drive.calibrating ? 'Jogging enabled' : 'Enable jogging';
+  $('arm-calibration-enable').textContent = state.drive.calibrating ? 'Jogging enabled' : 'Enable jogging';
   const selectionBlocked = !state.connected ? 'Connect to the dashboard first.'
     : !owner ? 'Take control to select a servo or record calibration. You do not need to arm.'
-    : state.drive.armed ? 'Disarm the website controls before changing the servo ID.'
+    : servo.torque ? 'Stop the arm before changing the servo ID.'
     : !servo.serial_connected ? 'Waiting for the arm serial adapter.' : '';
   $('arm-calibration-access').textContent = owner && state.drive.calibrating ? 'Hold a jog button to move. Release it, then record the position.' : selectionBlocked || 'Ready to select a servo and record positions.';
   $('arm-take-control').hidden = owner;
   $('arm-take-control').disabled = !state.connected;
   $('arm-select-id').disabled = Boolean(selectionBlocked) || servoSelect.value === '';
   $('arm-select-id').title = selectionBlocked || 'Select the servo ID; position updates automatically.';
-  const canRecord = owner && (!state.drive.armed || state.drive.calibrating) && servo.connected && !servo.torque && armHoldTimer === null;
+  const canRecord = owner && servo.connected && !servo.torque && armHoldTimer === null;
   $('arm-apply-limits').disabled = !canRecord || !['minimum', 'center', 'maximum'].every(point => Number.isFinite(servo.captured?.[point] ?? servo.calibration?.[point]));
   $('arm-jog-left').disabled = $('arm-jog-right').disabled = !ready || !state.drive.calibrating;
   const jogReason = !state.connected ? 'Dashboard disconnected'
     : !owner ? 'Take control first'
     : !servo.connected ? 'Servo not connected'
     : !state.safety?.servo_allowed ? 'Blocked: PX4 must report status 4'
-    : !state.drive.calibrating || !state.drive.armed ? 'Click Enable jogging once, then hold an arrow'
+    : !state.drive.calibrating ? 'Click Enable jogging once, then hold an arrow'
     : armHoldTimer !== null ? 'Jog command held · release to stop'
     : 'Ready · hold left or right to move';
   $('arm-jog-status').textContent = jogReason;
@@ -1616,7 +1613,7 @@ function initializeArmSettings() {
   $('arm-select-id').onclick = () => {
     if ($('arm-servo-id').value !== '') armCommand('select', {servo_id: Number($('arm-servo-id').value)});
   };
-  $('arm-calibration-enable').onclick = () => armControlCommand({type: 'arm', calibration: true}, 'Slow jogging enabled. Hold left or right; release to stop.', () => state.drive.armed && state.drive.calibrating);
+  $('arm-calibration-enable').onclick = () => armControlCommand({type: 'arm', calibration: true}, 'Slow jogging enabled. Hold left or right; release to stop.', () => state.drive.calibrating);
   $('arm-calibration-stop').onclick = () => { stopArmMove(); armCommand('stop'); send({type: 'estop'}); };
   function bindHold(button, action, values) {
     const start = () => {
@@ -1673,13 +1670,167 @@ function initializeArmSettings() {
     const calibration = Object.fromEntries(['minimum', 'center', 'maximum'].map(point => [point, servo.captured?.[point] ?? servo.calibration?.[point]]));
     armCommand('configure', calibration);
   };
-  $('settings-dialog').addEventListener('close', stopArmMove);
+  const releaseArmSettings = () => {
+    stopArmMove();
+    if (state.drive.you_control_owner) {
+      armCommand('stop');
+      send({type: 'estop'});
+    }
+  };
+  $('settings-dialog').querySelector('form').addEventListener('submit', releaseArmSettings);
+  $('settings-dialog').addEventListener('close', releaseArmSettings);
   window.addEventListener('blur', stopArmMove);
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopArmMove(); });
 }
 
+let metalPending = null;
+let metalFeedback = '';
+let metalCalibrationKey = '';
+let metalPacketKey = '';
+const sensorReferenceVoltage = 5.0;
+const metalPackets = [];
+
+function updateMetalSettings() {
+  const sensor = state.detector.sensor || {};
+  const available = state.connected && sensor.available;
+  const fresh = available && sensor.fresh;
+  const owner = state.connected && state.drive.you_control_owner;
+  $('metal-status').textContent = !state.connected ? 'DISCONNECTED' : !available
+    ? (state.detector.fresh ? 'SIMULATED / NO RAW DATA' : 'NO DRIVER') : fresh ? 'LIVE' : 'STALE';
+  $('metal-status').className = `badge ${fresh ? 'safe' : 'neutral'}`;
+  const amplitudeAdc = fresh ? sensor.packet?.amplitude_adc : null;
+  $('metal-raw').textContent = amplitudeAdc == null ? '-- ADC' : `${amplitudeAdc} ADC`;
+  $('metal-voltage').textContent = amplitudeAdc == null
+    ? '-- V peak' : `${(amplitudeAdc * sensorReferenceVoltage / 255).toFixed(2)} V peak`;
+  $('metal-response').textContent = fresh ? `${(state.detector.signal_ratio * 100).toFixed(1)} %` : '-- %';
+  $('metal-rate').textContent = available ? `${sensor.rate_hz ?? 0} Hz` : '-- Hz';
+  $('metal-age').textContent = sensor.age_ms == null ? '-- ms' : `${sensor.age_ms} ms`;
+  $('metal-port').textContent = sensor.port || '--';
+  $('metal-counts').textContent = `${sensor.received ?? 0} / ${sensor.invalid_lines ?? 0}`;
+  $('metal-sequence').textContent = sensor.packet ? `${sensor.packet.seq} / ${sensor.packet.uptime_ms} ms` : '--';
+  $('metal-error').textContent = !available ? 'Arduino driver unavailable' : sensor.error || (fresh ? 'Receiving valid packets' : 'Waiting for valid readings');
+  const reference = sensor.reference_voltage ?? 5;
+  const voltage = sensor.packet?.amplitude_adc * reference / 255;
+  $('metal-voltage').textContent = fresh ? `${voltage.toFixed(3)} V` : '-- V';
+  $('metal-voltage-note').textContent = fresh && voltage > reference / 2
+    ? 'Above the centered sine range: check clipping or waveform shape. Voltage is an amplitude estimate.'
+    : `Sine-equivalent AC peak, excluding DC bias. Reference ${reference.toFixed(2)} V.`;
+  const key = `${sensor.baseline_adc}:${sensor.full_response_adc}:${reference}`;
+  if (key !== metalCalibrationKey && Number.isFinite(sensor.baseline_adc)) {
+    metalCalibrationKey = key;
+    $('metal-baseline').value = sensor.baseline_adc.toFixed(2);
+    $('metal-full').value = sensor.full_response_adc.toFixed(2);
+    $('metal-reference').value = reference.toFixed(2);
+    $('metal-launch').value = `<arg name="sensor_baseline_adc" default="${sensor.baseline_adc}"/>\n<arg name="sensor_full_response_adc" default="${sensor.full_response_adc}"/>\n<arg name="sensor_reference_voltage" default="${reference}"/>`;
+  }
+  if (metalPending && sensor.command_result?.request_id === metalPending.id) {
+    metalFeedback = sensor.command_result.message;
+    metalPending = null;
+  } else if (metalPending && performance.now() - metalPending.at > 3000) {
+    metalFeedback = 'No acknowledgement from detector driver.';
+    metalPending = null;
+  }
+  const moving = Math.abs(state.robot.speed_mps) > 0.03;
+  const allowed = fresh && owner && !moving && !metalPending;
+  for (const id of ['metal-zero', 'metal-apply', 'metal-reset']) $(id).disabled = !allowed;
+  $('metal-control').hidden = owner;
+  $('metal-control').disabled = !state.connected;
+  $('metal-feedback').textContent = !fresh ? 'Fresh Arduino readings required for calibration.'
+    : !owner ? 'Take control to calibrate.' : moving ? 'Stop the vehicle to calibrate.'
+    : metalPending ? 'Applying calibration...' : metalFeedback || 'Ready. Zero uses the last second of readings.';
+  const packetKey = JSON.stringify(sensor.packet);
+  if (fresh && sensor.packet && packetKey !== metalPacketKey) {
+    metalPacketKey = packetKey;
+    if ($('metal-debug-live').checked) {
+      metalPackets.push(packetKey);
+      if (metalPackets.length > 50) metalPackets.shift();
+      $('metal-log').value = metalPackets.join('\n');
+      $('metal-log').scrollTop = $('metal-log').scrollHeight;
+    }
+  }
+  $('metal-export').disabled = !(sensor.history?.length);
+  if ($('settings-dialog').open && !$('settings-detector').hidden) drawMetalHistory();
+}
+
+function drawMetalHistory() {
+  const canvas = $('metal-history');
+  const ctx = resize(canvas);
+  const width = canvas.clientWidth, height = canvas.clientHeight;
+  if (!width || !height) return;
+  const samples = state.detector.sensor?.history || [];
+  const values = samples.map(sample => sample.adc);
+  const baseline = state.detector.sensor?.baseline_adc;
+  let low = 0, high = 255;
+  if ($('metal-autoscale').checked && values.length) {
+    low = Math.max(0, Math.floor(Math.min(...values) - 3));
+    high = Math.min(255, Math.ceil(Math.max(...values) + 3));
+  }
+  const left = 38, right = width - 12, top = 16, bottom = height - 26;
+  const x = age => right - age / 30 * (right - left);
+  const y = adc => bottom - (adc - low) / (high - low) * (bottom - top);
+  ctx.clearRect(0, 0, width, height);
+  ctx.font = '11px sans-serif';
+  for (let i = 0; i <= 4; i++) {
+    const value = low + (high - low) * i / 4;
+    ctx.strokeStyle = '#2b3d46'; ctx.beginPath(); ctx.moveTo(left, y(value)); ctx.lineTo(right, y(value)); ctx.stroke();
+    ctx.fillStyle = '#a4b5bb'; ctx.fillText(value.toFixed(0), 3, y(value) + 4);
+  }
+  for (const age of [30, 20, 10, 0]) {
+    ctx.fillStyle = '#a4b5bb'; ctx.fillText(age ? `-${age}s` : 'now', Math.min(right - 22, x(age)), height - 6);
+  }
+  if (Number.isFinite(baseline) && baseline >= low && baseline <= high) {
+    ctx.strokeStyle = '#efbb63'; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(left, y(baseline)); ctx.lineTo(right, y(baseline)); ctx.stroke(); ctx.setLineDash([]);
+  }
+  ctx.strokeStyle = '#6edcc7'; ctx.lineWidth = 2; ctx.beginPath();
+  samples.forEach((sample, i) => {
+    if (!i || samples[i - 1].age_s - sample.age_s > 0.5) ctx.moveTo(x(sample.age_s), y(sample.adc));
+    else ctx.lineTo(x(sample.age_s), y(sample.adc));
+  });
+  ctx.stroke();
+  $('metal-range').textContent = values.length
+    ? `Min ${Math.min(...values)} · Max ${Math.max(...values)} · Peak-to-peak ${Math.max(...values) - Math.min(...values)} ADC`
+    : 'No raw readings in the last 30 seconds';
+}
+
+function initializeMetalSettings() {
+  const command = action => {
+    const id = `metal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const payload = {type: 'detector_calibrate', action, request_id: id};
+    if (action === 'apply') {
+      if (!$('metal-baseline').value || !$('metal-full').value) { metalFeedback = 'Enter both endpoints.'; updateMetalSettings(); return; }
+      payload.baseline_adc = Number($('metal-baseline').value);
+      payload.full_response_adc = Number($('metal-full').value);
+      payload.reference_voltage = Number($('metal-reference').value);
+      if (!Number.isFinite(payload.reference_voltage) || payload.reference_voltage <= 0 || payload.reference_voltage > 5.5) {
+        metalFeedback = 'Enter an ADC reference between 0 and 5.5 V.'; updateMetalSettings(); return;
+      }
+      if (![payload.baseline_adc, payload.full_response_adc].every(v => Number.isFinite(v) && v >= 0 && v <= 255)
+          || Math.abs(payload.full_response_adc - payload.baseline_adc) < 1) {
+        metalFeedback = 'Endpoints must be within 0..255 and at least one count apart.'; updateMetalSettings(); return;
+      }
+    }
+    metalPending = {id, at: performance.now()};
+    send(payload); updateMetalSettings();
+  };
+  $('metal-zero').onclick = () => command('zero');
+  $('metal-apply').onclick = () => command('apply');
+  $('metal-reset').onclick = () => command('reset');
+  $('metal-control').onclick = () => send({type: 'take_control'});
+  $('metal-autoscale').onchange = drawMetalHistory;
+  $('metal-export').onclick = () => {
+    const rows = ['age_seconds,amplitude_adc', ...(state.detector.sensor?.history || []).map(s => `${s.age_s},${s.adc}`)];
+    const url = URL.createObjectURL(new Blob([rows.join('\n')], {type: 'text/csv'}));
+    const link = document.createElement('a'); link.href = url; link.download = 'detector-readings.csv'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  new ResizeObserver(() => {
+    if ($('settings-dialog').open && !$('settings-detector').hidden) drawMetalHistory();
+  }).observe($('metal-history'));
+}
+
 function initializeInputs() {
   initializeArmSettings();
+  initializeMetalSettings();
   document.querySelectorAll('[data-settings-tab]').forEach(tab => {
     tab.onclick = () => {
       stopArmMove();
@@ -1693,11 +1844,12 @@ function initializeInputs() {
         panel.classList.toggle('active', active);
         panel.hidden = !active;
       });
+      updateMetalSettings();
     };
   });
   for (const [key, label, checkbox] of [
     ['steering', 'Steering axis'], ['throttle', 'Forward pedal axis'], ['brake', 'Reverse pedal axis'],
-    ['deadman', 'Deadman button'], ['deadzone', 'Steering deadzone'],
+    ['deadzone', 'Steering deadzone'],
     ['invertSteering', 'Invert steering', true], ['invertThrottle', 'Invert forward pedal', true],
     ['invertBrake', 'Invert reverse pedal', true],
   ]) {

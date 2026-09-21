@@ -185,3 +185,52 @@ class ArmNodeTest(unittest.TestCase):
         healthy(self.node.safety, 3000000)
         self.node.tick()
         self.assertFalse(self.node.servo.torque)
+
+    def test_sweep_commands_endpoint_with_speed_limit_and_stops_on_rc_kill(self):
+        self.node.rc_cb(rc(2000000, pwm=1500))
+        self.node.sweep_cb(Bool(data=True))
+        self.node.tick()
+        self.assertTrue(self.node.sweeping)
+        self.assertEqual(self.bus.values[30], 2500)
+        self.assertGreater(self.bus.values[32], 0)
+        self.assertLessEqual(self.bus.values[32], self.node.get_parameter('speed').value)
+        self.bus.values[36] = 2500
+        self.node.servo.position = 2500
+        self.now += .05
+        self.node.tick()
+        self.assertEqual(self.bus.values[30], 1500)
+        self.node.rc_cb(rc(3000000, pwm=2000))
+        self.assertFalse(self.node.sweeping)
+        self.assertFalse(self.node.servo.torque)
+
+    def test_sweep_rejection_explains_missing_limits(self):
+        self.node.servo.calibration = None
+        self.node.sweep_cb(Bool(data=True))
+        self.assertFalse(self.node.sweeping)
+        self.assertIn('minimum, center and maximum', self.node.reason)
+        healthy(self.node.safety, 3000000)
+        self.node.tick()
+        self.assertFalse(self.node.servo.torque)
+
+    def test_sweep_reverses_when_servo_settles_short_of_each_endpoint(self):
+        self.node.sweep_cb(Bool(data=True))
+        for position, goal in ((2480, 1500), (1520, 2500)):
+            self.bus.values[36] = self.node.servo.position = position
+            self.node.tick()
+            self.assertTrue(self.node.sweeping)
+            self.assertEqual(self.bus.values[30], goal)
+
+    def test_sweep_does_not_reverse_early_or_chatter_in_a_narrow_range(self):
+        self.node.sweep_cb(Bool(data=True))
+        self.bus.values[36] = self.node.servo.position = 2460
+        self.node.tick()
+        self.assertEqual(self.bus.values[30], 2500)
+        self.node.servo.calibration = dict(minimum=1980, center=2000, maximum=2020)
+        self.bus.values[36] = self.node.servo.position = 2000
+        self.node.tick()
+        self.assertEqual(self.bus.values[30], 2020)
+        self.bus.values[36] = self.node.servo.position = 2015
+        self.node.tick()
+        self.assertEqual(self.bus.values[30], 1980)
+        self.node.tick()
+        self.assertEqual(self.bus.values[30], 1980)

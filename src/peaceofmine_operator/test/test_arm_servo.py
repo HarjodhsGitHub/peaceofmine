@@ -8,6 +8,7 @@ class Bus:
     def __init__(self):
         self.values = {2: 40, 14: 1023, 30: 2000, 32: 3, 34: 1023, 38: 0, 40: 0, 46: 0, 68: 2048, 0: 310, 70: 0, 6: 0, 8: 4095, 24: 0, 36: 2000, 42: 120, 43: 25}
         self.writes = []
+        self.values[73] = 0
     def close(self):
         pass
     def read(self, ident, address, size=2):
@@ -34,6 +35,35 @@ class ArmServoTest(unittest.TestCase):
             self.servo.request('center')
         self.servo.step(lambda: True)
         self.assertNotIn((24, 1), self.bus.writes)
+
+    def test_native_sweep_writes_profile_once_and_keeps_checking_safety(self):
+        self.servo.configure(dict(minimum=1500, center=2000, maximum=2500))
+        self.servo.request_sweep('maximum', speed=10, acceleration=4)
+        self.servo.step(lambda: True)
+        self.assertEqual(self.bus.values[73], 4)
+        self.assertEqual(self.bus.values[32], 10)
+        self.assertEqual(self.bus.values[30], 2500)
+        self.bus.writes.clear()
+        for _ in range(10):
+            self.servo.request_sweep('maximum', speed=10, acceleration=4)
+            self.servo.step(lambda: True)
+        self.assertEqual(self.bus.writes, [])
+        self.servo.request_sweep('minimum', speed=10, acceleration=4)
+        self.servo.step(lambda: True)
+        self.assertEqual(self.bus.writes, [(30, 1500)])
+        self.servo.step(lambda: False)
+        self.assertEqual(self.bus.writes[-1], (24, 0))
+        self.assertFalse(self.servo.torque)
+
+    def test_sweep_acceleration_does_not_change_settings_slider_profile(self):
+        self.servo.configure(dict(minimum=1500, center=2000, maximum=2500))
+        self.servo.request_sweep('maximum', speed=10, acceleration=4)
+        self.servo.step(lambda: True)
+        self.servo.stop()
+        self.servo.request_position(2100)
+        self.servo.step(lambda: True)
+        self.assertEqual(self.bus.values[73], 0)
+        self.assertEqual(self.bus.values[30], 2100)
 
     def test_jog_continues_to_joint_limit_and_stops_on_gate_loss(self):
         self.servo.request_jog(1)

@@ -83,6 +83,9 @@ class ArmServo:
         if self.cw == self.ccw or self.ccw > 4095:
             raise ValueError('Joint mode required; this driver never rewrites EEPROM mode limits')
         self.firmware = bus.read(ident, 2, 1)
+        self.original_acceleration = bus.read(ident, 73, 1)
+        self.acceleration = self.original_acceleration
+        self._applied_acceleration = self.original_acceleration
         self.max_torque = bus.read(ident, 14)
         self.position = bus.read(ident, 36)
         self.goal = self.position
@@ -120,6 +123,13 @@ class ArmServo:
             raise ValueError('Record and apply minimum, center and maximum first')
         self.jog_limits = None
         self.target = self.calibration[point]
+        self.acceleration = self.original_acceleration
+
+    def request_sweep(self, point, speed, acceleration):
+        self.request(point)
+        self.speed = speed
+        self.acceleration = acceleration
+        self.max_step = 4095
 
     def movement_limits(self):
         low, high = self.cw, self.ccw
@@ -136,6 +146,7 @@ class ArmServo:
             raise ValueError('Speed exceeds the MX-64 speed register range (1023 units)')
         self.jog_limits = self.movement_limits()
         self.speed = max(1, round(speed_deg_s / .684))
+        self.acceleration = self.original_acceleration
         # Jog continuously while held; keep only a small outstanding goal.
         self.max_step = 56
         self.target = self.jog_limits[0 if direction < 0 else 1]
@@ -146,6 +157,7 @@ class ArmServo:
             raise ValueError('Position must be within servo joint and saved limits')
         self.jog_limits = (low, high)
         self.speed = 0  # MX-64 joint mode: maximum available speed.
+        self.acceleration = self.original_acceleration
         self.max_step = 4095  # Send the user's target directly.
         self.target = position
 
@@ -161,6 +173,12 @@ class ArmServo:
         if not low <= self.position <= high:
             self.stop()
             raise ValueError('Present position outside calibration; reposition with torque off')
+        if self._applied_acceleration != self.acceleration:
+            if not allowed():
+                self.stop()
+                return
+            self.bus.write(self.ident, 73, self.acceleration, 1)
+            self._applied_acceleration = self.acceleration
         if not self.torque:
             if self.bus.read(self.ident, 34) == 0:
                 self.stop()
@@ -172,6 +190,7 @@ class ArmServo:
                 self.bus.write(self.ident, address, value, size)
             self.torque = True
             self._applied_speed = self.speed
+            self.goal = self.position
         if self._applied_speed != self.speed:
             if not allowed():
                 self.stop()
@@ -180,11 +199,12 @@ class ArmServo:
             self._applied_speed = self.speed
         # Jog/preset moves use a bounded lead; slider moves send the chosen target.
         goal = max(low, min(high, self.position + max(-self.max_step, min(self.max_step, self.target - self.position))))
-        if not allowed():
-            self.stop()
-            return
-        self.bus.write(self.ident, 30, goal)
-        self.goal = goal
+        if goal != self.goal:
+            if not allowed():
+                self.stop()
+                return
+            self.bus.write(self.ident, 30, goal)
+            self.goal = goal
 
     def snapshot(self):
         # One contiguous read keeps telemetry from delaying command/safety handling.

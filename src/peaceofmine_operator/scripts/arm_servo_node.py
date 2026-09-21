@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import rclpy
-from mavros_msgs.msg import State
+from mavros_msgs.msg import State, RCIn
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool, String, Float32
@@ -21,8 +21,18 @@ class ArmServoNode(Node):
     def __init__(self):
         super().__init__('arm_servo')
         for key, value in dict(serial_port='auto', servo_id=-1,
-                               minimum=-1, center=-1, maximum=-1, speed=20).items():
+                               minimum=-1, center=-1, maximum=-1, speed=20,
+                               sweep_endpoint_tolerance_deg=2.0,
+                               sweep_acceleration_deg_s2=40.0).items():
             self.declare_parameter(key, value)
+        tolerance = float(self.get_parameter('sweep_endpoint_tolerance_deg').value)
+        if not math.isfinite(tolerance) or not 0 < tolerance <= 10:
+            raise ValueError('Sweep endpoint tolerance must be within 0..10 degrees')
+        self.sweep_endpoint_tolerance = max(1, math.ceil(tolerance * 4096 / 360))
+        acceleration = float(self.get_parameter('sweep_acceleration_deg_s2').value)
+        if not math.isfinite(acceleration) or not 8.583 <= acceleration <= 254 * 8.583:
+            raise ValueError('Sweep acceleration must be within 8.583..2180.082 degrees/s^2')
+        self.sweep_acceleration = max(1, math.floor(acceleration / 8.583))
         self.safety = RcSafety()  # No hardware simulation bypass.
         self.sweeping = False
         self.sweep_speed = 5.0
@@ -42,6 +52,7 @@ class ArmServoNode(Node):
         self.state = {}
         self.last_command = {}
         self.create_subscription(State, 'mavros/state', self.state_cb, 10)
+        self.create_subscription(RCIn, 'mavros/rc/in', self.rc_cb, 10)
         self.create_subscription(Bool, 'operator/actuation_enabled', self.permission_cb, 1)
         self.create_subscription(String, 'arm/command', self.command_cb, 1)
         self.create_subscription(Bool, 'fixture/sweep_enabled', self.sweep_cb, 1)
@@ -129,18 +140,36 @@ class ArmServoNode(Node):
         self.sweep_speed = max(1.0, min(float(message.data), self.get_parameter('speed').value * .684, 28.0))
 
     def sweep_cb(self, message):
-        if (not message.data or not self.permission or time.monotonic() - self.permission_at >= .3
-                or not self.safety.servo_snapshot()['allowed'] or not self.servo or not self.servo.calibration):
-            try:
+        try:
+            if not message.data:
                 self.stop()
-            except Exception as error:
-                self.fail(error)
-            return
-        self.sweeping = True
-        self.sweep_direction = 1
+                self.reason = 'Sweep stopped'
+                return
+            safety = self.safety.servo_snapshot()
+            if not safety['allowed']:
+                raise ValueError(safety['reason'])
+            if not self.permission or time.monotonic() - self.permission_at >= .3:
+                raise ValueError('Sweep blocked: waiting for control-owner permission')
+            if not self.servo:
+                raise ValueError('Select an arm servo in Settings')
+            if not self.servo.calibration:
+                raise ValueError('Record and apply minimum, center and maximum before sweeping')
+            self.sweeping = True
+            self.sweep_direction = 1
+            self.reason = 'Sweeping between calibrated limits'
+        except ValueError as error:
+            self.stop()
+            self.reason = str(error)
+            self.get_logger().warning(self.reason)
+        except Exception as error:
+            self.fail(error)
 
     def state_cb(self, message):
         self.safety.update_state(message)
+        self.enforce_safety()
+
+    def rc_cb(self, message):
+        self.safety.update_rc(message)
         self.enforce_safety()
 
     def enforce_safety(self):
@@ -201,8 +230,8 @@ class ArmServoNode(Node):
             if not self.bus:
                 raise ValueError('Arm serial port is not connected')
             if action == 'select':
-                if self.permission:
-                    raise ValueError('Disarm before selecting a servo')
+                if self.servo and (self.servo.torque or self.servo.target is not None):
+                    raise ValueError('Stop the arm before selecting a servo')
                 self.select(command.get('servo_id'))
                 self.reason = f'Servo {self.servo.ident} selected; live position ready'
                 return
@@ -266,12 +295,14 @@ class ArmServoNode(Node):
                         self.stop()
                     else:
                         point = 'maximum' if self.sweep_direction > 0 else 'minimum'
-                        if abs(self.servo.position - self.servo.calibration[point]) <= 8:
+                        span = self.servo.calibration['maximum'] - self.servo.calibration['minimum']
+                        # Keep turnaround regions separate even for a narrow range.
+                        tolerance = min(self.sweep_endpoint_tolerance, span // 4)
+                        if abs(self.servo.position - self.servo.calibration[point]) <= tolerance:
                             self.sweep_direction *= -1
                             point = 'maximum' if self.sweep_direction > 0 else 'minimum'
-                        self.servo.speed = max(1, min(self.get_parameter('speed').value, round(self.sweep_speed / .684)))
-                        self.servo.max_step = max(1, min(16, round(self.sweep_speed * 4096 / 360 * .05)))
-                        self.servo.request(point)
+                        speed = max(1, min(self.get_parameter('speed').value, round(self.sweep_speed / .684)))
+                        self.servo.request_sweep(point, speed, self.sweep_acceleration)
                         self.command_at = now
                 self.servo.step(self.allowed)
                 if now - self.last_poll > .2:
@@ -283,6 +314,8 @@ class ArmServoNode(Node):
             self.sweep_pub.publish(Bool(data=self.sweeping))
             self.speed_pub.publish(Float32(data=self.sweep_speed))
             data = {**self.state, 'reason': self.connection_error or self.reason, 'last_command': self.last_command,
+                    'sweeping': self.sweeping,
+                    'sweep_acceleration_deg_s2': self.sweep_acceleration * 8.583,
                     'connected': self.servo is not None, 'serial_connected': self.bus is not None,
                     'serial_port': self.device, 'discovered_servos': self.discovered_servos,
                     'scanning': self.discovery is not None, 'safety': self.safety.servo_snapshot()}

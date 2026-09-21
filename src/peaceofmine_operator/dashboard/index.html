@@ -61,7 +61,7 @@
           <strong id="speed">0.00 m/s</strong>
         </div>
         <div id="notice" class="notice hidden" role="alert"></div>
-        <div class="camera-notice" id="camera-notice">Connect a controller, then arm when the lane is clear.</div>
+        <div class="camera-notice" id="camera-notice">Waiting for RC authority.</div>
       </section>
 
       <aside class="control-column">
@@ -94,12 +94,8 @@
             <text class="pad-face-label" x="202" y="101">A</text>
             <text class="pad-face-label" x="184" y="83">X</text>
           </svg>
-          <p id="drive-block">Take control, arm, then hold a trigger or bumper to drive.</p>
-          <div class="buttons">
-            <button id="arm" class="primary">Arm</button>
-            <button id="estop" class="danger">Disarm / stop</button>
-          </div>
-          <p id="drive-help" class="safety-note">Take control, then arm (or press A). Left stick steers, RT forward, LT reverse. A trigger or bumper is the deadman. Releasing it stops the rover.</p>
+          <p id="drive-block">Take control when RC permits ROS driving.</p>
+          <p id="drive-help" class="safety-note">RC switch controls drive authority.</p>
         </section>
 
         <section class="panel detector-panel">
@@ -122,6 +118,7 @@
             <label for="sweep-speed">Sweep <output id="sweep-speed-value">60&deg;/s</output></label>
             <input id="sweep-speed" type="range">
           </div>
+          <p id="sweep-status" class="safety-note" role="status"></p>
         </section>
 
         <section class="panel probe-panel">
@@ -186,6 +183,7 @@
         <button type="button" class="settings-tab active" role="tab" aria-selected="true" aria-controls="settings-input" data-settings-tab="input">Controls</button>
         <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-cameras" data-settings-tab="cameras">Cameras</button>
         <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-arm" data-settings-tab="arm">Arm calibration</button>
+        <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-detector" data-settings-tab="detector">Metal detector</button>
       </nav>
       <section id="settings-input" class="settings-panel active" role="tabpanel" data-settings-panel="input">
       <label for="control-source">Control source</label>
@@ -202,7 +200,7 @@
       </select>
       <label for="steering-sensitivity">Steering sensitivity <output id="sensitivity-value">100%</output></label>
       <input id="steering-sensitivity" type="range" min="50" max="150" value="100" step="5">
-      <p class="diagnostic-banner">INPUT LAB · Driving is stopped and disarmed while Settings is open. Re-arm after closing.</p>
+      <p class="diagnostic-banner">INPUT LAB · Browser driving is stopped while Settings is open.</p>
       <p id="browser-status" class="dialog-help"></p>
       <section id="device-settings">
         <label for="input-device">Browser device</label>
@@ -215,11 +213,11 @@
         <p class="dialog-help">Use the raw input monitor to find each axis and button. Indices start at 0. Pedals must have separate axes; check that each reads 0 released and 1 fully pressed.</p>
         <div id="wheel-mapping" class="mapping-grid"></div>
       </section>
-      <button type="button" id="keyboard-test">Click here, then test WASD + Shift</button>
+      <button type="button" id="keyboard-test">Test WASD</button>
       <div id="key-preview" class="key-preview" aria-label="Keyboard input preview"></div>
       <div class="input-preview">
         <svg viewBox="0 0 160 160" role="img" aria-label="Steering input preview"><g id="steering-preview" transform="rotate(0 80 80)"><circle cx="80" cy="80" r="65"/><path d="M15 80 H145 M80 80 V145 M80 15 V35"/><circle cx="80" cy="80" r="16"/></g></svg>
-        <div><h3>Mapped input</h3><pre id="mapped-input"></pre><p class="dialog-help">Live input preview. WASD ramps up and recenters smoothly; releasing Shift stops immediately.</p></div>
+        <div><h3>Mapped input</h3><pre id="mapped-input"></pre></div>
       </div>
       <h3>Raw browser input</h3>
       <div id="raw-axes" class="raw-axes"></div>
@@ -228,6 +226,46 @@
         <p class="dialog-help">Use HTTPS or localhost. For a remote rover, connect the wheel to the computer running Chrome. USB visibility (including 046d:c294) does not prove that the OS driver or browser exposes its controls. If no device appears, check the OS game-controller panel, USB passthrough if using a VM, and try another USB port. Non-standard wheels need manual mapping here. Force feedback and raw WebHID driving are not implemented.</p>
         <p class="dialog-help"><a href="https://googlechrome.github.io/samples/gamepad-demo/" target="_blank" rel="noopener">Chrome Gamepad tester</a> · <a href="https://github.com/GoogleChrome/samples/tree/gh-pages/gamepad-demo" target="_blank" rel="noopener">GitHub sample</a> · <a href="https://developer.chrome.com/docs/capabilities/hid" target="_blank" rel="noopener">Chrome WebHID documentation</a></p>
       </details>
+      </section>
+      <section id="settings-detector" class="settings-panel" role="tabpanel" data-settings-panel="detector" hidden>
+        <div class="settings-section-heading"><h3>Metal detector</h3><span id="metal-status" class="badge neutral">NO TELEMETRY</span></div>
+        <dl class="metal-metrics">
+          <div><dt>Raw amplitude</dt><dd id="metal-raw">-- ADC</dd></div>
+          <div><dt>Estimated peak voltage</dt><dd id="metal-voltage">-- V</dd></div>
+          <div><dt>Peak voltage</dt><dd id="metal-voltage">-- V peak</dd></div>
+          <div><dt>Response</dt><dd id="metal-response">-- %</dd></div>
+          <div><dt>Receive rate</dt><dd id="metal-rate">-- Hz</dd></div>
+          <div><dt>Sample age</dt><dd id="metal-age">-- ms</dd></div>
+        </dl>
+        <div class="metal-chart-heading"><span>Amplitude · last 30 seconds</span><label><input id="metal-autoscale" type="checkbox" checked> Auto scale</label></div>
+        <canvas id="metal-history" aria-label="Raw metal detector amplitude over the last 30 seconds"></canvas>
+        <p id="metal-range">No readings</p>
+        <h3>Calibration</h3>
+        <div class="metal-calibration">
+          <label>Baseline (ADC)<input id="metal-baseline" type="number" min="0" max="255" step="0.01"></label>
+          <label>Full response (ADC)<input id="metal-full" type="number" min="0" max="255" step="0.01"></label>
+          <label>ADC reference (V)<input id="metal-reference" type="number" min="0.1" max="5.5" step="0.01"></label>
+        </div>
+        <div class="metal-actions">
+          <button id="metal-zero" type="button">Zero now</button>
+          <button id="metal-apply" type="button">Apply endpoints</button>
+          <button id="metal-reset" type="button" class="quiet">Restore launch values</button>
+          <button id="metal-control" type="button" class="quiet">Take control</button>
+        </div>
+        <p id="metal-feedback" role="status">Waiting for detector</p>
+        <p id="metal-voltage-note" class="safety-note">Sine-equivalent AC peak estimate, excluding DC bias.</p>
+        <details class="metal-debug" open>
+          <summary>Diagnostics</summary>
+          <dl class="metal-diagnostics">
+            <dt>Port</dt><dd id="metal-port">--</dd>
+            <dt>Packets / rejected lines</dt><dd id="metal-counts">--</dd>
+            <dt>Sequence / device uptime</dt><dd id="metal-sequence">--</dd>
+            <dt>Driver status</dt><dd id="metal-error">--</dd>
+          </dl>
+          <div class="metal-actions"><label><input id="metal-debug-live" type="checkbox" checked> Live packet log</label><button id="metal-export" type="button" class="quiet">Export readings CSV</button></div>
+          <textarea id="metal-log" rows="5" readonly spellcheck="false" aria-label="Recent decoded detector packets"></textarea>
+        </details>
+        <details class="metal-debug"><summary>Launch calibration (session changes are not saved)</summary><textarea id="metal-launch" rows="2" readonly spellcheck="false" aria-label="Detector calibration launch values"></textarea></details>
       </section>
       <section id="settings-arm" class="settings-panel" role="tabpanel" data-settings-panel="arm" hidden>
         <h3>Arm control &amp; calibration</h3>
@@ -260,7 +298,7 @@
             <details class="arm-help"><summary>Position units and calibration help</summary>
               <p>The angle is the servo shaft position, not its angle to the ground. 4096 raw ticks = 360°. Left decreases the angle; mounting may reverse physical direction.</p>
               <p>With clear space and the linkage supported, jog to a safe position, release, and record it below. Leave clearance from mechanical stops. Recording does not move the servo.</p>
-              <p>RC override is allowed for the arm. Vehicle driving is blocked during calibration. Selecting another servo requires website controls to be disarmed.</p>
+              <p>RC override permits arm movement; RC kill blocks it. Stop the arm before changing servo ID.</p>
             </details>
           </div>
           <div class="arm-telemetry-panel">
@@ -343,7 +381,7 @@
           <span>Require browser permission and HTTPS or localhost.</span>
         </div>
       </section>
-      <p class="dialog-help">Pad on this browser: Gamepad API needs http://localhost or HTTPS. Pad on the SVEA: joy_node publishes /joy and the gateway drives from that, so a LAN http:// address still works. Auto uses the browser standard mapping when the pad reports it, otherwise Linux Xbox 360 (triggers on axes). Left stick steers, RT forward, LT reverse, LB/RB deadman. Keyboard: click the forward camera, then WASD while holding Shift.</p>
+      <p class="dialog-help">Browser gamepad requires localhost or HTTPS. RC switch controls drive authority.</p>
     </form>
   </dialog>
 

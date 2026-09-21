@@ -96,8 +96,9 @@ rover's left. The forward camera, the field map, and the two buried targets at
 Every connected browser receives the same telemetry. The header shows the
 viewer count and whether this browser holds the control lease. Any viewer can
 take or steal control at any time; ownership transfers immediately, the
-previous owner becomes a spectator, and the gateway disarms so the new owner
-must arm before sending motion.
+previous owner becomes a spectator, and the gateway stops active motion.
+Only the owner can drive, sweep, move the probe, or change calibration.
+The physical RC determines drive authority; there is no extra browser arm step.
 
 Plug the Xbox 360 (or another gamepad) into the computer that is showing this
 dashboard, then press any button if the Drive panel still says no controller
@@ -105,12 +106,12 @@ is connected. Chrome often ignores a pad until that first press.
 
 The default **Auto** mapping uses the browser `standard` layout when the pad
 reports it: left stick steers, right trigger drives forward, left trigger
-reverses, and a trigger or bumper is the deadman. An Xbox 360 on Linux often
+reverses. An Xbox 360 on Linux often
 reports an empty mapping and puts the triggers on axes; Auto then uses that
 Xbox 360 layout. Settings → **Controller mapping** can force Standard or
 Xbox 360 (Linux) if the steer/throttle meters do not follow the pad. For
 keyboard driving, choose **WASD keyboard** in Settings, click the forward
-camera to focus it, then hold Shift while using WASD. Gamepad sticks map linearly (0.12 deadzone, no extra smoothing). WASD
+camera to focus it, then use WASD without Shift. Gamepad sticks map linearly (0.12 deadzone, no extra smoothing). WASD
 throttle and steering ramp progressively. Both send changed commands promptly,
 plus a 20 Hz keepalive while moving.
 
@@ -119,8 +120,8 @@ Browser gamepad input on a non-localhost URL requires HTTPS (`tls_cert` and
 `use_joy:=true`: ROS joystick input works over plain HTTP and takes priority
 over browser drive commands while the joystick is live.
 
-The gateway publishes `cmd_vel` only while a lease is held, armed, and the
-deadman is down. It publishes zeros for 0.5 s after that stops and then goes
+The gateway publishes `cmd_vel` only while a lease is held, RC permits ROS
+driving, and input is newer than 0.25 s. It publishes zeros for 0.5 s after input stops and then goes
 silent, so `twist_consumer`'s own command timeout stays an independent safety
 layer and an idle dashboard does not compete with other `cmd_vel` publishers.
 
@@ -170,19 +171,17 @@ Choose one of three schemes:
 - **Xbox / standard gamepad**: the dashboard selects an active browser pad
   automatically; Settings can select a specific device and override the
   automatically detected `standard` or Xbox 360 mapping.
-  Left stick steers, RT drives forward, LT reverses, and either trigger or
-  bumper acts as the deadman. A arms when you own control.
+  Left stick steers, RT drives forward, LT reverses. RC controls drive authority.
 - **WASD keyboard**: focus the test button to preview keys, or close Settings
-  and focus the forward camera to drive while holding Shift.
+  and focus the forward camera to drive with WASD.
 - **Steering wheel**: select the wheel, inspect raw axes and buttons, then set
-  steering, forward pedal, reverse pedal, and deadman indices. Invert axes as
+  steering, forward pedal, and reverse pedal indices. Invert axes as
   needed. Defaults are starting points, not a verified G27 mapping. Pedals
   must use distinct axes spanning -1 to +1; combined pedal axes are rejected.
   The reverse pedal commands reverse motion, not a separate vehicle brake.
 
-Before arming, verify released pedals produce zero speed, steering is centered,
-full pedal travel reaches the expected signed speed, and only the chosen
-button activates the deadman. Preferences are stored locally in this browser;
+Before driving, verify released pedals produce zero speed, steering is centered,
+and full pedal travel reaches the expected signed speed. Preferences are stored locally in this browser;
 device selection is deliberately required again after a page reload.
 
 Connect the wheel to the Chrome client computer. Use HTTPS when accessing a
@@ -222,18 +221,19 @@ target for the virtual camera. Unavailable metadata is shown as a dash.
 Rotate changes the local view by 90° and saves the orientation independently for
 each slot; it does not modify the camera sensor or steering directions.
 
-WASD uses bundled Keydrown 1.3.0 for held-key input. While Shift is held,
+WASD uses bundled Keydrown 1.3.0 for held-key input. While drive keys are held,
 throttle reaches full scale in about 0.63 seconds and steering in about 0.31
 seconds. Releasing WASD ramps throttle down and recenters steering. Releasing
-Shift, losing focus, disconnecting, or opening Settings bypasses the ramp and
+the drive keys, losing focus, disconnecting, or opening Settings bypasses the ramp and
 stops immediately. The Settings keyboard test previews the same ramp without
 sending motion. Xbox and wheel mappings are unchanged. Connection status and
 retry remain in the main dashboard; the redundant Connection settings tab is removed.
 
 ### Arm servo and RC authority
 
-Servo motion requires fresh connected PX4 `system_status == 4`; RC override does
-not block servos. Vehicle drive additionally requires RC ROS authority and arming.
+Servo motion requires fresh connected PX4 `system_status == 4` and fresh RC input
+with kill clear; RC override does not block servos. Vehicle drive additionally
+requires RC ROS authority and PX4 arming, with no separate browser arming.
 The header distinguishes ROS mode, RC override, kill, disarmed, and unknown/lost
 status. Settings → Arm calibration records safe limits and exports launch XML.
 See [the safety audit and setup](../../docs/development/arm-servo-safety.md) before

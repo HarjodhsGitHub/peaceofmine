@@ -66,7 +66,11 @@ $('settings').click();
 assert(sent.some(m => m.type === 'estop'), 'settings disarms');
 lastDriveSent = -1000; inputLoop();
 assert(latestDrive().deadman === false && latestDrive().linear_x === 0, 'settings blocks drive');
-$('settings-dialog').close();
+const beforeSettingsClose = sent.length;
+$('settings-dialog').querySelector('button[value="close"]').click();
+const closeMessages = sent.slice(beforeSettingsClose);
+assert(closeMessages.some(m => m.type === 'arm_servo' && m.action === 'stop'), 'closing settings releases arm');
+assert(closeMessages.some(m => m.type === 'estop'), 'closing settings exits calibration');
 preferences.input = 'controller'; lastDriveSent = -1000; inputLoop();
 assert(!latestDrive().deadman, 'unmapped wheel has no trigger drive');
 preferences.input = 'wheel';
@@ -181,8 +185,8 @@ assert($('auxiliary-preview-state').textContent === 'Off' && $('auxiliary-dimens
 $('settings-dialog').close();
 preferences.input = 'keyboard'; cameraFocused = true;
 const keyEvent = (type, code, keyCode) => document.dispatchEvent(new KeyboardEvent(type, {code, keyCode, bubbles: true}));
-keyEvent('keydown', 'KeyW', 87); keyEvent('keydown', 'KeyA', 65); keyEvent('keydown', 'ShiftLeft', 16);
-assert(keys.has('KeyW') && keys.has('KeyA') && keys.has('ShiftLeft'), 'Keydrown acquires held WASD keys');
+keyEvent('keydown', 'KeyW', 87); keyEvent('keydown', 'KeyA', 65);
+assert(keys.has('KeyW') && keys.has('KeyA') && !keys.has('ShiftLeft'), 'WASD works without Shift');
 resetKeyboardRamp(0);
 let ramped = readKeyboard(); rampKeyboard(ramped, 16);
 assert(ramped.linear > 0 && ramped.linear < .1 && ramped.angular > 0 && ramped.angular < .2, 'WASD starts gradually with correct yaw');
@@ -191,15 +195,13 @@ const at30 = runRamp(30), at60 = runRamp(60);
 assert(Math.abs(at30.linear - at60.linear) < .00001 && Math.abs(at30.angular - at60.angular) < .00001, 'ramp independent of frame rate');
 keyEvent('keyup', 'KeyW', 87); keyEvent('keyup', 'KeyA', 65);
 ramped = readKeyboard(); rampKeyboard(ramped, 516);
-assert(ramped.linear > 0 && ramped.linear < at60.linear && ramped.angular > 0 && ramped.angular < at60.angular, 'throttle coasts down and steering recenters');
-keyEvent('keyup', 'ShiftLeft', 16);
-assert(keyboardRamp.throttle === 0 && keyboardRamp.steer === 0 && !latestDrive().deadman, 'deadman release bypasses ramp');
+assert(ramped.linear === 0 && ramped.angular === 0, 'releasing WASD stops without a separate deadman');
 
 state.safety = {allowed: false, mode: 'kill', reason: 'PX4 kill'};
 state.connected = true; state.drive.you_control_owner = true; state.drive.armed = false;
 updateHud();
 assert($('rc-safety').textContent === 'RC KILL', 'physical safety indicator');
-assert($('arm').disabled && $('probe-slider').disabled && $('sweep-toggle').disabled && $('sweep-speed').disabled, 'all website actuation gated');
+assert(!$('arm') && !$('estop') && $('probe-slider').disabled && $('sweep-toggle').disabled && $('sweep-speed').disabled, 'RC kill gates actuation without UI arm buttons');
 state.arm_servo = {connected: true, servo_id: 2, discovered_servos: [1, 2], serial_port: '/dev/serial/by-id/arm', position: 2000, torque: false,
   calibration: {minimum: 1500, center: 2000, maximum: 2500}};
 updateArmSettings();
@@ -213,9 +215,10 @@ assert($('arm-calibration-access').textContent.includes('Take control'), 'disabl
 state.drive.you_control_owner = true;
 updateArmSettings();
 assert(!$('arm-select-id').disabled && $('arm-take-control').hidden, 'selection enabled for disarmed owner');
-state.drive.armed = true;
+state.arm_servo.torque = true;
 updateArmSettings();
-assert($('arm-select-id').disabled && $('arm-calibration-access').textContent.includes('Disarm'), 'armed selection has explicit explanation');
+assert($('arm-select-id').disabled && $('arm-calibration-access').textContent.includes('Stop'), 'moving servo cannot change ID');
+state.arm_servo.torque = false;
 state.drive.armed = false;
 state.drive.calibrating = false;
 state.safety = {allowed: false, servo_allowed: true, mode: 'override'};
@@ -267,6 +270,28 @@ $('settings-dialog').showModal();
 const beforeCalibrationLoop = sent.length;
 inputLoop();
 assert(!sent.slice(beforeCalibrationLoop).some(m => m.type === 'drive'), 'calibration does not send background drive commands');
+state.drive.calibrating = false;
+state.drive.you_control_owner = true;
+state.safety = {allowed: false, servo_allowed: true, mode: 'override'};
+state.drive.rc = {fresh: true, steering: .5, throttle: -.7, channels: [1750, 1150, 1500, 1500, 1500], steering_channel: 1, throttle_channel: 2};
+updateHud();
+assert(!$('sweep-toggle').disabled, 'RC override permits sweep without website arming');
+assert($('controller').textContent === 'Physical RC transmitter' && $('pad-raw').textContent.includes('1750'), 'RC inputs visualized');
+state.detector.sensor = {available: true, fresh: true, packet: {v: 1, seq: 2, uptime_ms: 100, amplitude_adc: 20},
+  baseline_adc: 20, full_response_adc: 150, reference_voltage: 5, rate_hz: 20, age_ms: 10,
+  history: [{age_s: 1, adc: 20}, {age_s: .05, adc: 150}]};
+state.robot.speed_mps = 0;
+document.querySelector('[data-settings-tab="detector"]').click();
+updateMetalSettings();
+assert($('metal-voltage').textContent === '0.392 V', 'ADC peak converted to volts');
+assert(!$('metal-zero').disabled && !$('settings-detector').hidden, 'detector tab and zero available');
+$('metal-zero').click();
+assert(sent.at(-1).type === 'detector_calibrate' && sent.at(-1).action === 'zero', 'zero reaches gateway');
+metalPending = null;
+state.drive.you_control_owner = false; updateMetalSettings();
+assert($('metal-zero').disabled && $('metal-apply').disabled, 'spectator cannot calibrate');
+state.detector.sensor.fresh = false; updateMetalSettings();
+assert($('metal-voltage').textContent === '-- V', 'stale voltage hidden');
 document.body.textContent = 'BROWSER TESTS PASSED';
 '''
         import json
@@ -279,7 +304,7 @@ document.body.textContent = 'BROWSER TESTS PASSED';
             page.write_text(html)
             result = subprocess.run(['chromium', '--headless', '--no-sandbox', '--disable-gpu',
                                      '--user-data-dir=' + tmp + '/profile', '--dump-dom', page.as_uri()],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, timeout=60)
         self.assertIn('BROWSER TESTS PASSED</body>', result.stdout, result.stdout + result.stderr[-2000:])
 
 

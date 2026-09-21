@@ -4,10 +4,12 @@
   <arg name="baud_rate" default="115200"/>
   <arg name="baseline_adc" default="0.0"/>
   <arg name="full_response_adc" default="255.0"/>
+  <arg name="reference_voltage" default="5.0"/>
   <node pkg="peaceofmine_operator" exec="sensor_serial_node.py" name="sensor_serial" output="screen">
     <param name="serial_port" value="$(var serial_port)" type="str"/>
     <param name="baud_rate" value="$(var baud_rate)" type="int"/>
     <param name="baseline_adc" value="$(var baseline_adc)" type="float"/>
     <param name="full_response_adc" value="$(var full_response_adc)" type="float"/>
+    <param name="reference_voltage" value="$(var reference_voltage)" type="float"/>
   </node>
 </launch>

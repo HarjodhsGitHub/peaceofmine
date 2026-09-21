@@ -11,7 +11,7 @@ import unittest
 try:
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
-    from std_msgs.msg import Bool, Float32, UInt16
+    from std_msgs.msg import Bool, Float32, UInt16, String
 except ImportError:
     rclpy = None
 
@@ -53,10 +53,23 @@ class SensorNodeTest(unittest.TestCase):
             self.assertEqual(raw[-1], 70)
             self.assertAlmostEqual(ratio[-1], 0.5)
             self.assertTrue(fresh[-1])
+            node.calibrate(String(data=json.dumps(dict(action='zero', request_id='zero'))))
+            self.assertTrue(node.command_result['ok'])
+            self.assertEqual(node.baseline, 70)
+            node.calibrate(String(data=json.dumps(dict(action='apply', request_id='apply', baseline_adc=20,
+                                                       full_response_adc=150, reference_voltage=5.0))))
+            self.assertTrue(node.command_result['ok'])
+            self.assertAlmostEqual(20 * node.reference_voltage / 255, .3921568627)
+            node.calibrate(String(data=json.dumps(dict(action='apply', request_id='bad', baseline_adc=20,
+                                                       full_response_adc=20))))
+            self.assertFalse(node.command_result['ok'])
+            self.assertEqual(node.full_response, 150)
             spin(0.1)
             count = len(raw)
             spin(0.3)
             self.assertFalse(fresh[-1])
+            node.calibrate(String(data=json.dumps(dict(action='zero', request_id='stale'))))
+            self.assertFalse(node.command_result['ok'])
             self.assertEqual(len(raw), count)
         finally:
             executor.shutdown()

@@ -6,6 +6,8 @@
   <arg name="center" default="-1"/>
   <arg name="maximum" default="-1"/>
   <arg name="speed" default="20"/>
+  <arg name="sweep_endpoint_tolerance_deg" default="2.0"/>
+  <arg name="sweep_acceleration_deg_s2" default="40.0"/>
   <node pkg="peaceofmine_operator" exec="arm_servo_node.py" name="arm_servo" output="screen">
     <param name="serial_port" value="$(var serial_port)" type="str"/>
     <param name="servo_id" value="$(var servo_id)"/>
@@ -13,5 +15,7 @@
     <param name="center" value="$(var center)"/>
     <param name="maximum" value="$(var maximum)"/>
     <param name="speed" value="$(var speed)"/>
+    <param name="sweep_endpoint_tolerance_deg" value="$(var sweep_endpoint_tolerance_deg)" type="float"/>
+    <param name="sweep_acceleration_deg_s2" value="$(var sweep_acceleration_deg_s2)" type="float"/>
   </node>
 </launch>

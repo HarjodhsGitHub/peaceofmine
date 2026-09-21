@@ -58,11 +58,14 @@ class TeleopTest(unittest.TestCase):
             self.assertFalse(self.node._armed)
 
     def test_servo_commands_work_in_rc_override_while_drive_is_blocked(self):
-        from mavros_msgs.msg import State
+        from mavros_msgs.msg import State, RCIn
         self.node._rc_safety.simulation = False
         message = State(connected=True, armed=False, system_status=4)
         message.header.stamp.sec = 100
-        self.node._state_cb(message)  # No RC channel stream required for servos.
+        self.node._state_cb(message)
+        remote = RCIn(channels=[1700, 1800, 1500, 1500, 1500], rssi=100)
+        remote.header.stamp.sec = 100
+        self.node._rc_cb(remote)
         self.arm()
         self.assertTrue(self.node._armed)
         with patch.object(self.node._arm_command_pub, 'publish') as servo, \
@@ -86,6 +89,25 @@ class TeleopTest(unittest.TestCase):
         camera = self.node.snapshot()['cameras']['front']
         self.assertEqual((camera['width'], camera['height']), (1280, 720))
         self.assertEqual(camera['frame_age_ms'], 0)
+
+    def test_only_lease_owner_can_actuate_or_calibrate(self):
+        self.command('take_control')
+        spectator = object()
+        self.node._detector_telemetry.update(dict(fresh=True))
+        with patch.object(self.node._sweep_enabled_pub, 'publish') as sweep, \
+                patch.object(self.node._detector_command_pub, 'publish') as detector:
+            for payload in (dict(type='sweep_enabled', enabled=True), dict(type='sweep_enabled', enabled=False),
+                            dict(type='detector_calibrate', action='zero'), dict(type='probe_target', depth_mm=20),
+                            dict(type='arm_servo', action='stop'), dict(type='drive', linear_x=.4)):
+                self.assertIn('Spectator', self.node.handle_command(spectator, payload)['message'])
+            sweep.assert_not_called()
+            detector.assert_not_called()
+            self.node.handle_command(spectator, dict(type='take_control'))
+            self.assertFalse(sweep.call_args.args[0].data)
+            self.assertIs(self.node._lease, spectator)
+            self.assertIn('Spectator', self.command('sweep_enabled', enabled=True)['message'])
+            self.assertIsNone(self.node.handle_command(spectator, dict(type='detector_calibrate', action='zero', request_id='new-owner')))
+            detector.assert_called_once()
 
     def test_px4_safety_disarms_all_outputs_and_blocks_rearming(self):
         try:
@@ -123,16 +145,40 @@ class TeleopTest(unittest.TestCase):
         self.command('disarm')
         self.assertFalse(self.node._calibrating)
 
-    def test_browser_requires_lease_arm_and_deadman(self):
-        drive = dict(linear_x=0.4, angular_z=-0.2, deadman=True)
+    def test_browser_requires_lease_and_rc_authority_without_ui_arm_or_deadman(self):
+        drive = dict(linear_x=0.4, angular_z=-0.2)
         self.assertIsNotNone(self.command('drive', **drive))
         self.command('take_control')
         self.command('drive', **drive)
-        self.output.assert_not_called()
-        self.command('arm')
         self.output.assert_called_with(0.4, -0.2)
         self.command('drive', **dict(drive, deadman=False))
-        self.output.assert_called_with(0.0, 0.0)
+        self.output.assert_called_with(0.4, -0.2)
+
+    def test_sweep_with_rc_override_and_without_browser_arm(self):
+        from mavros_msgs.msg import RCIn
+        from test_rc_safety import healthy
+        self.node._rc_safety.simulation = False
+        healthy(self.node._rc_safety)
+        remote = RCIn(channels=[1750, 1250, 1500, 1500, 1500], rssi=100)
+        remote.header.stamp.sec = 2000000
+        self.node._rc_cb(remote)
+        self.command('take_control')
+        self.node._arm_state = dict(connected=True, calibration=dict(minimum=1000, center=2000, maximum=3000))
+        self.node._arm_state_at = 100.0
+        with patch.object(self.node._sweep_enabled_pub, 'publish') as sweep, patch.object(self.node._permission_pub, 'publish') as permission:
+            self.assertIsNone(self.command('sweep_enabled', enabled=True))
+            self.assertTrue(sweep.call_args.args[0].data)
+            self.node._drive_watchdog()
+            self.assertTrue(permission.call_args.args[0].data)
+            self.assertIsNotNone(self.command('drive', linear_x=.4))
+            controls = self.node.snapshot()['drive']['rc']
+            self.assertEqual((controls['steering'], controls['throttle']), (.5, -.5))
+            remote.header.stamp.sec += 1
+            remote.channels[4] = 2000
+            self.node._rc_cb(remote)
+            self.assertFalse(permission.call_args.args[0].data)
+            self.assertFalse(sweep.call_args.args[0].data)
+            self.assertIsNotNone(self.command('sweep_enabled', enabled=True))
 
     def test_browser_timeout_disarm_and_disconnect_stop(self):
         for stop in ('timeout', 'disarm', 'disconnect'):

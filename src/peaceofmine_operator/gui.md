@@ -24,8 +24,9 @@ Xbox on the laptop
 
 `cmd_vel` is published as soon as a valid drive command arrives (browser
 WebSocket or `/joy`), not on the next watchdog tick. Publishing continues
-only while you hold the control lease, the GUI is armed, a deadman is true
-(RT, LT, LB, or RB), and commands are newer than 0.25 s. After that the
+only while you hold the control lease, the physical RC permits ROS driving,
+and commands are newer than 0.25 s. No additional GUI arming or Shift key is
+required. After that the
 gateway sends zeros for 0.5 s and goes silent. Stick mapping is linear
 with a 0.12 deadzone; there is no extra command smoothing.
 
@@ -49,8 +50,9 @@ Yes, if the dashboard is opened as a **secure context**:
 - Stop any other operator / sim launch first (two stacks must not share
   `cmd_vel` or port 8080).
 - Keep the vehicle lifted or in a clear area for the first test.
-- Have the physical RC ready. Disarm in the GUI or release the deadman
-  to stop software commands.
+- Have the physical RC ready. Its kill switch stops actuation. Releasing the
+  drive input, losing browser focus, or losing the control connection stops
+  software driving.
 - Do not enable localization, lidar, or RTK until those sensors are
   brought up separately.
 
@@ -132,8 +134,8 @@ If the Wi-Fi address changes, regenerate the certificate with the new address.
 2. Open `https://<svea-ip>:8080` (same IP as in the certificate; use your chosen port).
 3. Accept the certificate warning.
 4. Confirm the Drive panel shows the pad and the graphic moves.
-5. **Take control**, then **Arm** (or press **A**).
-6. RT forward, LT reverse, left stick steer. Hold a trigger or bumper.
+5. **Take control** and select ROS authority on the physical RC.
+6. RT forward, LT reverse, left stick steer. No separate browser arm step.
 
 The status line must read `ROS cmd_vel …`. Stick lights alone are not
 enough. The virtual forward camera is first-person, so the car will not
@@ -141,8 +143,7 @@ slide across that view; watch the vehicle and the speed readout.
 
 ### 4. Stop
 
-Disarm / stop in the GUI, then `Ctrl+C` the launch. Physical RC still
-overrides.
+Stop with the physical RC, then `Ctrl+C` the launch.
 
 ## Simulation only
 
@@ -163,12 +164,32 @@ HTTPS for a remote laptop as above.
 | Standard | Force LT/RT on buttons 6/7. |
 | Xbox 360 (Linux) | Force bipolar trigger axes. |
 
-WASD: Settings → keyboard, click the forward camera, hold Shift as deadman.
+WASD: Settings → keyboard, then click the forward camera. Shift is not required.
+
+The physical RC is authoritative. RC override blocks browser driving but permits
+the control owner to sweep the servo while PX4 is active and RC kill is clear.
+RC loss, kill, stale heartbeat, gateway permission timeout, or control-owner
+disconnect stops the arm. Settings jogging does not require saved limits;
+sweeping requires minimum, center and maximum calibration. The Drive panel shows
+RC channel input in override mode. Visualization defaults to steering CH1 and
+throttle CH2; adjust `rc_steering_channel` and `rc_throttle_channel` in launch XML
+to match your transmitter. PWM visualization assumes 1000/1500/2000 endpoints.
+
+Settings → Metal detector shows a 30-second raw ADC graph, receive rate, packet
+log, rejected-line count, freshness and estimated peak voltage. Only the control
+owner can zero or apply calibration. Zero averages the last second of fresh
+samples; the full-response endpoint maps to 100%. Changes affect the ROS
+signal-ratio topic for all clients. They last for the node session; the tab
+exports launch XML for persistence. With a 5 V reference, 20 ADC is about
+0.392 V peak and 150 ADC about 2.941 V peak. This is the firmware's sine-equivalent
+AC amplitude, not DC pin voltage; values above half the reference warrant
+checking waveform shape or clipping. Set the reference to measured AVcc for
+better conversion accuracy. Simulated payloads do not provide raw ADC readings.
 
 ## Files
 
 - `dashboard/index.html`, `app.js`, `style.css` — pad graphic, mapping, HUD
-- `scripts/operator_gateway.py` — lease, arm, deadman, `cmd_vel`
+- `scripts/operator_gateway.py` — control lease, RC authority, command timeout, `cmd_vel`
 - `launch/operator.launch.xml` — hardware or simulation, selected by `is_sim`
 - `launch/operator_sim.launch.py` — `sim_svea` + simulated payload
 - `gui_plan.md` — longer roadmap (cameras, map, payload, mission record)
