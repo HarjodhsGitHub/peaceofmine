@@ -1,5 +1,13 @@
 # ArbotiX-M firmware
 
+The operator dashboard now requires the [safe arm firmware](safe_arm/README.md),
+which adds a communication watchdog and local smooth sweeping. Its source and
+build instructions are separate from the archived firmware below. Safe arm v1
+was flashed and read-back verified on 2026-09-21 via FTDI adapter AI049UTL;
+runtime reported stopped with no fault. Physical sweep validation remains pending.
+
+## Archived firmware
+
 `arbotix_ros/` contains the exact firmware source flashed to the connected
 ArbotiX-M on 2026-08-31.
 
