@@ -49,8 +49,8 @@
   <arg name="use_sensor_serial" default="true"/>
   <arg name="sensor_serial_port" default="/dev/serial/by-id/usb-Arduino_Srl_Arduino_Uno_7543134333435170D1E2-if00"/>
   <arg name="sensor_baud_rate" default="115200"/>
-  <arg name="sensor_baseline_adc" default="0.0"/>
-  <arg name="sensor_full_response_adc" default="255.0"/>
+  <arg name="sensor_baseline_adc" default="36.0"/>
+  <arg name="sensor_full_response_adc" default="105.0"/>
   <arg name="sensor_reference_voltage" default="5.0"/>
   <arg name="detector_threshold_ratio" default="1.0"/>
 
