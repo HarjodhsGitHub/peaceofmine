@@ -13,7 +13,7 @@ from mavros_msgs.msg import State, RCIn
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool, String, Float32
-from peaceofmine_operator.arm_servo import ArbotiX, ArmServo, FirmwareMotionFault
+from peaceofmine_operator.arm_servo import ArbotiX, ArmServo, FirmwareMotionFault, ServoAlarm
 from peaceofmine_operator.rc_safety import RcSafety
 
 
@@ -205,6 +205,31 @@ class ArmServoNode(Node):
     def fail(self, error):
         self.sweeping = False
         self.command_at = 0.0
+        if isinstance(error, ServoAlarm) and self.servo and self.bus:
+            try:
+                try:
+                    self.servo.stop()
+                except ServoAlarm as alarm:
+                    if alarm.ident != self.servo.ident or alarm.address != 24:
+                        raise
+                try:
+                    torque = self.bus.read(self.servo.ident, 24, 1)
+                except ServoAlarm as alarm:
+                    if alarm.ident != self.servo.ident or alarm.address != 24 or len(alarm.data) != 1:
+                        raise
+                    torque = alarm.data[0]
+                if torque != 0:
+                    raise RuntimeError('Servo alarm stop did not confirm torque-off')
+                self.servo.torque = False
+                self.state.update(torque=False, commanded_torque=False, target=None)
+                self.connection_error = ''
+                reason = f'{error}; torque off, connection retained. Check servo load before retrying.'
+                if reason != self.reason:
+                    self.get_logger().warning(reason)
+                self.reason = reason
+                return
+            except Exception as stop_error:
+                error = RuntimeError(f'{error}; stop verification failed: {stop_error}')
         if isinstance(error, FirmwareMotionFault) and self.servo and self.bus:
             try:
                 self.servo.stop()

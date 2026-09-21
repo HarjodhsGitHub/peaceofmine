@@ -3,6 +3,16 @@ import time
 import math
 
 
+class ServoAlarm(RuntimeError):
+    """A complete servo reply carrying an alarm and usable register data."""
+
+    def __init__(self, ident, address, code, data, message):
+        names = ('input voltage', 'angle limit', 'overheating', 'range', 'checksum', 'overload', 'instruction')
+        alarms = ', '.join(name for bit, name in enumerate(names) if code & (1 << bit))
+        super().__init__(f'{message}; servo alarm: {alarms}')
+        self.ident, self.address, self.code, self.data = ident, address, code, bytes(data)
+
+
 class FirmwareMotionFault(RuntimeError):
     """A responding controller rejected motion, not a disconnected port."""
 
@@ -63,13 +73,20 @@ class ArbotiX:
             values, result, error = self.packet.readTxRx(self.port, ident, address, length)
         if result != 0 or error or len(values) != length:
             source = 'servo alarm' if result == 0 and error and len(values) == length else 'bus/transport'
-            raise RuntimeError(f'Servo telemetry read failed: id={ident}, register={address}, length={length}, '
-                               f'communication={result}, device={error}, received={len(values)}, source={source}')
+            message = (f'Servo telemetry read failed: id={ident}, register={address}, length={length}, '
+                       f'communication={result}, device={error}, received={len(values)}, source={source}')
+            if source == 'servo alarm' and ident != 253:
+                raise ServoAlarm(ident, address, error, values, message)
+            raise RuntimeError(message)
         return bytes(values)
 
     def write(self, ident, address, value, size=2):
         call = self.packet.write1ByteTxRx if size == 1 else self.packet.write2ByteTxRx
         result, error = call(self.port, ident, address, int(value))
+        if result == 0 and ident != 253 and address == 24 and value == 0:
+            self._motion_id = self._sweep_profile = None
+        if result == 0 and error and ident != 253:
+            raise ServoAlarm(ident, address, error, [], f'Servo write alarm: id={ident}, register={address}, device={error}')
         if result != 0 or error:
             detail = ''
             fault = 0

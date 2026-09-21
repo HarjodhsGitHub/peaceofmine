@@ -1,5 +1,5 @@
 import unittest
-from peaceofmine_operator.arm_servo import ArbotiX, ArmServo, limits
+from peaceofmine_operator.arm_servo import ArbotiX, ArmServo, ServoAlarm, limits
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
@@ -312,8 +312,9 @@ class ArbotiXReadTest(unittest.TestCase):
 
     def test_complete_servo_alarm_reply_is_never_retried_as_a_bus_fault(self):
         self.bus.packet.readTxRx.return_value = ([1, 0], 0, 32)
-        with self.assertRaisesRegex(RuntimeError, 'source=servo alarm'):
+        with self.assertRaisesRegex(ServoAlarm, 'source=servo alarm.*overload') as caught:
             self.bus.read(1, 24)
+        self.assertEqual(caught.exception.data, bytes([1, 0]))
         self.assertEqual(self.bus.packet.readTxRx.call_count, 1)
 
     def test_sdk_error_packet_without_parameters(self):

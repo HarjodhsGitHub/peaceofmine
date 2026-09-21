@@ -10,7 +10,7 @@ import rclpy
 from rclpy.parameter import Parameter
 from std_msgs.msg import Bool, Float32, String
 from peaceofmine_operator.rc_safety import RcSafety
-from peaceofmine_operator.arm_servo import ArmServo, FirmwareMotionFault
+from peaceofmine_operator.arm_servo import ArmServo, FirmwareMotionFault, ServoAlarm
 try:
     from test_arm_servo import Bus
     from test_rc_safety import healthy, state, rc
@@ -64,6 +64,36 @@ class ArmNodeTest(unittest.TestCase):
         self.node.tick()
         self.assertFalse(self.node.sweeping)
         self.assertEqual(self.bus.values[24], 0)
+
+    def test_servo_alarm_retains_connection_with_persistent_alarm_on_stop(self):
+        servo = self.node.servo
+        self.node.sweeping = True
+        servo.request_sweep('maximum', 10, 4)
+        alarm = ServoAlarm(1, 36, 32, [0, 8], 'Overload')
+        original_write = self.bus.write
+        original_read = self.bus.read
+        def write(ident, address, value, size=2):
+            original_write(ident, address, value, size)
+            raise ServoAlarm(ident, address, 32, [], 'Overload')
+        def read(ident, address, size=2):
+            value = original_read(ident, address, size)
+            raise ServoAlarm(ident, address, 32, value.to_bytes(size, 'little'), 'Overload')
+        with patch.object(self.bus, 'write', side_effect=write), patch.object(self.bus, 'read', side_effect=read):
+            self.node.fail(alarm)
+            self.node.tick()
+        self.assertIs(self.node.bus, self.bus)
+        self.assertEqual(self.node.discovered_servos, [1, 2])
+        self.assertIsNone(servo.target)
+        self.assertFalse(self.node.sweeping)
+        self.assertFalse(servo.torque)
+        self.assertEqual(self.bus.values[24], 0)
+        self.assertIn('connection retained', self.node.reason)
+
+    def test_servo_alarm_with_unconfirmed_stop_disconnects(self):
+        with patch.object(self.bus, 'read', side_effect=ServoAlarm(1, 24, 32, [1], 'Overload')):
+            self.node.fail(ServoAlarm(1, 36, 32, [0, 8], 'Overload'))
+        self.assertIsNone(self.node.bus)
+        self.assertIn('stop verification failed', self.node.reason)
 
     def test_failed_fault_stop_verification_disconnects(self):
         original_read = self.bus.read
