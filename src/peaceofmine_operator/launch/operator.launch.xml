@@ -32,12 +32,12 @@
   <arg name="use_arm_servo" default="true"/>
   <arg name="arm_serial_port" default="auto"/>
   <arg name="arm_servo_id" default="1"/>
-  <arg name="arm_minimum" default="1048"/>
+  <arg name="arm_minimum" default="925"/>
   <arg name="arm_center" default="1519"/>
-  <arg name="arm_maximum" default="1947"/>
-  <arg name="arm_speed" default="100"/>
-  <arg name="arm_sweep_endpoint_tolerance_deg" default="2.0"/>
-  <arg name="arm_sweep_acceleration_deg_s2" default="40.0"/>
+  <arg name="arm_maximum" default="2409"/>
+  <arg name="arm_speed" default="116"/>
+  <arg name="arm_sweep_endpoint_tolerance_deg" default="4.0"/>
+  <arg name="arm_sweep_acceleration_deg_s2" default="34.332"/>
 
   <!-- Probe servo on the same ArbotiX; calibration is independent of the arm. -->
   <arg name="probe_servo_id" default="2"/>
