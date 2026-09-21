@@ -105,7 +105,7 @@ Real car (privileged `util/run`, PX4 serial present, HTTPS for a laptop
 pad). Full steps are in `src/peaceofmine_operator/gui.md`:
 
 ```bash
-ros2 launch peaceofmine_operator operator.launch.py \
+ros2 launch peaceofmine_operator operator.launch.xml is_sim:=false \
   tls_cert:=/tmp/operator-tls/cert.pem \
   tls_key:=/tmp/operator-tls/key.pem
 ```

@@ -3,6 +3,32 @@
   <!-- Edit these defaults for this setup, then run:
        ros2 launch peaceofmine_operator operator.launch.xml
        Stop the previous launch before switching vehicle modes. -->
+
+  <!-- Mode and namespace -->
+  <arg name="name" default="self"/>
+  <arg name="is_sim" default="false"/>
+  <!-- Simulation excludes the real arm and Arduino sensor. -->
+  <arg name="simulate_payload" default="$(var is_sim)"/>
+
+  <!-- Vehicle and drive -->
+  <arg name="lli_serial_device" default="/dev/serial/by-id/usb-SVEA_PX4_AUTOPILOT_0-if00"/>
+  <arg name="lli_baud_rate" default="921600"/>
+  <arg name="max_velocity" default="0.8"/>
+
+  <!-- Localization: enable when the corresponding sensors are ready. -->
+  <arg name="use_localization" default="false"/>
+  <arg name="is_indoor" default="true"/>
+  <arg name="use_lidar" default="false"/>
+  <arg name="use_rtk" default="false"/>
+  <arg name="odometry_topic" default="odometry/local"/>
+
+  <!-- Initial pose and simulated fixture -->
+  <arg name="initial_pose_x" default="0.0"/>
+  <arg name="initial_pose_y" default="0.0"/>
+  <arg name="initial_pose_a" default="0.0"/>
+  <arg name="fixture_angle_offset_deg" default="0.0"/>
+
+  <!-- Arm servo -->
   <arg name="use_arm_servo" default="true"/>
   <arg name="arm_serial_port" default="auto"/>
   <arg name="arm_servo_id" default="-1"/>
@@ -11,33 +37,25 @@
   <arg name="arm_center" default="-1"/>
   <arg name="arm_maximum" default="-1"/>
   <arg name="arm_speed" default="20"/>
-  <arg name="name" default="self"/>
-  <arg name="is_sim" default="false"/>
-  <!-- Payload simulation follows the vehicle by default. Hardware arm launch
-       is controlled by use_arm_servo; other payload drivers launch separately. -->
-  <arg name="simulate_payload" default="$(var is_sim)"/>
+
+  <!-- Arduino detector -->
+  <arg name="use_sensor_serial" default="true"/>
+  <arg name="sensor_serial_port" default="/dev/serial/by-id/usb-Arduino_Srl_Arduino_Uno_7543134333435170D1E2-if00"/>
+  <arg name="sensor_baud_rate" default="115200"/>
+  <arg name="sensor_baseline_adc" default="0.0"/>
+  <arg name="sensor_full_response_adc" default="255.0"/>
+
+  <!-- Controller connected to the vehicle's USB port -->
+  <arg name="use_joy" default="false"/>
+
+  <!-- Dashboard and HTTPS -->
   <arg name="host" default="0.0.0.0"/>
   <arg name="port" default="8080"/>
   <!-- HTTPS is required for browser controllers on a remote host. -->
   <arg name="tls_cert" default=""/>
   <arg name="tls_key" default=""/>
-  <arg name="initial_pose_x" default="0.0"/>
-  <arg name="initial_pose_y" default="0.0"/>
-  <arg name="initial_pose_a" default="0.0"/>
-  <arg name="fixture_angle_offset_deg" default="0.0"/>
 
-  <!-- Hardware configuration. Enable localization when its sensors are ready.
-       Alternatively supply odometry from an external localization launch. -->
-  <arg name="lli_serial_device" default="/dev/serial/by-id/usb-SVEA_PX4_AUTOPILOT_0-if00"/>
-  <arg name="lli_baud_rate" default="921600"/>
-  <arg name="use_localization" default="false"/>
-  <arg name="is_indoor" default="true"/>
-  <arg name="use_lidar" default="false"/>
-  <arg name="use_rtk" default="false"/>
-  <arg name="odometry_topic" default="odometry/local"/>
-  <arg name="max_velocity" default="0.8"/>
-
-  <!-- Cameras are discovered by usb_camera_auto.py from /dev/v4l/by-id. -->
+  <!-- Cameras: auto discovery uses /dev/v4l/by-id. -->
   <arg name="use_cameras" default="true"/>
   <arg name="use_front_camera" default="true"/>
   <arg name="use_auxiliary_camera" default="false"/>
@@ -51,6 +69,7 @@
   <arg name="auxiliary_camera_pixel_format" default="yuyv2rgb"/>
   <arg name="camera_stream_port" default="8081"/>
 
+  <!-- Launch composition -->
   <include file="$(find-pkg-share peaceofmine_operator)/launch/operator_vehicle.launch.py">
     <arg name="name" value="$(var name)"/>
     <arg name="is_sim" value="$(var is_sim)"/>
@@ -68,8 +87,20 @@
 
   <group>
     <push_ros_namespace namespace="$(var name)"/>
+    <node if="$(var use_joy)" pkg="joy" exec="joy_node" name="operator_joy" output="screen">
+      <param name="device_id" value="0"/>
+      <param name="deadzone" value="0.12"/>
+      <param name="autorepeat_rate" value="20.0"/>
+      <param name="coalesce_interval_ms" value="50"/>
+    </node>
     <group unless="$(var is_sim)">
     <group unless="$(var simulate_payload)">
+    <include if="$(var use_sensor_serial)" file="$(find-pkg-share peaceofmine_operator)/launch/sensor_serial.launch.xml">
+      <arg name="serial_port" value="$(var sensor_serial_port)"/>
+      <arg name="baud_rate" value="$(var sensor_baud_rate)"/>
+      <arg name="baseline_adc" value="$(var sensor_baseline_adc)"/>
+      <arg name="full_response_adc" value="$(var sensor_full_response_adc)"/>
+    </include>
     <include if="$(var use_arm_servo)" file="$(find-pkg-share peaceofmine_operator)/launch/arm_servo.launch.xml">
       <arg name="serial_port" value="$(var arm_serial_port)"/>
       <arg name="servo_id" value="$(var arm_servo_id)"/>

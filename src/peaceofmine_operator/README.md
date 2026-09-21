@@ -16,12 +16,13 @@ drivers means replacing `simulated_payload.py` alone.
 Build the workspace in the SVEA container, source the overlay, then run:
 
 ```bash
-ros2 launch peaceofmine_operator operator.launch.xml
+ros2 launch peaceofmine_operator operator.launch.xml is_sim:=true
 ```
 
 Open the dashboard on port `8080`. The XML file is the editable development
 configuration: its arguments and defaults select simulation or hardware
-without requiring a long command. The default profile is fully simulated.
+without requiring a long command. Set `is_sim:=true` for simulation; the default
+profile is hardware.
 The launch starts without TLS for local
 debugging; remote operation must supply both `tls_cert` and `tls_key`, because
 the browser Gamepad API requires a secure context on non-localhost origins.
@@ -70,6 +71,18 @@ camera session before starting the ROS stack.
 
 `fixture_angle_offset_deg` sets the centre angle of the forward fixture, for
 example `fixture_angle_offset_deg:=10.0`.
+
+## Arduino detector launch
+
+The operator XML includes the standalone `sensor_serial.launch.xml` by default
+in hardware mode. Set `use_sensor_serial:=false` to disable it.
+`sensor_serial_port` defaults to the configured Uno's
+full `/dev/serial/by-id/...` path; override it for another board. Optional settings are
+`sensor_baud_rate` (115200), `sensor_baseline_adc` (0.0), and
+`sensor_full_response_adc` (255.0). The endpoints require detector calibration.
+The real sensor is excluded in vehicle or payload simulation. Its topics share
+the operator namespace, for example `/self/detector/amplitude_adc`.
+See [sensor setup](../../DevTools/sensorArduinoFast/README.md) for bench testing.
 
 ## Coordinate convention
 

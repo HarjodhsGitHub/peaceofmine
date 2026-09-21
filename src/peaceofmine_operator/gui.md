@@ -95,34 +95,41 @@ ls /dev/serial/by-id/usb-SVEA_PX4_AUTOPILOT_0-if00
 Still inside the container, after sourcing:
 
 ```bash
-ros2 launch peaceofmine_operator operator.launch.py
+ros2 launch peaceofmine_operator operator.launch.xml is_sim:=false
 ```
 
-This creates `/tmp/operator-tls` if needed (SAN includes localhost and the
-machine's IPv4 addresses), starts MAVROS/LLI (`is_sim:=false`),
-`twist_consumer`, and the gateway. If 8080 is busy it tries 8082, 8084,
-8086, then 8090. Watch the log for `Operator dashboard port:` and
-`Open https://<ip>:<port>`.
+This starts MAVROS/LLI, `twist_consumer`, and the gateway. XML is the main
+operator configuration. Without certificates the dashboard uses HTTP on port
+8080. Choose a free port explicitly, for example `port:=8082`, if it is busy.
 
 It does **not** start `sim_svea`. Payload simulation and `joy_node` stay
 off unless you pass `simulate_payload:=true` or `use_joy:=true`.
 
-Force a port or your own certs if you need to:
+For a remote browser controller, provide HTTPS certificates. To generate a
+development certificate, replace the example address with the SVEA's actual IP:
 
 ```bash
-ros2 launch peaceofmine_operator operator.launch.py port:=8082
-ros2 launch peaceofmine_operator operator.launch.py \
+mkdir -p /tmp/operator-tls
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout /tmp/operator-tls/key.pem -out /tmp/operator-tls/cert.pem \
+  -days 30 -subj '/CN=svea-mine' \
+  -addext 'subjectAltName=DNS:localhost,DNS:svea-mine,IP:127.0.0.1,IP:192.168.1.100'
+```
+
+Then launch with both certificate paths:
+
+```bash
+ros2 launch peaceofmine_operator operator.launch.xml is_sim:=false \
   tls_cert:=/tmp/operator-tls/cert.pem \
   tls_key:=/tmp/operator-tls/key.pem
 ```
 
-If the Wi‑Fi address changed since the last auto-cert, delete
-`/tmp/operator-tls` and launch again.
+If the Wi-Fi address changes, regenerate the certificate with the new address.
 
 ### 3. On the laptop
 
 1. Plug in the Xbox 360 and press a button.
-2. Open `https://<svea-ip>:<port>` from the launch log (same IP as in the certificate).
+2. Open `https://<svea-ip>:8080` (same IP as in the certificate; use your chosen port).
 3. Accept the certificate warning.
 4. Confirm the Drive panel shows the pad and the graphic moves.
 5. **Take control**, then **Arm** (or press **A**).
@@ -142,7 +149,7 @@ overrides.
 Hardware-free check on the same `cmd_vel` path:
 
 ```bash
-ros2 launch peaceofmine_operator operator_sim.launch.py
+ros2 launch peaceofmine_operator operator.launch.xml is_sim:=true
 ```
 
 Open `http://localhost:8080` on the machine that has the pad, or use
@@ -162,6 +169,6 @@ WASD: Settings → keyboard, click the forward camera, hold Shift as deadman.
 
 - `dashboard/index.html`, `app.js`, `style.css` — pad graphic, mapping, HUD
 - `scripts/operator_gateway.py` — lease, arm, deadman, `cmd_vel`
-- `launch/operator.launch.py` — real car (MAVROS / PX4)
+- `launch/operator.launch.xml` — hardware or simulation, selected by `is_sim`
 - `launch/operator_sim.launch.py` — `sim_svea` + simulated payload
 - `gui_plan.md` — longer roadmap (cameras, map, payload, mission record)
