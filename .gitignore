@@ -22,4 +22,4 @@ DevTools/gnss_viewer/.env
 # mkdocs
 venv/
 site/
-
+.calibration.json.lock

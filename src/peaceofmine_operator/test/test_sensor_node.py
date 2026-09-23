@@ -23,10 +23,13 @@ class SensorNodeTest(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('sensor_serial_node', script)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        import tempfile
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
         master, slave = pty.openpty()
         rclpy.init(args=['--ros-args', '-p', f'serial_port:={os.ttyname(slave)}',
                         '-p', 'baseline_adc:=20.0', '-p', 'full_response_adc:=120.0',
-                        '-p', 'stale_timeout:=0.2'])
+                        '-p', f'calibration_file:={directory.name}/calibration.json', '-p', 'stale_timeout:=0.2'])
         node = module.SensorSerialNode()
         observer = rclpy.create_node('sensor_observer')
         executor = SingleThreadedExecutor()
@@ -64,6 +67,12 @@ class SensorNodeTest(unittest.TestCase):
                                                        full_response_adc=20))))
             self.assertFalse(node.command_result['ok'])
             self.assertEqual(node.full_response, 150)
+            restarted = module.SensorSerialNode()
+            try:
+                self.assertEqual(restarted.baseline, 20)
+                self.assertEqual(restarted.full_response, 150)
+            finally:
+                restarted.destroy_node()
             now = time.monotonic()
             node.recent_samples.clear()
             node.recent_samples.append((now - 11, 255))

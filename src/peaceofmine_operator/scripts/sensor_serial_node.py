@@ -15,12 +15,13 @@ from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool, Float32, UInt16, String
 
 from peaceofmine_operator.sensor_serial import SensorSerial
+from peaceofmine_operator import calibration
 
 
 class SensorSerialNode(Node):
     def __init__(self):
         super().__init__('sensor_serial')
-        defaults = dict(serial_port='/dev/ttyACM0', baud_rate=115200,
+        defaults = dict(calibration_file=calibration.default_path(), serial_port='/dev/ttyACM0', baud_rate=115200,
                         stale_timeout=0.5, reconnect_interval=1.0,
                         baseline_adc=0.0, full_response_adc=255.0, reference_voltage=5.0,
                         amplitude_topic='detector/amplitude_adc',
@@ -28,6 +29,11 @@ class SensorSerialNode(Node):
                         fresh_topic='detector/fresh')
         values = {key: self.declare_parameter(key, value).value
                   for key, value in defaults.items()}
+        self.calibration_file = values['calibration_file']
+        saved = calibration.load(self.calibration_file).get('metal_detector')
+        if saved is not None:
+            for key in ('baseline_adc', 'full_response_adc', 'reference_voltage'):
+                values[key] = saved[key]
         self.baseline = float(values['baseline_adc'])
         self.full_response = float(values['full_response_adc'])
         self.reference_voltage = float(values['reference_voltage'])
@@ -121,6 +127,8 @@ class SensorSerialNode(Node):
                 raise ValueError('Endpoints must be within 0..255 and at least one count apart')
             if type(reference) not in (int, float) or not math.isfinite(reference) or not 0 < reference <= 5.5:
                 raise ValueError('ADC reference voltage must be within 0..5.5 V')
+            calibration.save_section(self.calibration_file, 'metal_detector', dict(
+                baseline_adc=float(baseline), full_response_adc=float(full), reference_voltage=float(reference)))
             self.baseline, self.full_response = float(baseline), float(full)
             self.reference_voltage = float(reference)
             message = 'Zero level and detection trigger applied'
@@ -129,7 +137,7 @@ class SensorSerialNode(Node):
                 message = f'Zero level {baseline:.2f} ADC: averaged {len(recent)} readings over {span:.1f} s'
             self.command_result = dict(request_id=request_id, ok=True, message=message)
             self.get_logger().info(f'Detector calibration: zero={baseline:.2f}, trigger={full:.2f}')
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, OSError) as exc:
             self.command_result = dict(request_id=request_id, ok=False, message=str(exc))
         self.publish_state()
 
