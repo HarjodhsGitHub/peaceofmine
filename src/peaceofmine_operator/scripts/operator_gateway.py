@@ -166,6 +166,7 @@ class OperatorGateway(Node):
         self._last_pressure_sample = 0.0
         self._probe_fault = False
         self._probe_target = 0.0
+        self._probe_motion = None
         self._pose = {'x': 0.0, 'y': 0.0, 'yaw': 0.0}
         self._speed = 0.0
         self._was_detected = False
@@ -244,6 +245,7 @@ class OperatorGateway(Node):
         self._emit_cmd_vel()
 
     def _disable_actuation_locked(self):
+        self._probe_motion = None
         self._calibrating = False
         self._armed = False
         self._deadman = False
@@ -484,7 +486,25 @@ class OperatorGateway(Node):
         with self._lock:
             safety = self._enforce_safety_locked()
             self._permission_pub.publish(Bool(data=bool(safety['servo_allowed'] and self._lease is not None)))
+            self._stream_probe_locked(safety)
         self._emit_cmd_vel()
+
+    def _stream_probe_locked(self, safety):
+        motion = self._probe_motion
+        if not motion:
+            return
+        probe = self._arm_state.get('probe', {})
+        if (self._lease is None or self._calibrating or not safety['servo_allowed']
+                or abs(self._speed) > self._probe_speed_limit or self._probe_fault
+                or time.monotonic() - self._arm_state_at >= 1 or not probe.get('ready')
+                or time.monotonic() - motion['started'] > 60):
+            self._probe_motion = None
+            self._arm_command_pub.publish(String(data='{"action":"stop"}'))
+            return
+        if probe.get('request_id') == motion['command']['hold_id'] and not probe.get('moving'):
+            self._probe_motion = None
+            return
+        self._arm_command_pub.publish(String(data=json.dumps(motion['command'])))
 
     ## Dashboard protocol ##
 
@@ -557,6 +577,13 @@ class OperatorGateway(Node):
                     'pressure_history': list(self._pressure_history),
                     'pressure_window_s': PRESSURE_WINDOW_S,
                     'fault': self._probe_fault,
+                    **({} if self._rc_safety.simulation else {
+                        **self._arm_state.get('probe', {}),
+                        'ready': time.monotonic() - self._arm_state_at < 1 and self._arm_state.get('probe', {}).get('ready', False),
+                        'reason': self._arm_state.get('probe', {}).get('reason', 'Probe driver unavailable') if time.monotonic() - self._arm_state_at < 1 else 'Probe driver unavailable',
+                        'depth_mm': self._arm_state.get('probe', {}).get('depth_mm'),
+                        'max_depth_mm': self._arm_state.get('probe', {}).get('max_depth_mm'),
+                    }),
                 },
                 'detections': list(self._detections),
                 'cameras': cameras,
@@ -617,8 +644,9 @@ class OperatorGateway(Node):
                 if command.get('action') == 'apply':
                     self._detector_threshold_request = command.get('request_id')
                 self._detector_command_pub.publish(String(data=json.dumps(command)))
-            elif message_type == 'arm_servo' and payload.get('action') in ('select', 'select_role', 'reconnect', 'capture', 'configure', 'configure_motion', 'stop'):
-                command = {key: payload[key] for key in ('action', 'request_id', 'servo_id', 'role', 'point', 'minimum', 'center', 'maximum', 'max_speed_deg_s', 'acceleration_deg_s2') if key in payload}
+            elif message_type == 'arm_servo' and payload.get('action') in ('select', 'select_role', 'reconnect', 'capture', 'configure', 'configure_motion', 'enable_multiturn', 'save_probe_extension', 'stop'):
+                self._probe_motion = None
+                command = {key: payload[key] for key in ('action', 'request_id', 'servo_id', 'role', 'point', 'minimum', 'center', 'maximum', 'max_speed_deg_s', 'acceleration_deg_s2', 'max_extension_mm') if key in payload}
                 self._arm_command_pub.publish(String(data=json.dumps(command)))
             elif message_type == 'drive' and not safety['allowed']:
                 return {'type': 'error', 'message': safety['reason']}
@@ -647,19 +675,35 @@ class OperatorGateway(Node):
                     )
                     flush_drive = True
             elif message_type == 'arm_servo':
-                if payload.get('action') in ('jog', 'position') and not self._calibrating:
+                if payload.get('action') in ('jog', 'position', 'home') and not self._calibrating:
                     return {'type': 'error', 'message': 'Enable calibration before jogging.'}
-                command = {key: payload[key] for key in ('action', 'request_id', 'point', 'held', 'direction', 'position', 'speed_deg_s') if key in payload}
+                command = {key: payload[key] for key in ('action', 'request_id', 'role', 'point', 'held', 'direction', 'position', 'speed_deg_s', 'hold_id', 'load_percent') if key in payload}
                 self._arm_command_pub.publish(String(data=json.dumps(command)))
             elif message_type == 'probe_target':
                 requested = float(payload.get('depth_mm', 0.0))
+                if not math.isfinite(requested):
+                    return {'type': 'error', 'message': 'Probe extension must be finite'}
                 if abs(self._speed) > self._probe_speed_limit:
                     error = {'type': 'error', 'message': 'Probe motion is blocked while the rover is moving.'}
                 elif self._probe_fault:
                     error = {'type': 'error', 'message': 'Probe motion is blocked by a probe fault.'}
                 else:
-                    self._probe_target = max(0.0, min(self._max_probe_depth, requested))
-                    self._probe_pub.publish(Float32(data=self._probe_target))
+                    if self._rc_safety.simulation:
+                        self._probe_target = max(0.0, min(self._max_probe_depth, requested))
+                        self._probe_pub.publish(Float32(data=self._probe_target))
+                    else:
+                        probe = self._arm_state.get('probe', {})
+                        if time.monotonic() - self._arm_state_at >= 1 or not probe.get('ready'):
+                            return {'type': 'error', 'message': probe.get('reason', 'Home and calibrate probe in Settings first')}
+                        if self._arm_state.get('sweeping'):
+                            return {'type': 'error', 'message': 'Stop arm sweep before moving the probe'}
+                        if not 0 <= requested <= probe['max_depth_mm']:
+                            return {'type': 'error', 'message': 'Target exceeds saved maximum extension'}
+                        self._probe_target = requested
+                        self._probe_motion = dict(started=time.monotonic(), command=dict(action='probe_depth', role='probe',
+                            held=True, hold_id=str(time.monotonic_ns()), depth_mm=requested))
+                        self._permission_pub.publish(Bool(data=True))
+                        self._stream_probe_locked(safety)
             elif message_type == 'sweep_enabled':
                 if payload.get('enabled') and not self._rc_safety.simulation:
                     if time.monotonic() - self._arm_state_at >= 1 or not self._arm_state.get('connected'):

@@ -1049,7 +1049,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .arm-calibration-points { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0; }
 .arm-calibration-points > div { display: grid; gap: .7rem; padding: .8rem; border: 1px solid #34504f; border-radius: .6rem; }
 .arm-calibration-points h4 { margin: 0; }
-#arm-launch-xml { width: 100%; padding: .8rem; color: #c7e4d9; background: #071316; border: 1px solid #34504f; font: .8rem monospace; }
+#arm-launch-xml, #probe-servo-launch-xml { width: 100%; padding: .8rem; color: #c7e4d9; background: #071316; border: 1px solid #34504f; font: .8rem monospace; }
 #rc-safety.blocked { color: #ffd1c8; border-color: #d36458; }
 #rc-safety.ready { color: #72d6b4; }
 @media (max-width: 700px) { .arm-calibration-points { grid-template-columns: 1fr; } }
@@ -1061,7 +1061,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .arm-feedback[data-kind=success] { border-color: #72d6b4; color: #72d6b4; }
 .arm-feedback[data-kind=error] { border-color: #f08b7c; color: #f08b7c; }
 
-#settings-arm button:active:not(:disabled) { transform: translateY(2px); filter: brightness(1.2); }
+:is(#settings-arm, #settings-probe) button:active:not(:disabled) { transform: translateY(2px); filter: brightness(1.2); }
 
 .arm-workbench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.4rem; align-items: start; margin: 1rem 0; }
 .arm-control-panel, .arm-telemetry-panel { min-width: 0; }
@@ -1082,7 +1082,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .arm-help summary { cursor: pointer; }
 .arm-jog-status { padding: .7rem; border: 1px solid #d8b064; border-radius: .5rem; color: #e2b56a; }
 .arm-jog-status[data-ready=true] { border-color: #72d6b4; color: #72d6b4; }
-#settings-arm .dialog-help { margin: .6rem 0; font-size: .8rem; line-height: 1.5; }
+:is(#settings-arm, #settings-probe) .dialog-help { margin: .6rem 0; font-size: .8rem; line-height: 1.5; }
 @media (max-width: 720px) { .arm-workbench { grid-template-columns: 1fr; } .arm-table th, .arm-table td { padding: .5rem .3rem; } .arm-points-table button { padding: .5rem .3rem; font-size: .75rem; } }
 
 /* Map and measured power share the bottom row. */
@@ -1107,3 +1107,5 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 
 #metal-history { display: block; }
 #metal-time-range { width: auto; }
+
+.servo-load-chart{position:relative;height:220px;min-width:0;width:100%}

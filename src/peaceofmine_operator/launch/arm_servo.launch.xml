@@ -3,6 +3,7 @@
   <arg name="serial_port" default="auto"/>
   <arg name="servo_id" default="-1"/>
   <arg name="probe_servo_id" default="2"/>
+  <arg name="calibration_file" default="$(find-pkg-share peaceofmine_operator)/calibration.json"/>
   <arg name="probe_minimum" default="-1"/>
   <arg name="probe_center" default="-1"/>
   <arg name="probe_maximum" default="-1"/>
@@ -16,6 +17,7 @@
     <param name="serial_port" value="$(var serial_port)" type="str"/>
     <param name="servo_id" value="$(var servo_id)"/>
     <param name="probe_servo_id" value="$(var probe_servo_id)"/>
+    <param name="calibration_file" value="$(var calibration_file)" type="str"/>
     <param name="probe_minimum" value="$(var probe_minimum)"/>
     <param name="probe_center" value="$(var probe_center)"/>
     <param name="probe_maximum" value="$(var probe_maximum)"/>

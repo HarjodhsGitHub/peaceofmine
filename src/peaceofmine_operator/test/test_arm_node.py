@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 from concurrent.futures import Future
 import json
+import tempfile
 
 import rclpy
 from rclpy.parameter import Parameter
@@ -36,7 +37,9 @@ class ArmNodeTest(unittest.TestCase):
         self.now = 100.0
         self.clock = patch.object(module.time, 'monotonic', side_effect=lambda: self.now)
         self.clock.start()
-        self.node = module.ArmServoNode()
+        self.calibration_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.calibration_dir.cleanup)
+        self.node = module.ArmServoNode(parameter_overrides=[Parameter('calibration_file', value=str(Path(self.calibration_dir.name) / 'calibration.json'))])
         self.node.safety = RcSafety(clock=lambda: self.now)
         healthy(self.node.safety)
         self.bus = Bus()
@@ -49,6 +52,128 @@ class ArmNodeTest(unittest.TestCase):
     def tearDown(self):
         self.node.destroy_node()
         self.clock.stop()
+
+    def test_arm_limits_persist_with_probe_and_restart_stopped(self):
+        from peaceofmine_operator import calibration
+        calibration.save_section(self.node.calibration_file, 'probe',
+                                 dict(servo_id=2, max_extension_mm=120, travel_ticks=5430))
+        self.node.command_cb(String(data=json.dumps(dict(action='configure',
+                             minimum=1400, center=1900, maximum=2400))))
+        saved = calibration.load(self.node.calibration_file)
+        self.assertEqual(saved['arm']['center'], 1900)
+        self.assertEqual(saved['probe']['travel_ticks'], 5430)
+        restarted = module.ArmServoNode(parameter_overrides=[Parameter('calibration_file', value=self.node.calibration_file)])
+        try:
+            restarted.bus = Bus()
+            restarted.discovered_servos = [1, 2]
+            restarted.select(1)
+            self.assertEqual(restarted.servo.calibration['center'], 1900)
+            self.assertFalse(restarted.servo.torque)
+            self.assertIsNone(restarted.servo.target)
+        finally:
+            restarted.destroy_node()
+
+    def test_probe_maximum_persists_but_home_does_not(self):
+        import tempfile
+        from peaceofmine_operator import probe_calibration
+        with tempfile.TemporaryDirectory() as directory:
+            self.node.calibration_file = str(Path(directory) / 'probe.json')
+            self.node.active_role = 'probe'
+            self.node.role_ids['probe'] = 1
+            self.node.servo.home_position = 3000
+            self.node.command_cb(String(data=json.dumps(dict(action='save_probe_extension', role='probe', max_extension_mm=100))))
+            self.assertEqual(self.node.probe_extension['travel_ticks'], 1000)
+            saved = probe_calibration.load(self.node.calibration_file)
+            self.assertEqual(saved['max_extension_mm'], 100)
+            restarted = module.ArmServoNode(parameter_overrides=[Parameter('calibration_file', value=self.node.calibration_file)])
+            try:
+                self.assertEqual(restarted.probe_extension, saved)
+                self.assertFalse(restarted.probe_state()['homed'])
+                self.assertFalse(restarted.probe_state()['ready'])
+            finally:
+                restarted.destroy_node()
+
+    def test_main_gateway_probe_target_reaches_real_driver_and_stops(self):
+        from test_teleop import gateway_module
+        gateway = gateway_module.OperatorGateway()
+        owner = object()
+        try:
+            gateway._rc_safety = self.node.safety
+            self.node.active_role = 'probe'
+            self.node.role_ids['probe'] = 1
+            self.node.servo.home_position = 3000
+            self.node.probe_extension = dict(servo_id=1, max_extension_mm=100., travel_ticks=1000)
+            self.bus.values[36] = self.node.servo.position = 3000
+            gateway._arm_state = dict(connected=True, active_role='probe', probe=self.node.probe_state())
+            gateway._arm_state_at = self.now
+            with patch.object(gateway._arm_command_pub, 'publish', side_effect=self.node.command_cb), patch.object(gateway._permission_pub, 'publish', side_effect=self.node.permission_cb):
+                self.assertIsNone(gateway.handle_command(owner, dict(type='take_control')))
+                self.assertIsNone(gateway.handle_command(owner, dict(type='probe_target', depth_mm=50)))
+                for index in range(12):
+                    healthy(self.node.safety, stamp=1000001 + index)
+                    gateway._drive_watchdog()
+                    self.node.tick()
+                    self.bus.values[36] = self.bus.values[30]
+                    gateway._arm_state['probe'] = self.node.probe_state()
+                    gateway._arm_state_at = self.now
+                    self.now += .05
+                self.assertEqual(self.node.servo.position, 2500)
+                self.assertEqual(self.bus.values[24], 0)
+                self.assertIsNone(gateway._probe_motion)
+                healthy(self.node.safety, stamp=2000000)
+                self.assertIsNotNone(gateway.handle_command(owner, dict(type='probe_target', depth_mm=101)))
+                self.assertIsNone(gateway.handle_command(owner, dict(type='probe_target', depth_mm=80)))
+                self.node.tick()
+                gateway._speed = .2
+                gateway._drive_watchdog()
+                self.node.tick()
+                self.assertEqual(self.bus.values[24], 0)
+                gateway._speed = 0
+                self.assertIsNone(gateway.handle_command(owner, dict(type='probe_target', depth_mm=80)))
+                self.node.tick()
+                gateway._lease = None
+                gateway._drive_watchdog()
+                self.node.tick()
+                self.assertEqual(self.bus.values[24], 0)
+        finally:
+            gateway.destroy_node()
+
+    def test_probe_home_heartbeat_keeps_slow_speed_and_permission_loss_stops(self):
+        self.node.active_role = 'probe'
+        command = String(data=json.dumps(dict(action='home', role='probe', held=True,
+                                             hold_id='test-home', load_percent=30)))
+        self.node.command_cb(command)
+        self.node.tick()
+        self.assertEqual(self.bus.values[32], 73)
+        self.now += .08
+        self.node.command_cb(command)
+        self.node.tick()
+        self.assertEqual(self.bus.values[32], 73)
+        self.assertEqual(self.node.servo.max_step, 114)
+        self.now += .4
+        self.node.tick()
+        self.assertEqual(self.bus.values[24], 0)
+        self.assertIsNone(self.node.servo.home_position)
+        self.assertIsNone(self.node.servo._home)
+
+    def test_home_rejects_arm_role_and_missing_hold(self):
+        for role, held in [('arm', True), ('probe', False)]:
+            self.node.active_role = role
+            self.node.command_cb(String(data=json.dumps(dict(action='home', role=role,
+                held=held, hold_id='test-home', load_percent=30))))
+            self.assertIsNone(self.node.servo.target)
+            self.assertEqual(self.bus.values[24], 0)
+
+    def test_enable_multiturn_clears_probe_reference_without_moving(self):
+        self.bus.gateway[80] = 2
+        self.node.active_role = 'probe'
+        self.node.servo.home_position = 2000
+        self.node.command_cb(String(data=json.dumps(dict(action='enable_multiturn', role='probe'))))
+        self.assertTrue(self.node.servo.multiturn)
+        self.assertIsNone(self.node.servo.home_position)
+        self.assertIsNone(self.node.servo.calibration)
+        self.assertEqual(self.bus.values[24], 0)
+        self.assertNotIn((24, 1), self.bus.writes)
 
     def test_motion_fault_retains_connection_without_restarting(self):
         servo = self.node.servo
@@ -114,7 +239,7 @@ class ArmNodeTest(unittest.TestCase):
             self.assertEqual(publish.call_count, 3)
 
     def test_launch_speed_100_is_supported_without_losing_discovered_servo(self):
-        node = module.ArmServoNode(parameter_overrides=[Parameter('speed', value=100),
+        node = module.ArmServoNode(parameter_overrides=[Parameter('calibration_file', value=self.node.calibration_file), Parameter('speed', value=100),
                                                        Parameter('servo_id', value=1)])
         try:
             node.discovery = Future()
@@ -128,7 +253,7 @@ class ArmNodeTest(unittest.TestCase):
             node.destroy_node()
 
     def test_bad_calibration_does_not_clear_servo_discovery(self):
-        node = module.ArmServoNode(parameter_overrides=[Parameter('servo_id', value=1),
+        node = module.ArmServoNode(parameter_overrides=[Parameter('calibration_file', value=self.node.calibration_file), Parameter('servo_id', value=1),
                                                        Parameter('minimum', value=3000),
                                                        Parameter('center', value=2000),
                                                        Parameter('maximum', value=1000)])
@@ -170,6 +295,18 @@ class ArmNodeTest(unittest.TestCase):
         self.node.select_role('probe')
         self.assertIs(self.node.servo, probe)
         self.assertEqual(probe.calibration['minimum'], 1000)
+
+    def test_panel_selection_and_stale_role_command(self):
+        arm = self.node.servo
+        self.node.command_cb(String(data=json.dumps(dict(action='select', role='probe', servo_id=2))))
+        self.assertEqual(self.node.active_role, 'probe')
+        self.assertEqual(self.node.servo.ident, 2)
+        self.node.command_cb(String(data=json.dumps(dict(action='jog', role='arm', held=True, direction=1))))
+        self.assertIn('Select this actuator', self.node.reason)
+        self.assertIsNone(self.node.servo.target)
+        self.node.command_cb(String(data=json.dumps(dict(action='select', role='arm', servo_id=1))))
+        self.assertIs(self.node.servo, arm)
+        self.assertEqual(arm.calibration['minimum'], 1500)
 
     def test_sweep_selects_arm_not_probe(self):
         self.node.select_role('probe')

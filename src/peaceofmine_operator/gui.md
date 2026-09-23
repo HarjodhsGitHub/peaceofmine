@@ -158,13 +158,42 @@ HTTPS for a remote laptop as above.
 
 ## Settings
 
-Settings -> Servos selects Arm (default ID 1) or Probe (default ID 2) on the
-shared ArbotiX. Each has independent captured positions and calibration;
-switching requires stopped motion. An unplugged probe is labelled not connected
-without removing the detected arm. Connect it and restart the arm driver to
-rescan, or use Reconnect while stopped. Saved launch calibration uses `arm_*` or `probe_*` arguments respectively.
-This selection controls servo calibration/jogging; it does not establish the
-probe linkage's conversion from shaft angle to millimetres of depth.
+Settings has separate Arm (default ID 1) and Probe (default ID 2) panels on the
+shared ArbotiX. Switching requires stopped motion. Reconnect while stopped to
+rescan after connecting a missing servo. Arm sweep calibration retains its
+three points, saved with **Save recorded limits** in `calibration.json`.
+
+The probe has one persistent calibration: **maximum extension**. Home first,
+jog down to the desired maximum extension, release, enter the measured travel
+from the top in millimetres, then choose **Save current position as maximum
+extension**. The saved distance and corresponding encoder span provide the
+millimetre conversion and travel limit for the main Probe slider.
+
+All hardware calibration lives in **`src/peaceofmine_operator/calibration.json`**:
+`arm` contains the servo ID and minimum/centre/maximum encoder positions;
+`probe` contains the servo ID, measured maximum extension and encoder span;
+`metal_detector` contains zero ADC, trigger ADC and reference voltage.
+This regular JSON file belongs in Git. Settings saves update it on disk; commit
+those changes to record new measurements in Git history.
+
+The nodes locate the installed package file independently of the launch working
+directory. With the recommended `colcon build --symlink-install`, saves resolve
+the installed symlink and update this source file in the mounted repository.
+A non-symlink installation uses its installed copy instead. For an explicit
+alternative, pass `calibration_file:=/absolute/path/calibration.json`.
+Saved sections take precedence over legacy calibration launch parameters;
+those parameters are fallbacks only when a section is absent.
+Updates are atomic and locked across processes, preserving the other sections.
+The file contains no home position; home again after reconnecting or restarting.
+
+Close Settings, take control, and use the main Probe slider. Hardware targets
+now reach the MX-64 driver; simulation retains its fake payload. The main
+control requires a saved maximum and a session home. It moves at approximately
+50 degrees/s and releases torque on arrival. **Stop probe**, control-owner
+loss, stale driver telemetry, PX4 permission loss, rover movement, or a
+60-second movement timeout stops the command stream. The driver and firmware
+retain their independent command/permission timeouts. Stop arm sweeping before
+moving the probe: the controller grants motion to one selected servo at a time.
 
 The launch `arm_speed` is in servo register units, not degrees/s. Values above
 the firmware limit of 80 are capped with a warning rather than disconnecting
@@ -232,8 +261,8 @@ owner can zero or apply calibration. Zero averages the available readings from
 the last 10 seconds; the mine trigger maps to 100%. The meter and sweep trace
 blend from green at zero through yellow to red at the trigger. ADC reference
 voltage is hardware configuration, not a dashboard input. Changes affect the ROS
-signal-ratio topic for all clients. They last for the node session; the tab
-exports launch XML for persistence. With a 5 V reference, 20 ADC is about
+signal-ratio topic for all clients. The hardware node
+saves Zero, Apply and Reset changes to the shared `calibration.json`. With a 5 V reference, 20 ADC is about
 0.392 V peak and 150 ADC about 2.941 V peak. This is the firmware's sine-equivalent
 AC amplitude, not DC pin voltage; values above half the reference warrant
 checking waveform shape or clipping. Set the reference to measured AVcc for

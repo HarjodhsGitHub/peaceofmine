@@ -6,7 +6,6 @@ import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import rclpy
 from mavros_msgs.msg import State, RCIn
@@ -15,12 +14,14 @@ from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool, String, Float32
 from peaceofmine_operator.arm_servo import ArbotiX, ArmServo, FirmwareMotionFault, ServoAlarm
 from peaceofmine_operator.rc_safety import RcSafety
+from peaceofmine_operator import probe_calibration, calibration as calibration_store
 
 
 class ArmServoNode(Node):
     def __init__(self, **kwargs):
         super().__init__('arm_servo', **kwargs)
         for key, value in dict(serial_port='auto', servo_id=-1,
+                               calibration_file=calibration_store.default_path(),
                                probe_servo_id=2, probe_minimum=-1, probe_center=-1, probe_maximum=-1,
                                minimum=-1, center=-1, maximum=-1, speed=20,
                                sweep_endpoint_tolerance_deg=2.0,
@@ -37,6 +38,20 @@ class ArmServoNode(Node):
                          (('arm', 'servo_id'), ('probe', 'probe_servo_id'))}
         self.role_servos = {}
         self.saved_role_calibration = {}
+        self.calibration_file = self.get_parameter('calibration_file').value
+        self.probe_extension = None
+        try:
+            self.probe_extension = probe_calibration.load(self.calibration_file)
+        except (OSError, ValueError, TypeError, AttributeError) as error:
+            self.get_logger().warning(f'Probe extension calibration unavailable: {error}')
+        saved_arm = calibration_store.load(self.calibration_file).get('arm')
+        if saved_arm:
+            from peaceofmine_operator.arm_servo import limits
+            points = limits(**{key: saved_arm[key] for key in ('minimum', 'center', 'maximum')})
+            ident = saved_arm['servo_id']
+            if type(ident) is not int or not 0 <= ident <= 252:
+                raise ValueError('Invalid saved arm servo ID')
+            self.saved_role_calibration['arm'] = (ident, points, dict(points))
         tolerance = float(self.get_parameter('sweep_endpoint_tolerance_deg').value)
         if not math.isfinite(tolerance) or not 0 < tolerance <= 10:
             raise ValueError('Sweep endpoint tolerance must be within 0..10 degrees')
@@ -357,6 +372,13 @@ class ArmServoNode(Node):
             if action == 'select_role':
                 self.select_role(command.get('role'))
                 return
+            role = command.get('role', self.active_role)
+            if role not in self.role_ids:
+                raise ValueError('Select arm or probe')
+            if role != self.active_role:
+                if action not in ('select', 'probe_depth'):
+                    raise ValueError('Select this actuator before sending commands')
+                self.select_role(role)
             if action == 'select':
                 if self.servo and (self.servo.torque or self.servo.target is not None):
                     raise ValueError('Stop the arm before selecting a servo')
@@ -365,6 +387,29 @@ class ArmServoNode(Node):
                 return
             if not self.servo:
                 raise ValueError('Select a servo ID first')
+            if action == 'save_probe_extension':
+                if self.active_role != 'probe' or self.servo.torque or self.servo.target is not None:
+                    raise ValueError('Stop the probe before saving maximum extension')
+                if self.servo.home_position is None:
+                    raise ValueError('Home the probe before recording maximum extension')
+                position = self.servo.decode_position(self.bus.read(self.servo.ident, 36))
+                self.probe_extension = probe_calibration.save(self.calibration_file, dict(
+                    servo_id=self.servo.ident, max_extension_mm=command.get('max_extension_mm'),
+                    travel_ticks=self.servo.home_position - position))
+                self.reason = 'Maximum extension saved; ready for the main probe control'
+                return
+            if action == 'enable_multiturn':
+                if self.active_role != 'probe' or self.servo.torque or self.servo.target is not None:
+                    raise ValueError('Select and stop the probe before enabling multi-turn')
+                ident = self.servo.ident
+                self.stop()
+                self.bus.enable_multiturn(ident)
+                self.saved_role_calibration.pop('probe', None)
+                self.servo = ArmServo(self.bus, ident, speed=self.motion_speed)
+                self.role_servos['probe'] = self.servo
+                self.state = self.servo.snapshot()
+                self.reason = 'Multi-turn enabled; old presets cleared. Home the probe before use.'
+                return
             if action == 'configure_motion':
                 if self.servo.torque or self.servo.target is not None or self.sweeping:
                     raise ValueError('Stop before changing motion limits')
@@ -387,9 +432,17 @@ class ArmServoNode(Node):
                     position = self.servo.capture(command.get('point'))
                     self.reason = f'Recorded {command.get("point")}: {position * 360 / 4096:.1f} degrees'
                 else:
+                    previous = self.servo.calibration
                     self.servo.configure({key: command.get(key) for key in ('minimum', 'center', 'maximum')})
-                    self.reason = 'Limits applied; copy launch settings to keep them after restart'
-            elif action in ('move', 'jog', 'position'):
+                    if self.active_role == 'arm':
+                        try:
+                            calibration_store.save_section(self.calibration_file, 'arm', dict(
+                                servo_id=self.servo.ident, **self.servo.calibration))
+                        except Exception:
+                            self.servo.calibration = previous
+                            raise
+                    self.reason = 'Limits saved to calibration.json'
+            elif action in ('move', 'jog', 'position', 'home', 'probe_depth'):
                 self.sweeping = False
                 # Never store a request without website permission and PX4 status 4.
                 if (command.get('held') is not True or not self.permission
@@ -397,15 +450,32 @@ class ArmServoNode(Node):
                         or not self.safety.servo_snapshot()['allowed']):
                     self.stop()
                     raise ValueError('Movement blocked: enable calibration and require fresh PX4 status 4')
-                self.servo.speed = self.motion_speed
-                self.servo.max_step = 16
-                if action == 'jog':
+                if action not in ('home', 'probe_depth'):
+                    self.servo.speed = self.motion_speed
+                    self.servo.max_step = 16
+                if action == 'probe_depth':
+                    if self.active_role != 'probe':
+                        raise ValueError('Select the probe for extension control')
+                    self.servo.request_extension(command.get('hold_id'), command.get('depth_mm'), self.probe_extension)
+                    self.reason = 'Moving probe to requested extension' if self.servo.target is not None else 'Probe target reached or stopped'
+                elif action == 'home':
+                    if self.active_role != 'probe':
+                        raise ValueError('Load homing is only available for the probe')
+                    self.servo.request_home(command.get('hold_id'), command.get('load_percent'))
+                    self.reason = self.servo.home_status
+                elif action == 'jog':
+                    if self.servo._home is not None:
+                        self.servo.stop()
                     self.servo.request_jog(command.get('direction'), command.get('speed_deg_s', 2.0))
                     self.reason = 'Jogging slowly; release to stop'
                 elif action == 'position':
+                    if self.servo._home is not None:
+                        self.servo.stop()
                     self.servo.request_position(command.get('position'))
                     self.reason = 'Moving to slider position'
                 else:
+                    if self.servo._home is not None:
+                        self.servo.stop()
                     self.servo.request(command.get('point'))
                     self.reason = f'Moving toward {command.get("point")}; release to stop'
                 self.command_at = time.monotonic()
@@ -445,10 +515,13 @@ class ArmServoNode(Node):
                 # step already reads position during motion; do not wait for
                 # slower voltage/current diagnostics to publish the arm angle.
                 if self.servo.target is None:
-                    self.servo.position = self.bus.read(self.servo.ident, 36)
+                    self.servo.position = self.servo.decode_position(self.bus.read(self.servo.ident, 36))
                 if now - self.last_poll > .2:
                     self.last_poll = now
                     self.state = self.servo.snapshot()
+                    probe = self.role_servos.get('probe')
+                    if probe and probe is not self.servo:
+                        probe.position = probe.decode_position(self.bus.read(probe.ident, 36))
                 self.state['position'] = self.servo.position
                 if self.active_role == 'arm' and self.servo.calibration:
                     angle = (self.servo.position - self.servo.calibration['center']) * 360.0 / 4096
@@ -456,6 +529,7 @@ class ArmServoNode(Node):
             self.sweep_pub.publish(Bool(data=self.sweeping))
             self.speed_pub.publish(Float32(data=self.sweep_speed))
             data = {**self.state, 'reason': self.connection_error or self.reason, 'last_command': self.last_command,
+                    'probe': self.probe_state(),
                     'sweeping': self.sweeping,
                     'active_role': self.active_role, 'role_ids': dict(self.role_ids),
                     'arm_calibration': self.role_servos['arm'].calibration if 'arm' in self.role_servos else None,
@@ -473,6 +547,20 @@ class ArmServoNode(Node):
                 'connected': self.servo is not None, 'serial_connected': self.bus is not None,
                 'sweeping': False, 'discovered_servos': self.discovered_servos,
                 'reason': self.reason, 'last_command': self.last_command})))
+
+    def probe_state(self):
+        servo = self.servo if self.active_role == 'probe' else self.role_servos.get('probe')
+        calibration = self.probe_extension
+        calibrated = bool(calibration and calibration['servo_id'] == self.role_ids['probe'])
+        homed = bool(servo and servo.home_position is not None)
+        ready = calibrated and homed
+        return dict(ready=ready, homed=homed, calibrated=calibrated,
+                    max_depth_mm=calibration['max_extension_mm'] if calibrated else None,
+                    depth_mm=(servo.home_position - servo.position) * calibration['max_extension_mm'] / calibration['travel_ticks'] if ready else None,
+                    request_id=servo._extension_request if servo else None,
+                    moving=bool(servo and servo._extension_active),
+                    reason='Ready' if ready else 'Home probe first' if calibrated else 'Save maximum extension in Settings',
+                    calibration_file=self.calibration_file)
 
     def destroy_node(self):
         self.discovery_stop.set()

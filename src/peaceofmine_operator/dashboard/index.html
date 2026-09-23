@@ -144,6 +144,7 @@
           <canvas id="pressure-history" aria-label="Probe pressure history over the latest thirty seconds"></canvas>
           <label for="probe-slider">Target depth</label>
           <input id="probe-slider" type="range">
+          <button id="probe-stop" type="button">Stop probe</button>
           <p class="safety-note">The gateway rejects probe motion while the rover is moving or the probe is faulted.</p>
         </section>
       </aside>
@@ -179,12 +180,13 @@
           <p class="eyebrow">This operator client</p>
           <h2>Control settings</h2>
         </div>
-        <button value="close" class="quiet" aria-label="Close settings">Close</button>
+        <button value="close" formnovalidate class="quiet" aria-label="Close settings">Close</button>
       </div>
       <nav class="settings-tabs" aria-label="Settings sections" role="tablist">
         <button type="button" class="settings-tab active" role="tab" aria-selected="true" aria-controls="settings-input" data-settings-tab="input">Controls</button>
         <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-cameras" data-settings-tab="cameras">Cameras</button>
-        <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-arm" data-settings-tab="arm">Servos</button>
+        <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-arm" data-settings-tab="arm">Arm</button>
+        <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-probe" data-settings-tab="probe">Probe</button>
         <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-detector" data-settings-tab="detector">Metal detector</button>
       </nav>
       <section id="settings-input" class="settings-panel active" role="tabpanel" data-settings-panel="input">
@@ -250,7 +252,7 @@
         <div class="metal-actions">
           <button id="metal-zero" type="button">Zero from last 10 s</button>
           <button id="metal-apply" type="button">Apply</button>
-          <button id="metal-reset" type="button" class="quiet">Restore launch values</button>
+          <button id="metal-reset" type="button" class="quiet">Restore startup values</button>
           <button id="metal-control" type="button" class="quiet">Take control</button>
         </div>
         <p id="metal-feedback" role="status">Waiting for detector</p>
@@ -266,19 +268,16 @@
           <div class="metal-actions"><label><input id="metal-debug-live" type="checkbox" checked> Live packet log</label><button id="metal-export" type="button" class="quiet">Export readings CSV</button></div>
           <textarea id="metal-log" rows="5" readonly spellcheck="false" aria-label="Recent decoded detector packets"></textarea>
         </details>
-        <details class="metal-debug"><summary>Launch calibration (session changes are not saved)</summary><textarea id="metal-launch" rows="2" readonly spellcheck="false" aria-label="Detector calibration launch values"></textarea></details>
+        <details class="metal-debug"><summary>Calibration values (saved automatically on hardware)</summary><textarea id="metal-launch" rows="2" readonly spellcheck="false" aria-label="Detector calibration launch values"></textarea></details>
       </section>
       <section id="settings-arm" class="settings-panel" role="tabpanel" data-settings-panel="arm" hidden>
-        <h3>Servo control &amp; calibration</h3>
+        <h3>Arm control &amp; calibration</h3>
         <p id="arm-feedback" class="arm-feedback" role="status" aria-live="polite">Ready. Enable jogging, then hold an arrow to move.</p>
         <div class="arm-workbench">
           <div class="arm-control-panel">
             <h4>Jog controls</h4>
             <button id="arm-take-control" type="button">Take control for calibration</button>
             <p id="arm-calibration-access" class="dialog-help" role="status"></p>
-            <div class="arm-selection"><label for="arm-servo-role">Actuator</label>
-              <select id="arm-servo-role"><option value="arm">Arm servo</option><option value="probe">Probe servo</option></select>
-            </div>
             <div class="arm-selection"><label for="arm-servo-id">Servo ID</label>
               <select id="arm-servo-id"><option value="">Scanning for servos…</option></select>
               <button type="button" id="arm-select-id">Select servo</button>
@@ -322,6 +321,8 @@
               <tr><th scope="row">Model / firmware</th><td id="arm-model">—</td></tr>
               <tr><th scope="row">PX4 permission</th><td id="arm-px4">—</td></tr>
             </tbody></table>
+            <h4>Estimated load · last 60 seconds</h4>
+            <div class="servo-load-chart"><canvas id="arm-load-history" aria-label="Signed estimated servo load history" role="img"></canvas></div>
             <p id="arm-servo-details" class="dialog-help"></p>
             <p class="dialog-help">Load % is the servo’s estimate, not measured torque. Missing telemetry is shown as —.</p>
           </div>
@@ -334,15 +335,89 @@
             <tr><th scope="row">Maximum</th><td><output id="arm-recorded-maximum">—</output></td><td><button type="button" id="arm-capture-maximum">Record here</button></td><td><button type="button" id="arm-move-maximum">Hold to maximum</button></td></tr>
           </tbody>
         </table>
-        <button type="button" id="arm-apply-limits">Apply recorded limits</button>
+        <button type="button" id="arm-apply-limits">Save recorded limits</button>
         <h3>Sweep motion limits</h3>
         <label>Maximum speed (°/s) <input id="arm-max-speed" type="number" min="0.684" max="699.732" step="any" required></label>
         <label>Acceleration (°/s²) <input id="arm-acceleration" type="number" min="8.583" max="2180.082" step="any" required></label>
         <button type="button" id="arm-apply-motion">Apply motion limits</button>
-        <details class="arm-help"><summary>Launch settings (save calibration)</summary>
-          <p class="dialog-help">Copy these defaults into operator.launch.xml to keep the limits after restart.</p>
+        <details class="arm-help"><summary>Additional launch settings</summary>
+          <p class="dialog-help">Arm positions are saved in calibration.json. Speed and acceleration still use these launch settings.</p>
           <textarea id="arm-launch-xml" aria-label="Saved launch settings" rows="8" readonly spellcheck="false"></textarea>
         </details>
+      </section>
+      <section id="settings-probe" class="settings-panel" role="tabpanel" data-settings-panel="probe" hidden>
+        <h3>Linear probe: home &amp; travel</h3>
+        <p class="dialog-help">Home to establish the top reference, then record maximum extension once. The main probe control uses the saved travel calibration in millimetres.</p>
+        <p id="probe-servo-feedback" class="arm-feedback" role="status" aria-live="polite">Ready. Enable jogging, then hold an arrow to move.</p>
+        <div class="arm-workbench">
+          <div class="arm-control-panel">
+            <h4>Jog controls</h4>
+            <button id="probe-servo-take-control" type="button">Take control for calibration</button>
+            <p id="probe-servo-calibration-access" class="dialog-help" role="status"></p>
+            <div class="arm-selection"><label for="probe-servo-servo-id">Servo ID</label>
+              <select id="probe-servo-servo-id"><option value="">Scanning for servos…</option></select>
+              <button type="button" id="probe-servo-select-id">Select servo</button>
+              <button type="button" id="probe-servo-reconnect">Reconnect</button>
+            </div>
+            <div class="arm-enable-controls">
+              <button type="button" id="probe-servo-calibration-enable">Enable jogging</button>
+              <button type="button" id="probe-servo-calibration-stop" class="danger">Stop / release torque</button>
+            </div>
+            <p id="probe-servo-position-mode" role="status">Select probe to read position mode</p>
+            <button type="button" id="probe-servo-enable-multiturn">Enable multi-turn travel</button>
+            <p class="dialog-help">One-time setup with torque off; requires ArbotiX firmware v2. Clears old presets and saves multi-turn mode in the servo. Home again after power cycling.</p>
+            <h4>Find top / zero</h4>
+            <label>Contact load magnitude (%) <input id="probe-servo-home-load" type="number" min="10" max="60" step="1" value="30" required></label>
+            <button type="button" id="probe-servo-home">↑ Hold to home at top</button>
+            <p id="probe-servo-home-status" role="status">Not homed</p>
+            <p class="dialog-help">Moves up at 50°/s. The first reading with load magnitude at or above the threshold releases torque and sets zero, even if the shaft is still moving. A 20% threshold applies to both +20% and −20% on the graph. Release to cancel. A jam can also trigger this: verify the top visually. The 30% starting threshold needs mechanical validation. Search stops after 60 seconds or at the supported position limit.</p>
+            <p class="dialog-help">Zero is valid only for this connection; home again after power cycling or reconnecting. The upper rail stop provides the resistance used to find home.</p>
+            <div class="arm-jog-controls">
+              <button type="button" id="probe-servo-jog-left">↓ Hold down / extend</button>
+              <button type="button" id="probe-servo-jog-right">↑ Hold up / retract</button>
+            </div>
+            <div class="arm-enable-controls">
+              <label>Jog speed (°/s) <input id="probe-servo-jog-speed" type="number" step="any" value="50" required></label>
+            </div>
+            <label for="probe-servo-position-slider">Shaft target <output id="probe-servo-position-label">—</output></label>
+            <input id="probe-servo-position-slider" type="range" min="0" max="4095" step="1" value="0" disabled>
+            <p id="probe-servo-jog-status" class="arm-jog-status" role="status">Jogging disabled</p>
+            <p class="dialog-help">Probe travel uses the servo’s configured position range, including multiple revolutions in multi-turn mode.</p>
+            <p class="dialog-help">Support the probe: stopping releases torque. PX4 status must remain 4.</p>
+            <details class="arm-help"><summary>Position units and calibration help</summary>
+              <p>The angle is the servo shaft position, not its angle to the ground. 4096 raw ticks = 360°. Up increases the angle (the former right button); down decreases it.</p>
+              <p>With clear space and the linkage supported, jog to a safe position, release, and record it below. Leave clearance from mechanical stops. Recording does not move the servo.</p>
+              <p>RC override permits probe movement; RC kill blocks it. Stop the probe before changing servo ID.</p>
+            </details>
+          </div>
+          <div class="arm-telemetry-panel">
+            <table class="arm-table" id="probe-servo-telemetry"><caption>Live servo telemetry</caption><tbody>
+              <tr><th scope="row">Driver</th><td id="probe-servo-servo-status">Waiting for driver</td></tr>
+              <tr><th scope="row">Travel from top</th><td id="probe-servo-home-travel">—</td></tr>
+              <tr><th scope="row">Shaft position</th><td id="probe-servo-servo-position">—</td></tr>
+              <tr><th scope="row">Goal position</th><td id="probe-servo-goal">—</td></tr>
+              <tr><th scope="row">Torque enabled</th><td id="probe-servo-torque">—</td></tr>
+              <tr><th scope="row">Estimated load</th><td id="probe-servo-load">—</td></tr>
+              <tr><th scope="row">Torque limit</th><td id="probe-servo-torque-limit">—</td></tr>
+              <tr><th scope="row">Maximum torque setting</th><td id="probe-servo-max-torque">—</td></tr>
+              <tr><th scope="row">Current</th><td id="probe-servo-current">—</td></tr>
+              <tr><th scope="row">Speed / limit</th><td id="probe-servo-speed">—</td></tr>
+              <tr><th scope="row">Moving</th><td id="probe-servo-moving">—</td></tr>
+              <tr><th scope="row">Voltage / temperature</th><td id="probe-servo-power">—</td></tr>
+              <tr><th scope="row">Model / firmware</th><td id="probe-servo-model">—</td></tr>
+              <tr><th scope="row">PX4 permission</th><td id="probe-servo-px4">—</td></tr>
+            </tbody></table>
+            <h4>Estimated load · last 60 seconds</h4>
+            <div class="servo-load-chart"><canvas id="probe-servo-load-history" aria-label="Signed estimated servo load history" role="img"></canvas></div>
+            <p id="probe-servo-servo-details" class="dialog-help"></p>
+            <p class="dialog-help">Load % is the servo’s estimate, not measured torque. Missing telemetry is shown as —.</p>
+          </div>
+        </div>
+        <h4>Maximum extension</h4>
+        <p class="dialog-help">Home first, then jog down to your chosen maximum extension and release. Enter the measured travel from the top in millimetres and save. This is the only persistent probe calibration; it also sets the main control’s travel limit.</p>
+        <label>Measured maximum extension (mm) <input id="probe-servo-max-extension" type="number" min="0.1" max="10000" step="any" required></label>
+        <button id="probe-servo-save-extension" type="button">Save current position as maximum extension</button>
+        <p id="probe-servo-extension-status" role="status">Maximum extension not calibrated</p>
       </section>
       <section id="settings-cameras" class="settings-panel" role="tabpanel" data-settings-panel="cameras" hidden>
         <div class="settings-section-heading">

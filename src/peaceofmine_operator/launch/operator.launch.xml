@@ -32,15 +32,16 @@
   <arg name="use_arm_servo" default="true"/>
   <arg name="arm_serial_port" default="auto"/>
   <arg name="arm_servo_id" default="1"/>
-  <arg name="arm_minimum" default="925"/>
-  <arg name="arm_center" default="1519"/>
-  <arg name="arm_maximum" default="2409"/>
+  <arg name="arm_minimum" default="-1"/>
+  <arg name="arm_center" default="-1"/>
+  <arg name="arm_maximum" default="-1"/>
   <arg name="arm_speed" default="116"/>
   <arg name="arm_sweep_endpoint_tolerance_deg" default="4.0"/>
   <arg name="arm_sweep_acceleration_deg_s2" default="34.332"/>
 
   <!-- Probe servo on the same ArbotiX; calibration is independent of the arm. -->
   <arg name="probe_servo_id" default="2"/>
+  <arg name="calibration_file" default="$(find-pkg-share peaceofmine_operator)/calibration.json"/>
   <arg name="probe_minimum" default="-1"/>
   <arg name="probe_center" default="-1"/>
   <arg name="probe_maximum" default="-1"/>
@@ -49,8 +50,8 @@
   <arg name="use_sensor_serial" default="true"/>
   <arg name="sensor_serial_port" default="/dev/serial/by-id/usb-Arduino_Srl_Arduino_Uno_7543134333435170D1E2-if00"/>
   <arg name="sensor_baud_rate" default="115200"/>
-  <arg name="sensor_baseline_adc" default="36.0"/>
-  <arg name="sensor_full_response_adc" default="105.0"/>
+  <arg name="sensor_baseline_adc" default="0.0"/>
+  <arg name="sensor_full_response_adc" default="255.0"/>
   <arg name="sensor_reference_voltage" default="5.0"/>
   <arg name="detector_threshold_ratio" default="1.0"/>
 
@@ -108,6 +109,7 @@
     <group unless="$(var simulate_payload)">
     <include if="$(var use_sensor_serial)" file="$(find-pkg-share peaceofmine_operator)/launch/sensor_serial.launch.xml">
       <arg name="serial_port" value="$(var sensor_serial_port)"/>
+      <arg name="calibration_file" value="$(var calibration_file)"/>
       <arg name="baud_rate" value="$(var sensor_baud_rate)"/>
       <arg name="baseline_adc" value="$(var sensor_baseline_adc)"/>
       <arg name="full_response_adc" value="$(var sensor_full_response_adc)"/>
@@ -117,6 +119,7 @@
       <arg name="serial_port" value="$(var arm_serial_port)"/>
       <arg name="servo_id" value="$(var arm_servo_id)"/>
       <arg name="probe_servo_id" value="$(var probe_servo_id)"/>
+      <arg name="calibration_file" value="$(var calibration_file)"/>
       <arg name="probe_minimum" value="$(var probe_minimum)"/>
       <arg name="probe_center" value="$(var probe_center)"/>
       <arg name="probe_maximum" value="$(var probe_maximum)"/>
