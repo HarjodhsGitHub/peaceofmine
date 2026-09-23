@@ -11,6 +11,7 @@ TestSerial Serial;
 unsigned char ax_rx_buffer[32];
 uint8_t registers[253][80];
 uint32_t clockMs;
+void delay(unsigned long ms) { assert(ms == 20); clockMs += ms; }
 bool readFailure, corruptRead, ignoreWrites;
 bool pendingWriteReply = false;
 bool enablePending = false;
@@ -45,8 +46,11 @@ int ax12GetRegister(int id, int address, int size) {
     ax_rx_buffer[3] = size + 2;
     ax_rx_buffer[4] = 0;
     std::copy(registers[id] + address, registers[id] + address + size, ax_rx_buffer + 5);
-    if (corruptRead) return -1;
-    return ax_rx_buffer[5] | (size == 1 ? 0 : ax_rx_buffer[6] << 8);
+    uint8_t sum = 0;
+    for (int i = 2; i < size + 5; ++i) sum += ax_rx_buffer[i];
+    ax_rx_buffer[size + 5] = uint8_t(~sum);
+    if (corruptRead) { ax_rx_buffer[size + 5] ^= 1; return -1; }
+    return int16_t(ax_rx_buffer[5] | (size == 1 ? 0 : ax_rx_buffer[6] << 8));
 }
 void ax12SetRegister(int id, int address, int value) {
     assert(!busBusy);
@@ -150,6 +154,33 @@ void heartbeatTick(uint32_t delta = 20) {
 }
 
 int main() {
+    reset();
+    assert(!writeReg(253, 83, 1)); // Must explicitly select an actuator.
+    assert(writeReg(253, 81, 1));
+    registers[1][24] = 1;
+    assert(!writeReg(253, 83, 1));
+    registers[1][24] = 0;
+    assert(writeReg(253, 83, 1));
+    assert(reg(6) == 4095 && reg(8) == 4095 && registers[1][22] == 1);
+    assert(registers[1][24] == 0);
+    for (int position : {-28672, -4096, -1, 0, 4096, 28672}) {
+        setReg(36, position);
+        assert(writeReg(253, 82, 1));
+        assert(reg(30) == (position & 65535));
+        assert(writeReg(1, 30, uint16_t(position), 2));
+        assert(!writeReg(253, 83, 1)); // No EEPROM writes with a live lease.
+        assert(!writeReg(1, 30, uint16_t(-28673), 2));
+        assert(!writeReg(1, 30, 28673, 2));
+        assert(writeReg(1, 24, 1));
+        clockMs += 350; loop();
+        assert(!arm.permitted && registers[1][24] == 0);
+    }
+    setReg(36, -1); corruptRead = true;
+    assert(!writeReg(253, 82, 1)); // Corrupt 0xffff must not be accepted as -1.
+    corruptRead = false; readFailure = true;
+    assert(!writeReg(253, 82, 1));
+    readFailure = false; registers[1][22] = 2;
+    assert(!writeReg(253, 82, 1)); // Wrong encoder scaling.
     reset();
     assert(writeReg(253, 88, 1023, 2));
     assert(arm.speed == 1023);

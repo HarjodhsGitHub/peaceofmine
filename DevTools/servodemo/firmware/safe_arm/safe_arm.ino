@@ -7,13 +7,18 @@ struct ServoIO {
         // Leave a bounded inter-packet processing gap, including after sync
         // writes. Both sweep control and USB telemetry must use this path.
         delayMicroseconds(1000);
-        ax_rx_buffer[3] = 0;
+        for (uint8_t i = 0; i < size + 6 && i < 32; ++i) ax_rx_buffer[i] = 0;
         int value = ax12GetRegister(id, address, size);
-        return value != -1 && ax_rx_buffer[2] == id && ax_rx_buffer[3] == size + 2;
+        // 0xffff is the valid multi-turn position -1, as well as the old
+        // library's error sentinel on AVR. Only accept it with a valid packet.
+        uint8_t sum = 0;
+        if (size <= 24) for (uint8_t i = 2; i < size + 6; ++i) sum += ax_rx_buffer[i];
+        bool minusOne = size == 2 && ax_rx_buffer[5] == 255 && ax_rx_buffer[6] == 255 && sum == 255;
+        return (value != -1 || minusOne) && ax_rx_buffer[2] == id && ax_rx_buffer[3] == size + 2;
     }
-    int read(uint8_t id, uint8_t address, uint8_t size) {
+    int32_t read(uint8_t id, uint8_t address, uint8_t size) {
         if (!readPacket(id, address, size) || ax_rx_buffer[4] != 0) return -1;
-        return ax_rx_buffer[5] | (size == 2 ? uint16_t(ax_rx_buffer[6]) << 8 : 0);
+        return uint32_t(ax_rx_buffer[5]) | (size == 2 ? uint32_t(ax_rx_buffer[6]) << 8 : 0);
     }
     void write(uint8_t id, uint8_t address, uint16_t value, uint8_t size) {
         delayMicroseconds(1000);
@@ -34,6 +39,10 @@ struct ServoIO {
         if (size == 2) { ax12write(uint8_t(value >> 8)); sum += uint8_t(value >> 8); }
         ax12write(uint8_t(~sum));
         setRX(0);
+    }
+    void writeEeprom(uint8_t id, uint8_t address, uint16_t value, uint8_t size) {
+        write(id, address, value, size);
+        delay(20); // Stopped-only configuration; allow EEPROM programming to finish.
     }
 } servoIO;
 ArmController<ServoIO> arm(servoIO);
@@ -62,7 +71,7 @@ void dispatch(uint32_t now) {
             uint8_t value;
             switch (address) {
             case 0: value = 44; break;
-            case 2: case 80: value = 1; break;
+            case 2: case 80: value = 2; break;
             case 81: value = arm.selected; break;
             case 96: value = arm.fault ? 3 : arm.sweeping ? 2 : arm.permitted ? 1 : 0; break;
             case 98: value = arm.fault; break;

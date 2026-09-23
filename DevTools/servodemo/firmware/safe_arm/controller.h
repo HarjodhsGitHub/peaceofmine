@@ -160,9 +160,8 @@ public:
         if (io.read(selected, 0, 2) != 310 || io.read(selected, 70, 1) != 0 ||
             io.read(selected, 24, 1) != 0) return false;
         int cw = io.read(selected, 6, 2), ccw = io.read(selected, 8, 2);
-        if (cw < 0 || ccw <= cw || ccw > 4095) return false;
-        int position = io.read(selected, 36, 2);
-        if (position < cw || position > ccw) return false;
+        int32_t position = io.read(selected, 36, 2);
+        if (position < 0 || !validPosition(selected, cw, ccw, uint16_t(position))) return false;
         // Re-arming never replays the goal left behind by a previous session.
         io.write(selected, 30, position, 2);
         io.write(selected, 32, 1, 2);
@@ -170,6 +169,15 @@ public:
         permitted = true;
         fault = 0;
         return true;
+    }
+
+    bool validPosition(uint8_t id, int cw, int ccw, uint16_t raw) {
+        if (cw == 4095 && ccw == 4095) {
+            // Decode explicitly: AVR int is 16-bit, native test int is 32-bit.
+            int32_t position = raw >= 32768 ? int32_t(raw) - 65536L : int32_t(raw);
+            return io.read(id, 22, 1) == 1 && position >= -28672L && position <= 28672L;
+        }
+        return cw >= 0 && ccw > cw && ccw <= 4095 && raw <= 4095 && int(raw) >= cw && int(raw) <= ccw;
     }
 
     bool start(uint32_t now) {
@@ -204,6 +212,15 @@ public:
             if (address != 88 && address != 90) return false;
         }
         switch (address) {
+        case 83:
+            // Explicit stopped-only setup. Never enable torque or rewrite PID.
+            if (permitted || selected == 255 || size != 1 || value != 1 ||
+                io.read(selected, 0, 2) != 310 || io.read(selected, 24, 1) != 0 ||
+                io.read(selected, 70, 1) != 0) return false;
+            io.writeEeprom(selected, 22, 1, 1);
+            io.writeEeprom(selected, 8, 4095, 2);
+            io.writeEeprom(selected, 6, 4095, 2);
+            return true; // Host polls EEPROM readback before exposing motion.
         case 81:
             if (permitted || size != 1 || value > 252) return false;
             selected = value;
@@ -232,7 +249,7 @@ public:
         if (address == 73) valid = size == 1 && value <= 254;
         if (address == 30 && size == 2) {
             int cw = io.read(id, 6, 2), ccw = io.read(id, 8, 2);
-            valid = cw >= 0 && ccw > cw && ccw <= 4095 && value <= 4095 && int(value) >= cw && int(value) <= ccw;
+            valid = validPosition(id, cw, ccw, value);
         }
         if (!valid) return false;
         io.write(id, address, value, size);

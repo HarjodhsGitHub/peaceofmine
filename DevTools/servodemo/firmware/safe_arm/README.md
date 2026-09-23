@@ -1,4 +1,4 @@
-# Safe arm firmware v1
+# Safe arm firmware v2
 
 Dedicated ArbotiX-M / ATmega644P firmware for the operator dashboard's MX-64
 Protocol 1.0 arm. This is a replacement sketch, not a modification to the
@@ -81,7 +81,7 @@ and validate the emitted sync-write packet lengths and checksums.
 - Calibration slider/jog commands retain the existing host behavior, including
   the slider's maximum-speed setting. They also require the watchdog lease.
   EEPROM writes, legacy sequence/base commands, and broadcast motion writes
-  are rejected. Firmware never changes servo mode, EEPROM limits or torque
+  are rejected. Except for explicit stopped-only multi-turn setup (register 83), firmware never changes servo mode, EEPROM limits or torque
   limits automatically.
 
 RC kill still travels through PX4 -> MAVROS -> the ROS arm driver -> USB. RC
@@ -145,9 +145,10 @@ bounded to 24 bytes. Errors are returned as Protocol 1.0 status packets.
 | Gateway register | Size | Access | Meaning |
 | --- | --- | --- | --- |
 | 0 | 1 | Read | Legacy discovery signature 44 |
-| 2, 80 | 1 | Read | Safe arm firmware/protocol version 1 |
+| 2, 80 | 1 | Read | Safe arm firmware/protocol version 2 |
 | 81 | 1 | Read/write | Selected servo ID 0..252; change only while stopped |
 | 82 | 1 | Write | 0 stop, 1 explicit new lease, 2 renew existing lease |
+| 83 | 1 | Write | 1: explicitly enable selected MX-64 multi-turn mode, stopped with torque off; sets limits 4095/4095 and divider 1 |
 | 84 | 2 | Write | Sweep minimum, 0..4095 |
 | 86 | 2 | Write | Sweep maximum, 0..4095 |
 | 88 | 2 | Write | Sweep cruise speed 1..1023, units 0.684 degrees/s |
@@ -159,8 +160,38 @@ bounded to 24 bytes. Errors are returned as Protocol 1.0 status packets.
 | 99 | 1 | Read | 0: no independent wired kill input |
 
 After stop, select the servo, acquire permission, then configure/start motion.
-Acquiring permission validates MX-64 joint mode and initializes a holding goal
+Acquiring permission validates MX-64 joint or multi-turn mode (divider 1) and initializes a holding goal
 without enabling torque. During a sweep, only matching endpoint/tolerance
 writes and valid speed/acceleration updates are accepted. Direct writes to
 selected servo RAM registers 24/30/32/73 require permission and are rejected
 while sweeping, except torque-off which always stops the whole arm bus.
+
+
+## Probe multi-turn travel (protocol v2)
+
+The probe supports signed positions from -28672 to +28672 ticks (−7 to +7
+shaft revolutions at divider 1), including travel through zero. Wheel mode
+remains unsupported. Firmware-owned arm sweeps remain joint-mode only.
+Install the newly built v2 firmware before using **Enable multi-turn travel**
+in Settings → Probe. This explicit setup keeps torque off, writes EEPROM,
+and verifies limits/divider readback. It clears the current probe presets and
+home reference; mode persists in the servo, but the home reference does not.
+No firmware upload or physical test is performed by the build script.
+
+**Hold to home at top** retracts at approximately 50°/s with a 10° outstanding
+goal limit. The host checks the absolute signed Present Load (register 40)
+against the selected threshold and releases torque on the first reading at or
+above it, regardless of encoder movement. Both motion-loop and telemetry reads
+can trigger this stop; a 20% threshold includes −20% and +20%. Releasing the button,
+losing permission, the 60-second timeout, or reaching the supported position
+range stops the search. Repeated hold packets cannot restart a completed search.
+The existing 350 ms firmware watchdog remains independent of the host loop.
+The upper rail stop supplies contact resistance; the initial 30% threshold
+still needs mechanical validation. Load is an estimate, not calibrated force.
+Home again after power cycling or reconnecting; do not assume turn-count
+continuity across a power cycle.
+
+Both actuator settings panels plot signed load using the bundled Chart.js
+library. Histories cover the last 60 seconds, stay separate by actuator, and
+clear on disconnection or servo-ID changes. Repeated status publications do
+not fabricate samples between telemetry reads.
