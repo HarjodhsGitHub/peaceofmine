@@ -53,6 +53,27 @@ class ArmNodeTest(unittest.TestCase):
         self.node.destroy_node()
         self.clock.stop()
 
+    def test_auto_discovery_enumerates_ftdi_and_finds_both_servos(self):
+        device = Path('/dev/serial/by-id/usb-FTDI-test')
+        def read(ident, address):
+            if ident in (1, 2):
+                return 310
+            raise RuntimeError('No reply')
+        with patch.object(Path, 'glob', return_value=[device]) as glob, \
+                patch.object(module, 'ArbotiX') as adapter:
+            adapter.return_value.read.side_effect = read
+            bus, port, ids = self.node.discover('auto')
+            glob.assert_called_once_with('usb-FTDI*')
+            adapter.assert_called_once_with(str(device), 1000000)
+            self.assertIs(bus, adapter.return_value)
+            self.assertEqual(port, str(device))
+            self.assertEqual(ids, [1, 2])
+
+    def test_auto_discovery_reports_missing_adapter(self):
+        with patch.object(Path, 'glob', return_value=[]):
+            with self.assertRaisesRegex(RuntimeError, 'No FTDI arm adapter found'):
+                self.node.discover('auto')
+
     def test_arm_limits_persist_with_probe_and_restart_stopped(self):
         from peaceofmine_operator import calibration
         calibration.save_section(self.node.calibration_file, 'probe',

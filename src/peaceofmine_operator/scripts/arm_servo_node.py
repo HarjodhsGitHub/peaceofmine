@@ -6,6 +6,7 @@ import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import rclpy
 from mavros_msgs.msg import State, RCIn
