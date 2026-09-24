@@ -11,6 +11,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_continuous.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -39,6 +41,10 @@
 #define WAVEFORM_SAMPLE_COUNT 256
 #endif
 
+#ifndef PRINT_WAVEFORM_CSV
+#define PRINT_WAVEFORM_CSV 0
+#endif
+
 #define ADC_READ_BUFFER_BYTES 512
 #define STATS_WINDOW_US 1000000
 #define WAVEFORM_REPORT_INTERVAL_US ((int64_t)WAVEFORM_REPORT_INTERVAL_MS * 1000)
@@ -48,6 +54,7 @@
 #define CLIP_HIGH_CODE 4075
 
 static const char *TAG = "sensor_adc";
+static adc_cali_handle_t adc_calibration_handle = NULL;
 
 typedef struct {
     uint64_t count;
@@ -87,11 +94,40 @@ static void add_sample(sample_stats_t *stats, uint16_t raw)
     }
 }
 
-static double code_to_approx_pin_millivolts(double raw_code)
+static double code_to_pin_millivolts(double raw_code)
 {
-    // Useful for a quick sanity check only. Use calibration before relying on
-    // this as an accurate voltage measurement.
+    const int raw_integer = (int)lround(fmax(0.0, fmin(ADC_FULL_SCALE_CODE, raw_code)));
+    int calibrated_millivolts = 0;
+    if (adc_calibration_handle &&
+        adc_cali_raw_to_voltage(adc_calibration_handle, raw_integer, &calibrated_millivolts) == ESP_OK) {
+        return calibrated_millivolts;
+    }
+
+    // This is only a fallback if this particular board does not have usable
+    // calibration data programmed in its eFuse.
     return raw_code * ADC_PIN_FULL_SCALE_MV / ADC_FULL_SCALE_CODE;
+}
+
+static void enable_adc_voltage_calibration(adc_unit_t adc_unit, adc_channel_t adc_channel)
+{
+#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+    const adc_cali_curve_fitting_config_t calibration_config = {
+        .unit_id = adc_unit,
+        .chan = adc_channel,
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    const esp_err_t calibration_status = adc_cali_create_scheme_curve_fitting(
+        &calibration_config, &adc_calibration_handle);
+    if (calibration_status == ESP_OK) {
+        ESP_LOGI(TAG, "ADC voltage calibration enabled");
+    } else {
+        ESP_LOGW(TAG, "ADC calibration unavailable (%s); using approximate millivolts",
+                 esp_err_to_name(calibration_status));
+    }
+#else
+    ESP_LOGW(TAG, "This ESP-IDF build has no ADC calibration scheme; using approximate millivolts");
+#endif
 }
 
 static void print_stats(const sample_stats_t *stats, int64_t elapsed_us)
@@ -109,23 +145,25 @@ static void print_stats(const sample_stats_t *stats, int64_t elapsed_us)
     const double amplitude = peak_to_peak / 2.0;
     const double sample_rate = stats->count * 1000000.0 / elapsed_us;
 
-    ESP_LOGI(TAG,
-             "rate=%.0f S/s samples=%" PRIu64
-             " raw[min=%u max=%u p2p=%u amplitude=%.1f mean=%.1f ac_rms=%.1f]"
-             " pin_est[mV mean=%.0f p2p=%.0f amplitude=%.0f] clips[low=%" PRIu32 " high=%" PRIu32 "]",
-             sample_rate,
-             stats->count,
-             stats->minimum,
-             stats->maximum,
-             peak_to_peak,
-             amplitude,
-             mean,
-             ac_rms,
-             code_to_approx_pin_millivolts(mean),
-             code_to_approx_pin_millivolts(peak_to_peak),
-             code_to_approx_pin_millivolts(amplitude),
-             stats->low_clip_count,
-             stats->high_clip_count);
+    // One compact, human-readable serial line each second. This avoids
+    // flooding the Serial Monitor while the input circuit is still being built.
+    printf("ADC | rate %.0f S/s | raw %u to %u | p2p %u | amplitude %.1f | "
+           "mean %.1f | ac_rms %.1f | pin %s min %.0f mV max %.0f mV mean %.0f mV | "
+           "clips low=%" PRIu32 " high=%" PRIu32 "\n",
+           sample_rate,
+           stats->minimum,
+           stats->maximum,
+           peak_to_peak,
+           amplitude,
+           mean,
+           ac_rms,
+           adc_calibration_handle ? "calibrated" : "approx",
+           code_to_pin_millivolts(stats->minimum),
+           code_to_pin_millivolts(stats->maximum),
+           code_to_pin_millivolts(mean),
+           stats->low_clip_count,
+           stats->high_clip_count);
+    fflush(stdout);
 }
 
 static void print_waveform(const uint16_t *waveform, uint32_t sample_count)
@@ -138,9 +176,80 @@ static void print_waveform(const uint16_t *waveform, uint32_t sample_count)
     printf("waveform,index,raw_code,pin_est_mV\n");
     for (uint32_t i = 0; i < sample_count; i++) {
         printf("waveform,%" PRIu32 ",%u,%.1f\n",
-               i, waveform[i], code_to_approx_pin_millivolts(waveform[i]));
+               i, waveform[i], code_to_pin_millivolts(waveform[i]));
     }
     printf("# waveform_end\n");
+    fflush(stdout);
+}
+
+static bool estimate_frequency_hz(const uint16_t *waveform,
+                                  uint32_t sample_count,
+                                  double sample_rate_hz,
+                                  double *frequency_hz)
+{
+    // Find the waveform's midpoint, then measure the spacing of successive
+    // rising midpoint crossings. This works well for the expected 6.71 kHz
+    // near-sine signal and needs no known DC offset.
+    if (sample_count < 4 || sample_rate_hz <= 0.0) {
+        return false;
+    }
+
+    uint16_t minimum = UINT16_MAX;
+    uint16_t maximum = 0;
+    for (uint32_t i = 0; i < sample_count; i++) {
+        if (waveform[i] < minimum) {
+            minimum = waveform[i];
+        }
+        if (waveform[i] > maximum) {
+            maximum = waveform[i];
+        }
+    }
+
+    // A tiny signal is likely noise, so it has no trustworthy frequency.
+    if (maximum - minimum < 20) {
+        return false;
+    }
+
+    const double midpoint = ((double)minimum + maximum) / 2.0;
+    uint32_t rising_crossings = 0;
+    double first_crossing = 0.0;
+    double last_crossing = 0.0;
+
+    for (uint32_t i = 1; i < sample_count; i++) {
+        const double previous = waveform[i - 1];
+        const double current = waveform[i];
+        if (previous < midpoint && current >= midpoint && current > previous) {
+            // Fractional position gives a more accurate result than rounding
+            // each crossing to a whole 80 kS/s sample.
+            const double fraction = (midpoint - previous) / (current - previous);
+            const double crossing = (i - 1) + fraction;
+            if (rising_crossings == 0) {
+                first_crossing = crossing;
+            }
+            last_crossing = crossing;
+            rising_crossings++;
+        }
+    }
+
+    if (rising_crossings < 2 || last_crossing <= first_crossing) {
+        return false;
+    }
+
+    *frequency_hz = (rising_crossings - 1) * sample_rate_hz / (last_crossing - first_crossing);
+    return true;
+}
+
+static void print_frequency(const uint16_t *waveform,
+                            uint32_t sample_count,
+                            double sample_rate_hz)
+{
+    double frequency_hz = 0.0;
+    if (estimate_frequency_hz(waveform, sample_count, sample_rate_hz, &frequency_hz)) {
+        printf("Frequency | %.1f Hz | measured from %" PRIu32 " samples at %.0f S/s\n",
+               frequency_hz, sample_count, sample_rate_hz);
+    } else {
+        printf("Frequency | not available yet (need a stable waveform)\n");
+    }
     fflush(stdout);
 }
 
@@ -158,6 +267,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Starting ADC1 capture on GPIO %d at %d S/s", ADC_INPUT_GPIO, ADC_SAMPLE_RATE_HZ);
     ESP_LOGI(TAG, "Keep the buffer output between GND and 3.3 V. Turn radios off while testing.");
+    enable_adc_voltage_calibration(adc_unit, adc_channel);
 
     adc_continuous_handle_t adc_handle = NULL;
     adc_continuous_handle_cfg_t handle_config = {
@@ -223,14 +333,22 @@ void app_main(void)
 
         const int64_t now_us = esp_timer_get_time();
         if (now_us - window_started_us >= STATS_WINDOW_US) {
-            print_stats(&stats, now_us - window_started_us);
+            const int64_t stats_elapsed_us = now_us - window_started_us;
+            const double observed_sample_rate_hz =
+                stats.count * 1000000.0 / stats_elapsed_us;
+            print_stats(&stats, stats_elapsed_us);
 
             if (now_us - last_waveform_report_us >= WAVEFORM_REPORT_INTERVAL_US) {
-                ESP_ERROR_CHECK(adc_continuous_stop(adc_handle));
-                print_waveform(waveform, waveform_count);
+                print_frequency(waveform, waveform_count, observed_sample_rate_hz);
+
+                if (PRINT_WAVEFORM_CSV) {
+                    ESP_ERROR_CHECK(adc_continuous_stop(adc_handle));
+                    print_waveform(waveform, waveform_count);
+                    ESP_ERROR_CHECK(adc_continuous_start(adc_handle));
+                }
+
                 waveform_count = 0;
-                ESP_ERROR_CHECK(adc_continuous_start(adc_handle));
-                last_waveform_report_us = esp_timer_get_time();
+                last_waveform_report_us = now_us;
             }
 
             reset_stats(&stats);

@@ -10,14 +10,14 @@ It is deliberately a measurement test, not the final metal-classification firmwa
 Sensor output (0-5 V)
   -> divider / level shift
   -> 3.3 V rail-to-rail buffer
-  -> XIAO D0 (GPIO0 / ADC1)
+  -> XIAO D1 (GPIO1 / ADC1)
 
 All circuit grounds -> XIAO GND
 ```
 
 The XIAO ADC pin must never receive a voltage below ground or above 3.3 V. The buffer must be powered by 3.3 V and GND, and must be a rail-to-rail input/output, unity-gain-stable op-amp.
 
-`platformio.ini` currently selects XIAO **D0 / GPIO0**. If the wire is on D1 or D2 instead, change `ADC_INPUT_GPIO` to `1` or `2` in that file.
+`platformio.ini` currently selects XIAO **D1 / GPIO1**. If the wire is on D0 or D2 instead, change `ADC_INPUT_GPIO` to `0` or `2` in that file.
 
 ## Build and upload in VS Code
 
@@ -40,7 +40,7 @@ The C6 uses its continuous ADC/DMA driver. Do not add Wi-Fi, Bluetooth, Zigbee, 
 Every second, the monitor prints an amplitude summary similar to:
 
 ```text
-I (...) sensor_adc: rate=80000 S/s samples=80000 raw[min=...] amplitude=... ...
+ADC | rate 80000 S/s | raw ... to ... | p2p ... | amplitude ... | mean ... | ac_rms ... | pin calibrated min ... mV max ... mV mean ... mV | clips low=0 high=0
 ```
 
 Useful checks:
@@ -49,11 +49,13 @@ Useful checks:
 - `p2p` is the peak-to-peak size of the waveform in raw ADC counts.
 - `amplitude` is `p2p / 2`: the approximate peak amplitude around the waveform's centre line.
 - `ac_rms` is a convenient measure of the sine-wave strength after its DC baseline is removed.
+- `pin calibrated min` and `pin calibrated max` show the lowest and highest voltage estimates at the XIAO ADC pin in that reporting window. The firmware uses the C6's curve-fitting calibration data when it is available; if the board has no usable calibration data, it clearly labels these values `pin approx` instead.
 - `clips[low=... high=...]` should remain zero. If either rises, stop and check the divider/buffer output before continuing.
 - `pin_est` is only an approximate voltage at the XIAO ADC pin. It is not yet a calibrated reading and is not converted back to the original sensor-output voltage.
+- Every five seconds, `Frequency | ... Hz` estimates the signal frequency from successive rising midpoint crossings in a 256-sample capture. It needs a stable waveform; a disconnected or very small signal reports `not available yet` instead.
 
 For the metal test, record the `p2p` and `ac_rms` values with no target, aluminium, and iron at the same distance. That will show whether the C6's internal ADC is adequate before adding the ADS7042.
 
-Every five seconds, the program also prints a CSV waveform block containing 256 consecutive samples. At 80 kSPS, that block covers 3.2 ms (about 21 cycles of your 6.71 kHz waveform). Copy everything from `# waveform_begin` through `# waveform_end` into a text file or spreadsheet to plot it. With no signal wired in yet, expect only a mostly flat/noisy reading rather than a waveform.
+The long waveform CSV dump is off by default, so the Serial Monitor stays readable. If you later need a 256-sample block for an offline plot, change `PRINT_WAVEFORM_CSV=0` to `PRINT_WAVEFORM_CSV=1` in `platformio.ini`. At 80 kSPS, that block covers 3.2 ms (about 21 cycles of your 6.71 kHz waveform).
 
 The ADC is paused only while this short block is printed, then restarts automatically. To alter the frequency or number of printed samples, change `WAVEFORM_REPORT_INTERVAL_MS` or `WAVEFORM_SAMPLE_COUNT` in `platformio.ini`.
