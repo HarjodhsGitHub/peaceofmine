@@ -468,6 +468,27 @@ $('probe-stop').click();
 assert(sent.at(-1).action === 'stop', 'main probe stop reaches driver');
 state.connected = false; updateArmSettings();
 assert(probeLoadChart.data.datasets[0].data.length === 0, 'disconnect clears live history');
+state.probe.pressure_ratio = .45;
+state.probe.pressure_samples = [{x: -1, y: 45}, {x: -.8, y: 32}];
+updateHud(); drawPressureHistory();
+assert($('probe-pressure').textContent === '45.0%', 'main contact indicator uses load');
+const contactChart = Chart.getChart($('pressure-history'));
+assert(contactChart && contactChart.data.datasets[0].data[0].y === 45, 'main load chart uses Chart.js');
+state.probe.pressure_ratio = null; updateHud();
+assert($('probe-pressure').textContent === '—', 'stale load does not claim zero contact');
+state.probe.contact_samples = [{x: -.1, load: 2, current: 30}];
+state.probe.contact_peak_percent = 2; state.probe.current_peak_ma = 30;
+contactAxes.load.max = 10; drawPressureHistory();
+assert(contactChart.options.scales.y.max === 10, 'small contact changes use 0-10 percent scale');
+state.probe.contact_samples = [{x: -.1, load: 48, current: 200}];
+drawPressureHistory();
+assert(contactChart.options.scales.y.max >= 48, 'load axis expands immediately without changing values');
+assert(contactChart.data.datasets[1].data[0].y === 200, 'current trace retains milliamps');
+state.connected = true; state.drive.you_control_owner = true; state.safety.servo_allowed = true;
+state.probe.contact_can_zero = true; updateHud(); $('probe-zero-contact').click();
+assert(sent.at(-1).type === 'probe_zero_contact', 'zero contact requests session reference');
+state.probe.contact_can_zero = false; updateHud();
+assert($('probe-zero-contact').disabled, 'zero disabled without fresh held readings');
 document.body.textContent = 'BROWSER TESTS PASSED';
 '''
         import json

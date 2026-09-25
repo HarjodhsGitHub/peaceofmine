@@ -137,15 +137,24 @@
             <span>Target <strong id="probe-target">0 mm</strong></span>
           </div>
           <div class="pressure-heading">
-            <span>Pressure</span>
+            <span>Estimated contact load</span>
             <strong id="probe-pressure">0%</strong>
             <small>last 30 s</small>
           </div>
-          <canvas id="pressure-history" aria-label="Probe pressure history over the latest thirty seconds"></canvas>
+          <div class="probe-load-chart"><canvas id="pressure-history" aria-label="Estimated probe contact load over the latest thirty seconds"></canvas></div>
+          <div class="probe-contact-readings">
+            <span>Motor current <strong id="probe-current">—</strong></span>
+            <span><span id="probe-current-change-label">Current magnitude</span> <strong id="probe-current-change">—</strong></span>
+            <span>2 s peak <strong id="probe-contact-peak">—</strong></span>
+            <span>Position error <strong id="probe-position-error">—</strong></span>
+            <span>Telemetry <strong id="probe-contact-rate">—</strong></span>
+          </div>
+          <button id="probe-zero-contact" type="button">Zero contact</button>
+          <small id="probe-zero-status">Hold clear of the ground before zeroing. Reference lasts for this connection.</small>
           <label for="probe-slider">Target depth</label>
           <input id="probe-slider" type="range">
           <button id="probe-stop" type="button">Stop probe</button>
-          <p class="safety-note">The gateway rejects probe motion while the rover is moving or the probe is faulted.</p>
+          <p class="safety-note">Holds torque at the target to sense contact. Stop probe releases torque. Load is a servo estimate, not measured force. Each command times out after 60 seconds; movement and holding require a stationary rover and valid control permission.</p>
         </section>
       </aside>
 

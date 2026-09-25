@@ -189,7 +189,10 @@ The file contains no home position; home again after reconnecting or restarting.
 Close Settings, take control, and use the main Probe slider. Hardware targets
 now reach the MX-64 driver; simulation retains its fake payload. The main
 control requires a saved maximum and a session home. It moves at approximately
-50 degrees/s and releases torque on arrival. **Stop probe**, control-owner
+50 degrees/s and holds torque at the target to maintain contact. The main
+Chart.js graph shows absolute servo load (0–100%), not calibrated pressure or
+force; missing or stale load displays as unavailable. The hold remains subject
+to the same 60-second command timeout. **Stop probe**, control-owner
 loss, stale driver telemetry, PX4 permission loss, rover movement, or a
 60-second movement timeout stops the command stream. The driver and firmware
 retain their independent command/permission timeouts. Stop arm sweeping before
@@ -275,3 +278,16 @@ better conversion accuracy. Simulated payloads do not provide raw ADC readings.
 - `launch/operator.launch.xml` — hardware or simulation, selected by `is_sim`
 - `launch/operator_sim.launch.py` — `sim_svea` + simulated payload
 - `gui_plan.md` — longer roadmap (cameras, map, payload, mission record)
+
+### Probe contact feedback
+
+Probe contact polling targets 20 Hz; voltage and temperature refresh at 1 Hz.
+Actual rate depends on serial response time; watchdog deadlines remain unchanged.
+The main Chart.js plot autoscales load (%) and current (mA) independently,
+expanding immediately and shrinking gradually. Values retain their units.
+Traces use light smoothing; the two-second peak uses unfiltered samples.
+Hold clear of the ground and select **Zero contact** to capture the recent
+holding baseline. It stays fixed through subsequent contact and movement.
+The reference is session-only and clears on disconnect or actuator change.
+Position error is shown in shaft degrees. Stale contact telemetry shows no
+reading; zeroing requires fresh holding samples and control ownership.

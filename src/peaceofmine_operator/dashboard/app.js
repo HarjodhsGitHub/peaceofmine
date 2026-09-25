@@ -393,11 +393,20 @@ function updateHud() {
 
   $('probe-depth').textContent = Number.isFinite(probe.depth_mm) ? `${Math.round(probe.depth_mm)} mm` : '—';
   $('probe-target').textContent = `${Math.round(probe.target_mm)} mm`;
-  $('probe-pressure').textContent = `${Math.round(probe.pressure_ratio * 100)}%`;
+  const contactLoad = probe.contact_zeroed ? probe.contact_load_percent : probe.pressure_ratio == null ? null : probe.pressure_ratio * 100;
+  $('probe-pressure').textContent = Number.isFinite(contactLoad) ? `${contactLoad.toFixed(1)}%` : '—';
+  $('probe-current').textContent = Number.isFinite(probe.current_a) ? `${probe.current_a.toFixed(3)} A` : '—';
+  $('probe-current-change-label').textContent = probe.contact_zeroed ? 'Current change' : 'Current magnitude';
+  $('probe-contact-rate').textContent = probe.contact_fresh ? `${probe.contact_rate_hz.toFixed(1)} Hz` : '—';
+  $('probe-current-change').textContent = Number.isFinite(probe.current_change_ma) ? `${probe.current_change_ma.toFixed(1)} mA` : '—';
+  $('probe-contact-peak').textContent = Number.isFinite(probe.contact_peak_percent) ? `${probe.contact_peak_percent.toFixed(1)}% / ${probe.current_peak_ma.toFixed(1)} mA` : '—';
+  $('probe-position-error').textContent = Number.isFinite(probe.position_error_ticks) ? `${(probe.position_error_ticks * 360 / 4096).toFixed(2)}°` : '—';
+  $('probe-zero-contact').disabled = !owner || !servoSafe || !probe.contact_can_zero;
+  $('probe-zero-status').textContent = probe.contact_zeroed ? 'Contact reference set · graph shows changes from zero' : 'Absolute readings · hold clear of the ground before zeroing';
   setRange($('probe-slider'), 0, probe.max_depth_mm || 1, .1);
   if (!activeSliders.has('probe-slider')) $('probe-slider').value = probe.target_mm;
   $('probe-arm').style.height = `${Math.max(0, Math.min(1, (probe.depth_mm || 0) / (probe.max_depth_mm || 1))) * 2.4}rem`;
-  $('probe-status').textContent = probe.ready === false ? (probe.reason || 'HOME REQUIRED') : probe.fault ? 'FAULT' : probe.depth_mm > 2 ? 'DEPLOYED' : 'STOWED';
+  $('probe-status').textContent = probe.ready === false ? (probe.reason || 'HOME REQUIRED') : probe.fault ? 'FAULT' : probe.holding ? 'HOLDING' : probe.depth_mm > 2 ? 'DEPLOYED' : 'STOWED';
   $('probe-status').className = `badge ${probe.fault ? 'active' : probe.depth_mm > 2 ? 'safe' : 'neutral'}`;
 
   $('arm-state').textContent = state.safety?.mode === 'override' ? 'RC CONTROL' : !owner ? 'SPECTATOR' : safe ? (drive.publishing ? 'ROS CONTROL' : 'READY') : 'RC LOCKED';
@@ -819,6 +828,7 @@ function stopLocalInput() {
 }
 
 $('take-control').onclick = () => send({type: 'take_control'});
+$('probe-zero-contact').onclick = () => send({type: 'probe_zero_contact'});
 $('probe-stop').onclick = () => send({type: 'arm_servo', action: 'stop', role: 'probe'});
 
 for (const [id, type, field] of [['probe-slider', 'probe_target', 'depth_mm'], ['sweep-speed', 'sweep_speed', 'deg_s']]) {
@@ -1095,34 +1105,43 @@ function drawMap() {
 
 }
 
+let probePressureChart = null;
+const contactAxes = {load: {max: 10, changed: 0}, current: {max: 50, changed: 0}};
+function contactScale(axis, peak, minimum) {
+  const now = performance.now();
+  const desired = Math.max(minimum, Math.ceil(peak * 1.2 / minimum) * minimum);
+  if (desired > axis.max || (desired < axis.max / 2 && now - axis.changed > 5000)) {
+    axis.max = desired > axis.max ? desired : Math.max(desired, axis.max / 2);
+    axis.changed = now;
+  }
+  return axis.max;
+}
 function drawPressureHistory() {
-  const canvas = $('pressure-history');
-  const context = resize(canvas);
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  const samples = state.probe.pressure_history;
-
-  context.clearRect(0, 0, width, height);
-  context.strokeStyle = '#26434a';
-  context.lineWidth = 1;
-  for (let line = 1; line < 4; line++) {
-    const y = line * height / 4;
-    drawSegment(context, {x: 0, y}, {x: width, y});
-  }
-
-  if (samples.length > 1) {
-    context.strokeStyle = '#57d3a8';
-    context.lineWidth = 2;
-    context.beginPath();
-    samples.forEach((ratio, index) => {
-      const x = index / (samples.length - 1) * width;
-      const y = height - ratio * (height - 5) - 2;
-      if (index) context.lineTo(x, y);
-      else context.moveTo(x, y);
+  const probe = state.probe;
+  if (!probePressureChart) probePressureChart = new Chart($('pressure-history'), {
+    type: 'line',
+    data: {datasets: [
+      {label: 'Load (%)', yAxisID: 'y', data: [], borderColor: '#57d3a8', borderWidth: 2, pointRadius: 0, spanGaps: false},
+      {label: 'Current (mA)', yAxisID: 'current', data: [], borderColor: '#ffb86b', borderWidth: 2, pointRadius: 0, spanGaps: false}]},
+    options: {responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+      plugins: {legend: {display: true, labels: {color: '#b7c4d8', boxWidth: 10, font: {size: 10}}}},
+      scales: {x: {type: 'linear', min: -30, max: 0, ticks: {color: '#b7c4d8', callback: value => Math.abs(value)}},
+        y: {min: 0, max: 10, ticks: {color: '#57d3a8'}},
+        current: {position: 'right', min: 0, max: 50, grid: {drawOnChartArea: false}, ticks: {color: '#ffb86b'}}}},
+  });
+  const samples = probe.contact_samples ?? (probe.pressure_samples ?? probe.pressure_history.map((ratio, i, all) =>
+    ({x: (i - all.length + 1) * .2, y: ratio * 100}))).map(p => ({x: p.x, load: p.y, current: null}));
+  ['load', 'current'].forEach((field, index) => {
+    const points = [];
+    samples.forEach((point, i) => {
+      if (i && point.x - samples[i - 1].x > .3) points.push({x: point.x - .001, y: null});
+      points.push({x: point.x, y: point[field]});
     });
-    context.stroke();
-  }
-
+    probePressureChart.data.datasets[index].data = points;
+    const peak = Math.max(0, ...points.map(p => p.y || 0), (index ? probe.current_peak_ma : probe.contact_peak_percent) || 0);
+    probePressureChart.options.scales[index ? 'current' : 'y'].max = contactScale(contactAxes[field], peak, index ? 50 : 10);
+  });
+  probePressureChart.update('none');
 }
 
 // Fixture angles are counter-clockwise in the world, which is counter-clockwise

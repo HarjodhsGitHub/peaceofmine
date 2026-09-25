@@ -114,7 +114,68 @@ class ArmNodeTest(unittest.TestCase):
             finally:
                 restarted.destroy_node()
 
-    def test_main_gateway_probe_target_reaches_real_driver_and_stops(self):
+    def test_zero_contact_requires_owner_and_fresh_holding_samples(self):
+        from test_teleop import gateway_module
+        gateway = gateway_module.OperatorGateway()
+        owner = object()
+        try:
+            gateway._rc_safety = self.node.safety
+            for index in range(12):
+                gateway._arm_state_cb(String(data=json.dumps(dict(connected=True, active_role='probe',
+                    servo_id=2, sample_time=index, load_percent=-5, current_a=.1,
+                    position=2000, goal_position=2000, torque=True, probe=dict(holding=True)))))
+                self.now += .05
+            healthy(self.node.safety, stamp=2000000)
+            self.assertIsNotNone(gateway.handle_command(object(), dict(type='probe_zero_contact')))
+            self.assertIsNone(gateway._probe_contact.baseline)
+            gateway.handle_command(owner, dict(type='take_control'))
+            self.assertIsNone(gateway.handle_command(owner, dict(type='probe_zero_contact')))
+            self.assertAlmostEqual(gateway._probe_contact.baseline[0], -5)
+            self.now += .4
+            healthy(self.node.safety, stamp=2000001)
+            self.assertIsNotNone(gateway.handle_command(owner, dict(type='probe_zero_contact')))
+        finally:
+            gateway.destroy_node()
+
+    def test_probe_fast_poll_keeps_slow_diagnostics_at_one_hz(self):
+        self.node.active_role = 'probe'
+        self.node.last_poll = self.now
+        with patch.object(self.node.servo, 'snapshot', wraps=self.node.servo.snapshot) as snapshot:
+            for i in range(20):
+                self.node.tick()
+                self.now += .05
+            self.assertEqual(snapshot.call_count, 20)
+            self.assertTrue(all(call.kwargs['fast'] for call in snapshot.call_args_list))
+            self.now += .01
+            self.node.tick()
+            self.assertFalse(snapshot.call_args.kwargs['fast'])
+
+    def test_main_probe_load_uses_magnitude_and_expires(self):
+        from test_teleop import gateway_module
+        gateway = gateway_module.OperatorGateway()
+        try:
+            gateway._rc_safety = self.node.safety
+            state = dict(connected=True, active_role='probe', servo_id=2,
+                         sample_time=1, load_percent=-45)
+            gateway._arm_state_cb(String(data=json.dumps(state)))
+            self.assertEqual(gateway.snapshot()['probe']['pressure_ratio'], .45)
+            gateway._arm_state_cb(String(data=json.dumps(state)))
+            self.assertEqual(len(gateway._probe_load_history), 1)
+            gateway._probe_pressure_cb(Float32(data=0))
+            self.assertEqual(gateway.snapshot()['probe']['pressure_ratio'], .45)
+            self.now += .7
+            gateway._arm_state_cb(String(data=json.dumps(state)))
+            self.assertIsNone(gateway.snapshot()['probe']['pressure_ratio'])
+            state.update(sample_time=2, load_percent=32)
+            gateway._arm_state_cb(String(data=json.dumps(state)))
+            self.assertEqual(gateway.snapshot()['probe']['pressure_ratio'], .32)
+            state['active_role'] = 'arm'
+            gateway._arm_state_cb(String(data=json.dumps(state)))
+            self.assertIsNone(gateway.snapshot()['probe']['pressure_ratio'])
+        finally:
+            gateway.destroy_node()
+
+    def test_main_gateway_probe_target_holds_and_safety_still_stops(self):
         from test_teleop import gateway_module
         gateway = gateway_module.OperatorGateway()
         owner = object()
@@ -139,6 +200,13 @@ class ArmNodeTest(unittest.TestCase):
                     gateway._arm_state_at = self.now
                     self.now += .05
                 self.assertEqual(self.node.servo.position, 2500)
+                self.assertEqual(self.bus.values[24], 1)
+                self.assertTrue(self.node.probe_state()['holding'])
+                self.assertFalse(self.node.probe_state()['moving'])
+                self.assertIsNotNone(gateway._probe_motion)
+                gateway._probe_motion['started'] = self.now - 61
+                gateway._drive_watchdog()
+                self.node.tick()
                 self.assertEqual(self.bus.values[24], 0)
                 self.assertIsNone(gateway._probe_motion)
                 healthy(self.node.safety, stamp=2000000)

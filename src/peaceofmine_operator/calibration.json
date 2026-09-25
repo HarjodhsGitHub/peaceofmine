@@ -1,9 +1,9 @@
 {
   "arm": {
     "servo_id": 1,
-    "minimum": 925,
-    "center": 1519,
-    "maximum": 2409
+    "minimum": 920,
+    "center": 1533,
+    "maximum": 2224
   },
   "probe": {
     "servo_id": 2,
@@ -11,7 +11,7 @@
     "travel_ticks": 5430
   },
   "metal_detector": {
-    "baseline_adc": 36.0,
+    "baseline_adc": 36.04,
     "full_response_adc": 105.0,
     "reference_voltage": 5.0
   }

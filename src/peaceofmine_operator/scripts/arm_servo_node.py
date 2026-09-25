@@ -517,7 +517,12 @@ class ArmServoNode(Node):
                 # slower voltage/current diagnostics to publish the arm angle.
                 if self.servo.target is None:
                     self.servo.position = self.servo.decode_position(self.bus.read(self.servo.ident, 36))
-                if now - self.last_poll > .2:
+                if self.active_role == 'probe':
+                    full = now - self.last_poll >= 1.0
+                    self.state.update(self.servo.snapshot(fast=not full))
+                    if full:
+                        self.last_poll = now
+                elif now - self.last_poll > .2:
                     self.last_poll = now
                     self.state = self.servo.snapshot()
                     probe = self.role_servos.get('probe')
@@ -559,7 +564,9 @@ class ArmServoNode(Node):
                     max_depth_mm=calibration['max_extension_mm'] if calibrated else None,
                     depth_mm=(servo.home_position - servo.position) * calibration['max_extension_mm'] / calibration['travel_ticks'] if ready else None,
                     request_id=servo._extension_request if servo else None,
-                    moving=bool(servo and servo._extension_active),
+                    active=bool(servo and servo._extension_active),
+                    moving=bool(servo and servo._extension_active and servo.target is not None and abs(servo.target - servo.position) > 3),
+                    holding=bool(servo and servo._extension_active and servo.target is not None and abs(servo.target - servo.position) <= 3),
                     reason='Ready' if ready else 'Home probe first' if calibrated else 'Save maximum extension in Settings',
                     calibration_file=self.calibration_file)
 

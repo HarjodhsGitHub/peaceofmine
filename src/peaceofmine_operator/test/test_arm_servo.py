@@ -245,6 +245,11 @@ class ArmServoTest(unittest.TestCase):
         self.servo.step(lambda: True)
         self.servo.request_extension('a', 50, calibration)
         self.servo.step(lambda: True)
+        self.assertEqual(self.servo.target, 2500)
+        self.assertEqual(self.bus.values[24], 1)
+        self.servo.step(lambda: False)
+        self.servo.request_extension('a', 50, calibration)
+        self.servo.step(lambda: True)
         self.assertIsNone(self.servo.target)
         self.assertEqual(self.bus.values[24], 0)
 

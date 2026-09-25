@@ -414,7 +414,7 @@ class ArmServo:
     def step(self, allowed):
         # Recheck the independent safety gate before each serial motion write.
         if not allowed() or self.target is None:
-            if self.torque or self._home is not None:
+            if self.torque or self._home is not None or self._extension_active:
                 self.stop()
             self.target = None
             return
@@ -431,9 +431,6 @@ class ArmServo:
         if not low <= self.position <= high:
             self.stop()
             raise ValueError('Present position outside calibration; reposition with torque off')
-        if self._extension_active and abs(self.target - self.position) <= 3:
-            self.stop()
-            return
         if self.sweep_profile is not None:
             if not self.bus.run_sweep(self.ident, *self.sweep_profile, allowed):
                 self.stop()
@@ -476,9 +473,9 @@ class ArmServo:
             self.bus.write(self.ident, 30, goal)
             self.goal = goal
 
-    def snapshot(self):
+    def snapshot(self, fast=False):
         # One contiguous read keeps telemetry from delaying command/safety handling.
-        data = self.bus.read_block(self.ident, 24, 23)
+        data = self.bus.read_block(self.ident, 24, 18 if fast else 23)
         def word(address):
             offset = address - 24
             return int.from_bytes(data[offset:offset + 2], 'little')
@@ -502,8 +499,8 @@ class ArmServo:
                     torque_limit_percent=word(34) * 100 / 1023,
                     max_torque_percent=self.max_torque * 100 / 1023,
                     current_a=(self.bus.read(self.ident, 68) - 2048) * .0045,
-                    moving=bool(data[46 - 24]),
+                    **({} if fast else dict(moving=bool(data[46 - 24]))),
                     calibration=self.calibration, captured=dict(self.captured),
                     eeprom_minimum=4095 if self.multiturn else self.cw,
                     eeprom_maximum=4095 if self.multiturn else self.ccw,
-                    temperature_c=data[43 - 24], voltage=data[42 - 24] / 10)
+                    **({} if fast else dict(temperature_c=data[43 - 24], voltage=data[42 - 24] / 10)))

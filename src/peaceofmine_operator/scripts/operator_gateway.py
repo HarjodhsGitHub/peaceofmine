@@ -44,6 +44,7 @@ from peaceofmine_operator.rc_safety import RcSafety
 from peaceofmine_operator.power import PowerTelemetry
 from peaceofmine_operator.camera_stream import CameraStreams
 from peaceofmine_operator.detector import DetectorTelemetry
+from peaceofmine_operator.probe_contact import ProbeContact
 
 # Authoritative actuator limits. The dashboard reads these from telemetry so
 # the browser never carries its own copy.
@@ -167,6 +168,11 @@ class OperatorGateway(Node):
         self._probe_fault = False
         self._probe_target = 0.0
         self._probe_motion = None
+        self._probe_contact = ProbeContact()
+        self._probe_load_history = []
+        self._probe_load_sample = None
+        self._probe_load_at = 0.0
+        self._probe_load_ratio = None
         self._pose = {'x': 0.0, 'y': 0.0, 'yaw': 0.0}
         self._speed = 0.0
         self._was_detected = False
@@ -217,6 +223,25 @@ class OperatorGateway(Node):
                 with self._lock:
                     self._arm_state = value
                     self._arm_state_at = time.monotonic()
+                    if not self._rc_safety.simulation:
+                        self._probe_contact.update(value, self._arm_state_at)
+                        load = value.get('load_percent')
+                        sample = value.get('sample_time')
+                        if (value.get('connected') and value.get('active_role') == 'probe'
+                                and type(load) in (int, float) and math.isfinite(load)
+                                and type(sample) in (int, float) and math.isfinite(sample)):
+                            key = (value.get('servo_id'), sample)
+                            if key != self._probe_load_sample:
+                                if self._probe_load_sample and key[0] != self._probe_load_sample[0]:
+                                    self._probe_load_history.clear()
+                                self._probe_load_sample = key
+                                self._probe_load_at = self._arm_state_at
+                                self._probe_load_ratio = min(1.0, abs(load) / 100.0)
+                                self._probe_load_history.append((self._probe_load_at, self._probe_load_ratio))
+                                self._probe_load_history = [(at, ratio) for at, ratio in self._probe_load_history
+                                                            if self._probe_load_at - at <= PRESSURE_WINDOW_S][-700:]
+                        else:
+                            self._probe_load_ratio = None
                     calibration = value.get('arm_calibration')
                     if calibration is None and value.get('active_role', 'arm') == 'arm':
                         calibration = value.get('calibration')
@@ -323,6 +348,8 @@ class OperatorGateway(Node):
             self._probe_depth = float(message.data)
 
     def _probe_pressure_cb(self, message: Float32) -> None:
+        if not self._rc_safety.simulation:
+            return
         now = time.monotonic()
         with self._lock:
             self._probe_pressure_ratio = max(0.0, min(1.0, float(message.data)))
@@ -501,7 +528,7 @@ class OperatorGateway(Node):
             self._probe_motion = None
             self._arm_command_pub.publish(String(data='{"action":"stop"}'))
             return
-        if probe.get('request_id') == motion['command']['hold_id'] and not probe.get('moving'):
+        if probe.get('request_id') == motion['command']['hold_id'] and not probe.get('active'):
             self._probe_motion = None
             return
         self._arm_command_pub.publish(String(data=json.dumps(motion['command'])))
@@ -579,8 +606,12 @@ class OperatorGateway(Node):
                     'fault': self._probe_fault,
                     **({} if self._rc_safety.simulation else {
                         **self._arm_state.get('probe', {}),
+                        **self._probe_contact.snapshot(time.monotonic()),
                         'ready': time.monotonic() - self._arm_state_at < 1 and self._arm_state.get('probe', {}).get('ready', False),
                         'reason': self._arm_state.get('probe', {}).get('reason', 'Probe driver unavailable') if time.monotonic() - self._arm_state_at < 1 else 'Probe driver unavailable',
+                        'pressure_ratio': self._probe_load_ratio if time.monotonic() - self._probe_load_at < .6 else None,
+                        'pressure_samples': [{'x': at - time.monotonic(), 'y': ratio * 100}
+                                             for at, ratio in self._probe_load_history if time.monotonic() - at <= PRESSURE_WINDOW_S],
                         'depth_mm': self._arm_state.get('probe', {}).get('depth_mm'),
                         'max_depth_mm': self._arm_state.get('probe', {}).get('max_depth_mm'),
                     }),
@@ -635,6 +666,13 @@ class OperatorGateway(Node):
                 flush_drive = True
             elif self._lease is not ws:
                 error = {'type': 'error', 'message': 'Spectator mode: take control before sending commands.'}
+            elif message_type == 'probe_zero_contact':
+                if self._rc_safety.simulation or abs(self._speed) > self._probe_speed_limit or not safety['servo_allowed']:
+                    return {'type': 'error', 'message': 'Zero contact requires stationary hardware with probe permission'}
+                try:
+                    self._probe_contact.zero(time.monotonic())
+                except ValueError as error:
+                    return {'type': 'error', 'message': str(error)}
             elif message_type == 'detector_calibrate':
                 if abs(self._speed) > self._probe_speed_limit:
                     return {'type': 'error', 'message': 'Stop the vehicle before detector calibration.'}
