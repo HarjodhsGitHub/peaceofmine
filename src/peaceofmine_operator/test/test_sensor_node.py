@@ -29,10 +29,13 @@ class SensorNodeTest(unittest.TestCase):
         master, slave = pty.openpty()
         rclpy.init(args=['--ros-args', '-p', f'serial_port:={os.ttyname(slave)}',
                         '-p', 'baseline_adc:=20.0', '-p', 'full_response_adc:=120.0',
-                        '-p', f'calibration_file:={directory.name}/calibration.json', '-p', 'stale_timeout:=0.2'])
+                        '-p', f'config_file:={directory.name}/calibration.json', '-p', 'stale_timeout:=0.5'])
         node = module.SensorSerialNode()
+        from test_arm_node import module as load_module
+        settings = load_module('operator_settings_node').OperatorSettings()
         observer = rclpy.create_node('sensor_observer')
         executor = SingleThreadedExecutor()
+        executor.add_node(settings)
         executor.add_node(node)
         executor.add_node(observer)
         raw, ratio, fresh = [], [], []
@@ -47,6 +50,12 @@ class SensorNodeTest(unittest.TestCase):
             while time.monotonic() < end:
                 executor.spin_once(timeout_sec=0.01)
 
+        def result(request_id):
+            deadline=time.monotonic()+1
+            while (node.command_result or {}).get('request_id') != request_id and time.monotonic()<deadline:
+                spin(.01)
+            self.assertEqual((node.command_result or {}).get('request_id'),request_id)
+
         try:
             spin(0.5)
             for seq in range(10):
@@ -57,10 +66,12 @@ class SensorNodeTest(unittest.TestCase):
             self.assertAlmostEqual(ratio[-1], 0.5)
             self.assertTrue(fresh[-1])
             node.calibrate(String(data=json.dumps(dict(action='zero', request_id='zero'))))
+            result('zero')
             self.assertTrue(node.command_result['ok'])
             self.assertEqual(node.baseline, 70)
             node.calibrate(String(data=json.dumps(dict(action='apply', request_id='apply', baseline_adc=20,
                                                        full_response_adc=150, reference_voltage=5.0))))
+            result('apply')
             self.assertTrue(node.command_result['ok'])
             self.assertAlmostEqual(20 * node.reference_voltage / 255, .3921568627)
             node.calibrate(String(data=json.dumps(dict(action='apply', request_id='bad', baseline_adc=20,
@@ -79,14 +90,15 @@ class SensorNodeTest(unittest.TestCase):
             for index in range(500):
                 node.recent_samples.append((now - (499 - index) * .02, 20 if index < 450 else 100))
             node.calibrate(String(data=json.dumps(dict(action='zero', request_id='ten-seconds'))))
+            result('ten-seconds')
             self.assertTrue(node.command_result['ok'])
             self.assertEqual(node.baseline, 28)
             self.assertEqual(node.full_response, 150)
             self.assertEqual(len(node.recent_samples), 500)
-            self.assertIn('500 readings', node.command_result['message'])
+            self.assertIn('Saved', node.command_result['message'])
             spin(0.1)
             count = len(raw)
-            spin(0.3)
+            spin(0.6)
             self.assertFalse(fresh[-1])
             node.calibrate(String(data=json.dumps(dict(action='zero', request_id='stale'))))
             self.assertFalse(node.command_result['ok'])
@@ -95,6 +107,7 @@ class SensorNodeTest(unittest.TestCase):
             executor.shutdown()
             node.destroy_node()
             observer.destroy_node()
+            settings.destroy_node()
             rclpy.shutdown()
             os.close(master)
             os.close(slave)

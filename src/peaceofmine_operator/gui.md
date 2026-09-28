@@ -3,7 +3,8 @@
 Browser dashboard for driving a PeaceOfMine SVEA. The Xbox on your laptop
 does **not** publish a ROS topic. Chrome reads the pad and sends
 `{linear_x, angular_z, deadman}` over a WebSocket. ROS starts on the car
-in `operator_gateway`, which publishes `/<ns>/cmd_vel`.
+in `operator_web`, which bridges those messages onto ROS. The separate
+`operator_control` node authorizes commands and publishes `/<ns>/cmd_vel`.
 
 Yes, this is meant to run on the **real car**. Simulation and hardware share
 that same `cmd_vel` path. Hardware replaces `sim_svea` with MAVROS → PX4.
@@ -15,7 +16,9 @@ The physical RC transmitter remains the override.
 Xbox on the laptop
   → Chrome Gamepad API          (no ROS on the laptop)
   → WebSocket drive messages
-  → operator_gateway            (on the SVEA)
+  → operator_web                (on the SVEA)
+  → /self/operator/command      std_msgs/String
+  → operator_control            (lease, safety, drive watchdog)
   → /self/cmd_vel               geometry_msgs/Twist
   → twist_consumer
   → /self/mavros/manual_control/send
@@ -27,7 +30,7 @@ WebSocket or `/joy`), not on the next watchdog tick. Publishing continues
 only while you hold the control lease, the physical RC permits ROS driving,
 and commands are newer than 0.25 s. No additional GUI arming or Shift key is
 required. After that the
-gateway sends zeros for 0.5 s and goes silent. Stick mapping is linear
+control node sends zeros for 0.5 s and goes silent. Stick mapping is linear
 with a 0.12 deadzone; there is no extra command smoothing.
 
 Optional second input: plug the Xbox into the **SVEA USB** and pass
@@ -135,7 +138,7 @@ If the Wi-Fi address changes, regenerate the certificate with the new address.
 3. Accept the certificate warning.
 4. Confirm the Drive panel shows the pad and the graphic moves.
 5. **Take control** and select ROS authority on the physical RC.
-6. RT forward, LT reverse, left stick steer. No separate browser arm step.
+6. Click **Arm controls**. RT forward, LT reverse, left stick steer. Release the input deadman or click **Disarm** to stop.
 
 The status line must read `ROS cmd_vel …`. Stick lights alone are not
 enough. The virtual forward camera is first-person, so the car will not
@@ -161,7 +164,7 @@ HTTPS for a remote laptop as above.
 Settings has separate Arm (default ID 1) and Probe (default ID 2) panels on the
 shared ArbotiX. Switching requires stopped motion. Reconnect while stopped to
 rescan after connecting a missing servo. Arm sweep calibration retains its
-three points, saved with **Save recorded limits** in `calibration.json`.
+three points, saved with **Save recorded limits** in `operator_config.json`.
 
 The probe has one persistent calibration: **maximum extension**. Home first,
 jog down to the desired maximum extension, release, enter the measured travel
@@ -169,10 +172,14 @@ from the top in millimetres, then choose **Save current position as maximum
 extension**. The saved distance and corresponding encoder span provide the
 millimetre conversion and travel limit for the main Probe slider.
 
-All hardware calibration lives in **`src/peaceofmine_operator/calibration.json`**:
+Shared robot settings and hardware calibration live in **`src/peaceofmine_operator/operator_config.json`**:
 `arm` contains the servo ID and minimum/centre/maximum encoder positions;
 `probe` contains the servo ID, measured maximum extension and encoder span;
-`metal_detector` contains zero ADC, trigger ADC and reference voltage.
+`metal_detector` contains zero ADC, trigger ADC and reference voltage;
+`arm_motion` contains maximum speed and acceleration;
+`adc` (and a separate `adc_simulation` section) contains conversion settings, plot routes and contact trigger;
+`cameras` contains shared source/rotation defaults and robot capture settings.
+Optional sections are created when first saved from Settings.
 This regular JSON file belongs in Git. Settings saves update it on disk; commit
 those changes to record new measurements in Git history.
 
@@ -180,7 +187,7 @@ The nodes locate the installed package file independently of the launch working
 directory. With the recommended `colcon build --symlink-install`, saves resolve
 the installed symlink and update this source file in the mounted repository.
 A non-symlink installation uses its installed copy instead. For an explicit
-alternative, pass `calibration_file:=/absolute/path/calibration.json`.
+alternative, pass `config_file:=/absolute/path/operator_config.json`.
 Saved sections take precedence over legacy calibration launch parameters;
 those parameters are fallbacks only when a section is absent.
 Updates are atomic and locked across processes, preserving the other sections.
@@ -265,7 +272,7 @@ the last 10 seconds; the mine trigger maps to 100%. The meter and sweep trace
 blend from green at zero through yellow to red at the trigger. ADC reference
 voltage is hardware configuration, not a dashboard input. Changes affect the ROS
 signal-ratio topic for all clients. The hardware node
-saves Zero, Apply and Reset changes to the shared `calibration.json`. With a 5 V reference, 20 ADC is about
+saves Zero, Apply and Reset changes to the shared `operator_config.json`. With a 5 V reference, 20 ADC is about
 0.392 V peak and 150 ADC about 2.941 V peak. This is the firmware's sine-equivalent
 AC amplitude, not DC pin voltage; values above half the reference warrant
 checking waveform shape or clipping. Set the reference to measured AVcc for
@@ -274,7 +281,12 @@ better conversion accuracy. Simulated payloads do not provide raw ADC readings.
 ## Files
 
 - `dashboard/index.html`, `app.js`, `style.css` — pad graphic, mapping, HUD
-- `scripts/operator_gateway.py` — control lease, RC authority, command timeout, `cmd_vel`
+- `scripts/operator_web_node.py` — website, WebSocket and ROS transport
+- `scripts/operator_control_node.py` — control lease, RC authority, drive timeout
+- `scripts/servo_driver_node.py` — shared serial bus and hardware safety
+- `scripts/arm_controller_node.py`, `probe_controller_node.py` — separate actuator behavior
+- `scripts/detector_node.py` — sensor interpretation and plot history
+- `architecture.md` — full ownership map and audit findings
 - `launch/operator.launch.xml` — hardware or simulation, selected by `is_sim`
 - `launch/operator_sim.launch.py` — `sim_svea` + simulated payload
 - `gui_plan.md` — longer roadmap (cameras, map, payload, mission record)
@@ -291,3 +303,108 @@ holding baseline. It stays fixed through subsequent contact and movement.
 The reference is session-only and clears on disconnect or actuator change.
 Position error is shown in shaft degrees. Stale contact telemetry shows no
 reading; zeroing requires fresh holding samples and control ownership.
+
+## ADS1115 sensor and probe contact trigger
+
+Both operator launches start `ads1115_node.py` in the vehicle namespace. The node
+owns I2C acquisition, configuration persistence, and ADC contact detection. The
+register driver, acquisition worker, ROS node, gateway telemetry cache, and browser
+settings live in separate files. The gateway never opens the I2C bus.
+
+Open **Settings → ADS1115**, take control, configure the inputs, then select
+**Apply & save** and **Start acquisition**. Stop the standalone ADS1115 devtool
+before starting operator acquisition. Acquisition starts stopped on every node
+restart; saved settings and plot assignments are restored. Simulation uses labelled
+demo samples and a separate `adc_simulation` section in the shared
+`operator_config.json`; hardware uses the `adc` section. Override `config_file`
+in either launch with an absolute mounted path to choose a different shared file.
+The earlier `.operator/ads1115.json` and `ads1115-sim.json` files are imported once
+when the matching section is absent. `adc_settings_path` is retained only as an
+optional legacy import path; all new saves go to the shared configuration.
+
+Each single-ended or differential input can be assigned to the metal detector
+plot, probe plot, both, or neither. Defaults are **A0 → metal detector** and
+**A1 → probe**. Added traces use their own scaled-value axis. The ADS1115 panel
+provides bus/address, PGA, conversion mode/rate, scan interval, per-input scaling,
+ALERT/RDY settings, raw/voltage/scaled plots, statistics, clipping status, register
+readback, CSV export, and JSON import/export. Import also accepts standalone bench
+configuration files. Drafts only take effect after Apply & save.
+
+Under **Probe contact trigger**, enable detection, choose an enabled input, and set a threshold in scaled units. Plot routing is independent of the contact source. Optional hysteresis and debounce suppress threshold chatter. Choose whether contact means
+at/above or at/below the level. The probe plot shows the threshold and the main
+probe panel reports CONTACT, Clear, or unavailable readings. This is a contact
+indication, not an automatic motion stop. Existing servo protection and homing
+thresholds remain independent. Disabled, stopped, disconnected, or stale sensors
+cannot report fresh contact.
+
+Relative ROS topics (under `/self/` with the default vehicle name):
+
+| Topic | Type | Contents |
+| --- | --- | --- |
+| `adc/state` | `std_msgs/String` JSON | 20 Hz batches containing every acquired sample (`seq`, epoch `time`, `mux`, signed `raw`, `volts`, `scaled`, `clipped`), node session, revision, configuration, plot routes, readback, and errors. The web bridge adds the probe-owned contact result. |
+| `adc/{input}/raw` | `std_msgs/Int16` | Latest signed raw reading per input per publication tick. |
+| `adc/{input}/volts` | `std_msgs/Float64` | Latest voltage per input per publication tick. |
+| `adc/{input}/scaled` | `std_msgs/Float64` | Latest scaled value per input per publication tick. |
+| `adc/command` | `std_msgs/String` JSON | `{request_id, action: "run", running: true/false}` or `{request_id, action: "settings", settings: {config, routes, probe_trigger}}`. |
+| `adc/command_result` | `std_msgs/String` JSON | Matching `request_id`, `ok`, and error `message` when rejected. A successful settings result means saved; `applied == revision` confirms device readback. |
+| `adc/samples` | `peaceofmine_interfaces/AdcSamples` | Timestamped batches for robot consumers; includes configuration revision and validity. |
+| `probe/contact` | `peaceofmine_interfaces/ContactState` | Probe-owned contact result. Invalid means unknown. Consumers must also enforce a receipt timeout. |
+
+Input topic names are `a0`, `a1`, `a2`, `a3`, `a0_a1`, `a0_a3`, `a1_a3`, and
+`a2_a3`. Scalar topics publish only when new samples exist; use `adc/samples` for
+all samples, timestamps, freshness, and sequence-gap detection. Node acquisition
+continues without browsers. Browser history is bounded to 60 seconds / 30,000
+samples and is not a persistent logger. Browser setting changes use the operator
+control lease; ROS command access follows the deployment's ROS access controls.
+
+Install the updated workspace requirements (`smbus2`) or rebuild the Docker image
+before hardware use, then rebuild `peaceofmine_operator`. The launching account
+needs I2C device access. No physical bus is opened until Start acquisition.
+
+
+## ROS responsibilities and persistent configuration
+
+See [architecture](architecture.md) for ownership, safety and persistence, and
+[ROS graph](ros_graph.md) for the current nodes, topics, services and actions.
+
+Both launch commands now run the same arm and probe controllers. In simulation,
+`servo_driver` uses an in-memory device/plant, and ADC acquisition uses generated
+samples. No physical device is opened. Probe simulation starts unhomed, so the same
+homing/calibration workflow is exercised as on hardware.
+
+`servo_driver` owns all serial I/O and enforces bounded speed, acceleration,
+exclusive actuator ownership, operation identities and watchdogs. Controllers
+exchange typed commands and telemetry without synchronous register requests.
+The website is served by `operator_web`, which communicates through ROS.
+
+The browser's control lease expires after 0.5 seconds without heartbeats. Explicit
+arming and held drive input are required; drive commands expire after 0.25 seconds.
+Servo controller, driver and firmware safety checks remain independent. A timed-out
+operation cannot resume from renewed stale commands. Release and start again.
+
+All runtime saves go through `operator_settings` into `operator_config.json`.
+Schema/document/section revisions protect concurrent changes. The old
+`calibration_file` launch argument and migration from a sibling `calibration.json`
+remain supported. Saved and applied revisions are separate; ADC readback confirms
+application, while actuator configuration changes stop movement and require a new
+start. Live arming, leases, home position and acquisition-running state are not saved.
+
+Persistent settings include ADC configuration/scaling, plot assignments, probe
+contact thresholds, arm/probe calibration, motion limits, detector calibration and
+robot camera defaults. Simulation ADC and arm/probe settings use separate sections; simulated calibration cannot overwrite hardware calibration. Camera
+capture changes apply after restart. Laptop camera IDs and browser controller
+mappings remain local to each browser. Ports, TLS and device-enable flags remain
+launch options.
+
+Without localization, the hardware probe checks the existing MAVROS wheel-velocity
+output. Missing/stale velocity blocks every probe movement, including homing and
+jogging. A detector location marker still requires actual odometry.
+
+The browser depth slider holds the requested depth until Stop, safety loss or the
+60-second limit. ROS `probe/execute` target actions instead finish and release torque
+at depth. ADC contact is an indication; it does not automatically retract the probe.
+Homing uses the separate motor-load threshold. Verify the physical top after homing.
+
+`operator_gateway.py` remains a compatibility entry point for the website server;
+`arm_servo.launch.xml` starts the driver and both controllers. The obsolete combined
+servo executable does not open a competing serial connection.

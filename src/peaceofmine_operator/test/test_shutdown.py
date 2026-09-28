@@ -45,6 +45,7 @@ class ShutdownTest(unittest.TestCase):
         site = web.TCPSite(runner, '127.0.0.1', 18082)
         await site.start()
         with tempfile.TemporaryFile(mode='w+') as log:
+            backends = [subprocess.Popen([sys.executable, str(SCRIPTS / name), '--ros-args', '-p', 'safety_simulation:=true'], stdout=log, stderr=subprocess.STDOUT) for name in ('operator_control_node.py', 'camera_registry_node.py')]
             process = subprocess.Popen([
                 sys.executable, str(SCRIPTS / 'operator_gateway.py'), '--ros-args',
                 '-p', 'host:=127.0.0.1', '-p', 'port:=18081',
@@ -90,6 +91,9 @@ class ShutdownTest(unittest.TestCase):
                 if process.poll() is None:
                     process.kill()
                     process.wait()
+                for backend in backends:
+                    backend.send_signal(signal.SIGTERM)
+                    await asyncio.to_thread(backend.wait, timeout=5)
                 await runner.cleanup()
                 node.destroy_node()
                 rclpy.shutdown()
@@ -103,14 +107,38 @@ class ShutdownTest(unittest.TestCase):
             with self.subTest(signal=sig), tempfile.TemporaryFile(mode='w+') as log:
                 # Signal only after initialization; the timer proves spin has begun.
                 code = ('import importlib.util, os, signal; '
-                        f's = importlib.util.spec_from_file_location("arm", {str(SCRIPTS / "arm_servo_node.py")!r}); '
+                        f's = importlib.util.spec_from_file_location("arm", {str(SCRIPTS / "servo_driver_node.py")!r}); '
                         'm = importlib.util.module_from_spec(s); s.loader.exec_module(m); '
-                        'original = m.ArmServoNode.__init__; '
-                        f'm.ArmServoNode.__init__ = lambda self: (original(self), self.create_timer(.1, lambda: os.kill(os.getpid(), {int(sig)}))) and None; '
+                        'original = m.ServoDriver.__init__; '
+                        f'm.ServoDriver.__init__ = lambda self: (original(self), self.create_timer(.1, lambda: os.kill(os.getpid(), {int(sig)}))) and None; '
                         'm.main()')
                 result = subprocess.run([sys.executable, '-c', code], stdout=log, stderr=subprocess.STDOUT, timeout=8)
                 log.seek(0)
                 self.assertEqual(result.returncode, 0, log.read())
+
+    def test_adc_repeated_shutdown_signal_during_cleanup(self):
+        code = textwrap.dedent(f"""
+            import importlib.util, os, signal, sys
+            sys.argv = ['adc-test', '--ros-args', '-p', 'simulation:=true']
+            spec = importlib.util.spec_from_file_location('adc', {str(SCRIPTS / 'ads1115_node.py')!r})
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            init = module.ADS1115Node.__init__
+            destroy = module.ADS1115Node.destroy_node
+            def start(self):
+                init(self)
+                self.create_timer(.1, lambda: os.kill(os.getpid(), signal.SIGINT))
+            def finish(self):
+                os.kill(os.getpid(), signal.SIGINT)
+                destroy(self)
+                print('ADC cleanup completed')
+            module.ADS1115Node.__init__ = start
+            module.ADS1115Node.destroy_node = finish
+            module.main()
+        """)
+        result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=8)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('ADC cleanup completed', result.stdout)
 
     def test_drive_signals_publish_neutral_before_ros_shutdown(self):
         script = SCRIPTS.parents[1] / 'svea_examples/scripts/twist_consumer.py'

@@ -492,7 +492,7 @@ assert($('probe-zero-contact').disabled, 'zero disabled without fresh held readi
 document.body.textContent = 'BROWSER TESTS PASSED';
 '''
         import json
-        source = (DASHBOARD / 'app.js').read_text()
+        source = (DASHBOARD / 'actuator-settings.js').read_text() + '\n' + (DASHBOARD / 'app.js').read_text()
         gamepad_checks = (DASHBOARD.parent / 'test/test_gamepad.cjs').read_text().split("if (typeof require")[0]
         script = setup + (DASHBOARD / 'chart-4.4.8.umd.js').read_text() + (DASHBOARD / 'keydrown-1.3.0.js').read_text() + source + gamepad_checks + '\nconst dashboardSource = ' + json.dumps(source) + ';\n'
         html += '<script>(async () => {try {' + script + checks + "} catch(e) {document.body.textContent = 'TEST FAILED: ' + e.stack;}})();</script>"

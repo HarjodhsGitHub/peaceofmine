@@ -1,5 +1,6 @@
 <?xml version="1.0"?>
 <launch>
+  <arg name="adc_settings_path" default=""/>
   <!-- Edit these defaults for this setup, then run:
        ros2 launch peaceofmine_operator operator.launch.xml
        Stop the previous launch before switching vehicle modes. -->
@@ -21,6 +22,7 @@
   <arg name="use_lidar" default="false"/>
   <arg name="use_rtk" default="false"/>
   <arg name="odometry_topic" default="odometry/local"/>
+  <arg name="probe_velocity_topic" default="$(eval '&quot;&quot; if &quot;$(var is_sim)&quot; == &quot;true&quot; or &quot;$(var use_localization)&quot; == &quot;true&quot; else &quot;mavros/wheel_odometry/velocity&quot;')"/>
 
   <!-- Initial pose and simulated fixture -->
   <arg name="initial_pose_x" default="0.0"/>
@@ -31,7 +33,7 @@
   <!-- Arm servo -->
   <arg name="use_arm_servo" default="true"/>
   <arg name="arm_serial_port" default="auto"/>
-  <arg name="arm_servo_id" default="1"/>
+  <arg name="arm_servo_id" default="-1"/>
   <arg name="arm_minimum" default="-1"/>
   <arg name="arm_center" default="-1"/>
   <arg name="arm_maximum" default="-1"/>
@@ -40,8 +42,10 @@
   <arg name="arm_sweep_acceleration_deg_s2" default="34.332"/>
 
   <!-- Probe servo on the same ArbotiX; calibration is independent of the arm. -->
-  <arg name="probe_servo_id" default="2"/>
-  <arg name="calibration_file" default="$(find-pkg-share peaceofmine_operator)/calibration.json"/>
+  <arg name="probe_servo_id" default="-1"/>
+  <arg name="probe_speed" default="73"/>
+  <arg name="calibration_file" default="$(find-pkg-share peaceofmine_operator)/operator_config.json"/>
+  <arg name="config_file" default="$(var calibration_file)"/>
   <arg name="probe_minimum" default="-1"/>
   <arg name="probe_center" default="-1"/>
   <arg name="probe_maximum" default="-1"/>
@@ -109,7 +113,7 @@
     <group unless="$(var simulate_payload)">
     <include if="$(var use_sensor_serial)" file="$(find-pkg-share peaceofmine_operator)/launch/sensor_serial.launch.xml">
       <arg name="serial_port" value="$(var sensor_serial_port)"/>
-      <arg name="calibration_file" value="$(var calibration_file)"/>
+      <arg name="calibration_file" value="$(var config_file)"/>
       <arg name="baud_rate" value="$(var sensor_baud_rate)"/>
       <arg name="baseline_adc" value="$(var sensor_baseline_adc)"/>
       <arg name="full_response_adc" value="$(var sensor_full_response_adc)"/>
@@ -119,7 +123,11 @@
       <arg name="serial_port" value="$(var arm_serial_port)"/>
       <arg name="servo_id" value="$(var arm_servo_id)"/>
       <arg name="probe_servo_id" value="$(var probe_servo_id)"/>
-      <arg name="calibration_file" value="$(var calibration_file)"/>
+      <arg name="probe_speed" value="$(var probe_speed)"/>
+      <arg name="fixture_angle_offset_deg" value="$(var fixture_angle_offset_deg)"/>
+      <arg name="probe_velocity_topic" value="$(var probe_velocity_topic)"/>
+      <arg name="odometry_topic" value="$(var odometry_topic)"/>
+      <arg name="calibration_file" value="$(var config_file)"/>
       <arg name="probe_minimum" value="$(var probe_minimum)"/>
       <arg name="probe_center" value="$(var probe_center)"/>
       <arg name="probe_maximum" value="$(var probe_maximum)"/>
@@ -137,30 +145,51 @@
       <param name="max_velocity" value="$(var max_velocity)"/>
       <param name="cmd_timeout" value="0.25"/>
     </node>
+    <include if="$(var simulate_payload)" file="$(find-pkg-share peaceofmine_operator)/launch/arm_servo.launch.xml">
+      <arg name="simulation" value="true"/>
+      <arg name="config_file" value="$(var config_file)"/>
+      <arg name="odometry_topic" value="$(var odometry_topic)"/>
+      <arg name="speed" value="$(var arm_speed)"/>
+      <arg name="probe_speed" value="$(var probe_speed)"/>
+      <arg name="fixture_angle_offset_deg" value="$(var fixture_angle_offset_deg)"/>
+      <arg name="probe_velocity_topic" value="$(var probe_velocity_topic)"/>
+    </include>
     <node if="$(var simulate_payload)" pkg="peaceofmine_operator" exec="simulated_payload.py" name="simulated_payload" output="screen">
       <param name="odometry_topic" value="$(var odometry_topic)"/>
       <param name="fixture_angle_offset_deg" value="$(var fixture_angle_offset_deg)"/>
     </node>
-    <node pkg="peaceofmine_operator" exec="operator_gateway.py" name="operator_gateway" output="screen">
-      <param name="safety_simulation" value="$(var is_sim)"/>
+    <node pkg="peaceofmine_operator" exec="ads1115_node.py" name="ads1115" output="screen">
+      <param name="simulation" value="$(var is_sim)"/>
+      <param name="settings_path" value="$(var adc_settings_path)" type="str"/>
+      <param name="config_file" value="$(var config_file)" type="str"/>
+    </node>
+    <node pkg="peaceofmine_operator" exec="operator_control_node.py" name="operator_control" output="screen">
+      <param name="safety_simulation" value="$(var is_sim)" />
+      <param name="rc_steering_channel" value="$(var rc_steering_channel)" type="int" />
+      <param name="rc_throttle_channel" value="$(var rc_throttle_channel)" type="int" />
+      <param name="cmd_vel_topic" value="cmd_vel" />
+      <param name="odometry_topic" value="$(var odometry_topic)" />
+      <param name="max_velocity_mps" value="$(var max_velocity)" />
+    </node>
+    <node pkg="peaceofmine_operator" exec="detector_node.py" name="detector" output="screen">
       <param name="detector_threshold_ratio" value="$(var detector_threshold_ratio)"/>
-      <param name="rc_steering_channel" value="$(var rc_steering_channel)" type="int"/>
-      <param name="rc_throttle_channel" value="$(var rc_throttle_channel)" type="int"/>
-      <param name="host" value="$(var host)"/>
-      <param name="port" value="$(var port)"/>
-      <param name="tls_cert" value="$(var tls_cert)" type="str"/>
-      <param name="tls_key" value="$(var tls_key)" type="str"/>
-      <param name="cmd_vel_topic" value="cmd_vel"/>
       <param name="odometry_topic" value="$(var odometry_topic)"/>
-      <param name="max_velocity_mps" value="$(var max_velocity)"/>
-      <param name="camera_stream_base_url" value="http://127.0.0.1:$(var camera_stream_port)"/>
-      <param name="front_camera_topic" value="/$(var name)/camera_front/image_raw"/>
-      <param name="auxiliary_camera_topic" value="/$(var name)/camera_auxiliary/image_raw"/>
-      <param name="front_camera_info_topic" value="/$(var name)/camera_front/camera_info"/>
-      <param name="auxiliary_camera_info_topic" value="/$(var name)/camera_auxiliary/camera_info"/>
+    </node>
+    <node pkg="peaceofmine_operator" exec="power_node.py" name="operator_power" output="screen"/>
+    <node pkg="peaceofmine_operator" exec="camera_registry_node.py" name="camera_registry" output="screen"/>
+    <node pkg="peaceofmine_operator" exec="operator_settings_node.py" name="operator_settings" output="screen">
+      <param name="config_file" value="$(var config_file)" type="str"/>
+    </node>
+    <node pkg="peaceofmine_operator" exec="operator_web_node.py" name="operator_web" output="screen">
+      <param name="host" value="$(var host)" />
+      <param name="port" value="$(var port)" />
+      <param name="tls_cert" value="$(var tls_cert)" type="str" />
+      <param name="tls_key" value="$(var tls_key)" type="str" />
+      <param name="camera_stream_base_url" value="http://127.0.0.1:$(var camera_stream_port)" />
     </node>
     <group if="$(var use_cameras)">
     <node if="$(var use_front_camera)" pkg="peaceofmine_operator" exec="usb_camera_auto.py" name="usb_camera" namespace="camera_front" output="screen">
+      <env name="POM_CONFIG_FILE" value="$(var config_file)"/>
       <env name="POM_CAMERA_INDEX" value="0"/>
       <env name="POM_CAMERA_DEVICE" value="$(var front_camera_device)"/>
       <param name="video_device" value="$(var front_camera_device)"/>
@@ -172,6 +201,7 @@
       <param name="frame_id" value="$(var name)/camera_front_link"/>
     </node>
     <node if="$(var use_auxiliary_camera)" pkg="peaceofmine_operator" exec="usb_camera_auto.py" name="usb_camera" namespace="camera_auxiliary" output="screen">
+      <env name="POM_CONFIG_FILE" value="$(var config_file)"/>
       <env name="POM_CAMERA_INDEX" value="1"/>
       <env name="POM_CAMERA_DEVICE" value="$(var auxiliary_camera_device)"/>
       <param name="video_device" value="$(var auxiliary_camera_device)"/>

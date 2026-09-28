@@ -1,0 +1,15 @@
+# Per-role server validates supported operations and all interlocks.
+string operation
+# Arm position is encoder ticks; probe target is millimetres.
+float64 target
+# Sweep speed in degrees/second; zero retains the configured speed.
+float64 speed
+float64 load_percent
+---
+bool success
+string message
+---
+string state
+# Feedback position is the raw encoder position in ticks.
+float64 position
+string message

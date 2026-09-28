@@ -40,6 +40,8 @@
         <span id="rc-safety" class="badge neutral" title="PX4 safety status">RC UNKNOWN · LOCKED</span>
         <span id="control-owner" class="badge neutral">SPECTATING</span>
         <button id="take-control" class="primary">Take control</button>
+        <button id="enable-controls">Arm controls</button>
+        <button id="disable-controls">Disarm</button>
         <button id="settings" class="quiet">Settings</button>
       </div>
     </header>
@@ -149,6 +151,7 @@
             <span>Position error <strong id="probe-position-error">—</strong></span>
             <span>Telemetry <strong id="probe-contact-rate">—</strong></span>
           </div>
+          <p id="probe-adc-contact" role="status">ADC trigger disabled</p>
           <button id="probe-zero-contact" type="button">Zero contact</button>
           <small id="probe-zero-status">Hold clear of the ground before zeroing. Reference lasts for this connection.</small>
           <label for="probe-slider">Target depth</label>
@@ -197,7 +200,55 @@
         <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-arm" data-settings-tab="arm">Arm</button>
         <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-probe" data-settings-tab="probe">Probe</button>
         <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-detector" data-settings-tab="detector">Metal detector</button>
+        <button type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-adc" data-settings-tab="adc">ADS1115</button>
       </nav>
+
+      <section id="settings-adc" class="settings-panel" role="tabpanel" data-settings-panel="adc" hidden>
+        <div class="settings-section-heading"><h3>ADS1115 sensor</h3><span id="adc-status" class="badge neutral">STOPPED</span></div>
+        <p class="dialog-help">Configure inputs and add their scaled readings to the detector or probe plot. Settings are saved on the operator host. Take control to apply or start acquisition. Stop the standalone ADC devtool before starting here.</p>
+        <p id="adc-error" role="alert"></p><p id="adc-feedback" role="status"></p>
+        <div class="adc-actions"><button type="button" id="adc-run">Start acquisition</button><button type="button" id="adc-apply">Apply &amp; save</button><button type="button" id="adc-revert">Revert edits</button><button type="button" id="adc-save">Export settings</button><button type="button" id="adc-import">Import settings</button><input type="file" id="adc-file" accept=".json,application/json" hidden></div>
+<fieldset><legend>Bus &amp; conversion</legend>
+<div class="fields">
+<label>I2C bus<input data-adc-field="bus" type="number" min="0" max="255" required><small>Select the Pi bus wired to the ADC; GPIO SDA/SCL normally use bus 1.</small></label>
+<label>Address<select data-adc-field="address"><option value="72">0x48 / ADDR to GND</option><option value="73">0x49 / ADDR to VDD</option><option value="74">0x4A / ADDR to SDA</option><option value="75">0x4B / ADDR to SCL</option></select><small>Match the chip's ADDR wiring. Change this when selecting another ADC on the same bus.</small></label>
+<label>Data rate<select data-adc-field="rate"></select><small>Higher rates capture faster changes; lower rates reduce noise. Conversion capacity is shared across enabled inputs, with additional I2C overhead.</small></label>
+<label>PGA gain / full-scale range<select data-adc-field="pga"></select><small>Higher gain resolves smaller signals but clips sooner. Choose the smallest range that contains your signal.</small></label>
+<label>Conversion mode<select data-adc-field="mode"><option value="single">Single-shot scan</option><option value="continuous">Continuous / one input</option></select><small>Single-shot scans several inputs. Continuous keeps converting one input for faster repeated measurements.</small></label>
+<label>Pause between scans (ms)<input data-adc-field="interval_ms" type="number" min="0" max="60000" required><small>Use 0 for maximum throughput. Increase for slower logging and lower single-shot power use; continuous mode keeps the ADC running.</small></label>
+</div><p class="electrical">Analog pins: GND to VDD. A wider PGA range does not raise the input voltage limit.</p><output id="adc-resolution"></output></fieldset>
+
+<fieldset><legend>Inputs &amp; scaling</legend>
+<div class="table-wrap"><table><thead><tr><th>Enabled</th><th>Input</th><th>Multiplier</th><th>Offset</th><th>Add to plot</th></tr></thead><tbody id="adc-input-settings"></tbody></table></div><p class="formula">Scaled = volts &times; multiplier + offset</p><div class="fields"><small>Enable only the inputs you need for more readings per input. Differential selections measure the voltage between two pins.</small><small>Multiplier converts volts to sensor units or compensates for a voltage divider. It does not change the chip's gain.</small><small>Offset removes a known zero bias after multiplication, in your scaled units.</small></div></fieldset>
+
+<fieldset><legend>ALERT / RDY</legend>
+<div class="fields">
+<label>Output function<select data-adc-field="alert"><option value="disabled">Disabled</option><option value="traditional">Traditional comparator</option><option value="window">Window comparator</option><option value="ready">Conversion ready</option></select><small>Traditional gives a high-limit alarm with hysteresis; window alarms outside a band. Ready signals completed conversions on the physical pin.</small></label>
+<label>Polarity<select data-adc-field="polarity"><option value="0">Active low</option><option value="1">Active high</option></select><small>Match the asserted signal level expected by the circuit connected to ALERT/RDY.</small></label>
+<label>Assert after<select data-adc-field="queue"><option value="1">1 conversion</option><option value="2">2 conversions</option><option value="4">4 conversions</option></select><small>Require repeated threshold violations to reject brief spikes, at the cost of a slower alarm.</small></label>
+<div><label class="check"><input data-adc-field="latch" type="checkbox">Latch comparator</label><small>Retain a brief alarm until conversion data is read. This viewer reads continuously while acquiring, which clears the latch.</small></div>
+<label>Low threshold (signed counts)<input data-adc-field="low" type="number" min="-32768" max="32767" required><output id="adc-low-volts"></output><small>Traditional: clear the alarm below this level. Window: alarm below it. Voltage equivalent changes with PGA gain.</small></label>
+<label>High threshold (signed counts)<input data-adc-field="high" type="number" min="-32768" max="32767" required><output id="adc-high-volts"></output><small>Assert an alarm above this level. Keep it greater than the low threshold; raw counts are before software scaling.</small></label>
+</div><p class="electrical">Reading conversion data clears a latched alert. ALERT/RDY is configured here; its physical pin level is not monitored.</p></fieldset>
+
+
+        <fieldset><legend>Probe contact trigger</legend>
+          <div class="fields"><label><input id="adc-trigger-enabled" type="checkbox">Enable contact detection</label>
+          <label>Trigger input<select id="adc-trigger-mux"></select></label>
+          <label>Trigger level (scaled units)<input id="adc-trigger-level" type="number" step="any" min="-1000000000000" max="1000000000000"></label>
+          <label>Hysteresis (scaled units)<input id="adc-trigger-hysteresis" type="number" min="0" step="any" value="0"></label>
+          <label>Debounce (ms)<input id="adc-trigger-debounce" type="number" min="0" max="10000" value="0"></label>
+          <label>Contact when<select id="adc-trigger-direction"><option value="above">At or above trigger level</option><option value="below">At or below trigger level</option></select></label></div>
+          <p class="dialog-help">Select an enabled input assigned to the probe plot. Contact is indicated when its scaled reading reaches this level. This indicator does not automatically stop the probe; motor protection and homing thresholds remain separate.</p>
+          <p id="adc-trigger-state" role="status">Trigger disabled</p>
+        </fieldset>
+
+        <div class="adc-actions"><label>Plot quantity<select id="adc-quantity"><option value="scaled">Scaled</option><option value="volts">Volts</option><option value="raw">Raw counts</option></select></label>
+<label>History<select id="adc-window"><option value="10">10 s</option><option value="30" selected>30 s</option><option value="60">60 s</option></select></label><button type="button" id="adc-csv">Export CSV</button></div>
+        <p id="adc-rate"></p><div class="adc-chart"><canvas id="adc-history" aria-label="Live ADS1115 input readings"></canvas></div>
+        <div class="table-wrap"><table><thead><tr><th>Input</th><th>Raw</th><th>Volts</th><th>Scaled</th><th>Min / max / mean</th><th>Status</th></tr></thead><tbody id="adc-readings"></tbody></table></div>
+        <details><summary>Register readback</summary><pre id="adc-registers"></pre></details>
+      </section>
       <section id="settings-input" class="settings-panel active" role="tabpanel" data-settings-panel="input">
       <label for="control-source">Control source</label>
       <select id="control-source">
@@ -345,12 +396,12 @@
           </tbody>
         </table>
         <button type="button" id="arm-apply-limits">Save recorded limits</button>
-        <h3>Sweep motion limits</h3>
+        <h3>Arm motion limits</h3>
         <label>Maximum speed (°/s) <input id="arm-max-speed" type="number" min="0.684" max="699.732" step="any" required></label>
         <label>Acceleration (°/s²) <input id="arm-acceleration" type="number" min="8.583" max="2180.082" step="any" required></label>
         <button type="button" id="arm-apply-motion">Apply motion limits</button>
         <details class="arm-help"><summary>Additional launch settings</summary>
-          <p class="dialog-help">Arm positions are saved in calibration.json. Speed and acceleration still use these launch settings.</p>
+          <p class="dialog-help">Arm positions, maximum speed and acceleration are saved in operator_config.json. Launch values provide defaults until settings are saved.</p>
           <textarea id="arm-launch-xml" aria-label="Saved launch settings" rows="8" readonly spellcheck="false"></textarea>
         </details>
       </section>
@@ -379,7 +430,7 @@
             <label>Contact load magnitude (%) <input id="probe-servo-home-load" type="number" min="10" max="60" step="1" value="30" required></label>
             <button type="button" id="probe-servo-home">↑ Hold to home at top</button>
             <p id="probe-servo-home-status" role="status">Not homed</p>
-            <p class="dialog-help">Moves up at 50°/s. The first reading with load magnitude at or above the threshold releases torque and sets zero, even if the shaft is still moving. A 20% threshold applies to both +20% and −20% on the graph. Release to cancel. A jam can also trigger this: verify the top visually. The 30% starting threshold needs mechanical validation. Search stops after 60 seconds or at the supported position limit.</p>
+            <p class="dialog-help">Moves up within the saved probe speed limit. The first reading with load magnitude at or above the threshold releases torque and sets zero, even if the shaft is still moving. A 20% threshold applies to both +20% and −20% on the graph. Release to cancel. A jam can also trigger this: verify the top visually. The 30% starting threshold needs mechanical validation. Search stops after 60 seconds or at the supported position limit.</p>
             <p class="dialog-help">Zero is valid only for this connection; home again after power cycling or reconnecting. The upper rail stop provides the resistance used to find home.</p>
             <div class="arm-jog-controls">
               <button type="button" id="probe-servo-jog-left">↓ Hold down / extend</button>
@@ -422,6 +473,10 @@
             <p class="dialog-help">Load % is the servo’s estimate, not measured torque. Missing telemetry is shown as —.</p>
           </div>
         </div>
+        <h4>Probe motion limits</h4>
+        <label>Maximum speed (°/s) <input id="probe-servo-max-speed" type="number" min="0.684" max="699.732" step="any" required></label>
+        <label>Acceleration (°/s²) <input id="probe-servo-acceleration" type="number" min="8.583" max="2180.082" step="any" required></label>
+        <button type="button" id="probe-servo-apply-motion">Apply motion limits</button>
         <h4>Maximum extension</h4>
         <p class="dialog-help">Home first, then jog down to your chosen maximum extension and release. Enter the measured travel from the top in millimetres and save. This is the only persistent probe calibration; it also sets the main control’s travel limit.</p>
         <label>Measured maximum extension (mm) <input id="probe-servo-max-extension" type="number" min="0.1" max="10000" step="any" required></label>
@@ -432,7 +487,7 @@
         <div class="settings-section-heading">
           <div>
             <h3>Camera previews</h3>
-            <p class="dialog-help">Preview each selection and adjust its orientation. Rotation applies to this browser’s view and is saved automatically.</p>
+            <p class="dialog-help">Preview each selection and adjust its orientation. Preview changes stay in this browser until you save them as shared robot defaults.</p>
           </div>
           <button id="refresh-cameras" type="button" class="quiet">Allow laptop cameras</button>
         </div>
@@ -466,6 +521,11 @@
             <p id="auxiliary-source-detail" class="camera-source-detail"></p>
           </article>
         </div>
+        <details><summary>Robot camera capture settings</summary><div id="camera-capture-settings"></div>
+          <p class="dialog-help">Saved capture settings override launch capture defaults on the next operator restart. Camera enable flags remain launch options. Use a stable /dev/v4l/by-id path where possible.</p>
+        </details>
+        <div class="camera-actions"><button id="camera-save-shared" type="button" disabled>Save robot camera defaults</button><button id="camera-revert-shared" type="button">Reload saved defaults</button></div>
+        <p id="camera-config-feedback" class="dialog-help" role="status">Robot camera sources, rotation and capture settings are shared. Laptop camera IDs and controller mappings remain local to this browser.</p>
         <p id="camera-source-status" class="dialog-help">Checking camera sources…</p>
         <div class="source-help">
           <strong>Raspberry Pi cameras</strong>
@@ -480,6 +540,9 @@
 
   <script src="/assets/keydrown-1.3.0.js"></script>
   <script src="/assets/chart-4.4.8.umd.js"></script>
+  <script src="/assets/actuator-settings.js"></script>
   <script src="/assets/app.js"></script>
+  <script src="/assets/adc.js"></script>
+  <script src="/assets/camera-config.js"></script>
 </body>
 </html>
