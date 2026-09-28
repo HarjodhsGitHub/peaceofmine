@@ -40,6 +40,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, BatteryState
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Bool, Float32, String
+from peaceofmine_operator import bringup
 from peaceofmine_operator.rc_safety import RcSafety
 from peaceofmine_operator.power import PowerTelemetry
 from peaceofmine_operator.camera_stream import CameraStreams
@@ -101,8 +102,15 @@ class OperatorGateway(Node):
         self.declare_parameter('detector_threshold_ratio', 1.0)
         self.declare_parameter('rc_steering_channel', 1)
         self.declare_parameter('rc_throttle_channel', 2)
+        self.declare_parameter('bringup_enabled', False)
+        for key, value in bringup.DEFAULTS.items():
+            self.declare_parameter(f'bringup.{key}', value)
 
         self._lock = threading.RLock()
+        self._bringup = None
+        if self.get_parameter('bringup_enabled').value:
+            self._bringup = bringup.Bringup({key: str(self.get_parameter(f'bringup.{key}').value)
+                                             for key in bringup.DEFAULTS})
         self._power = PowerTelemetry()
         self.create_subscription(BatteryState, 'mavros/battery', self._battery_cb, qos_profile_sensor_data)
         # PX4 tunnel messages are optional on installations without px4_msgs.
@@ -287,6 +295,42 @@ class OperatorGateway(Node):
             self._disable_actuation_locked()
             self._stop_until = time.monotonic() + STOP_TAIL_S
             self._publish_twist(0.0, 0.0)
+
+    def stop_bringup(self):
+        """Stop every child launch started from the Setup panel and wait for it."""
+        if self._bringup is not None:
+            self._bringup.stop_all(wait=True)
+
+    def _handle_bringup_locked(self, payload):
+        if self._bringup is None:
+            return {'type': 'error', 'message': 'Setup is not available in this launch; use operator_setup.launch.xml.'}
+        action = payload.get('action')
+        subsystem = payload.get('subsystem')
+        if action not in ('start', 'stop', 'restart', 'start_all', 'stop_all'):
+            return {'type': 'error', 'message': 'Unsupported setup action.'}
+        if action in ('start', 'stop', 'restart') and subsystem not in bringup.SUBSYSTEMS:
+            return {'type': 'error', 'message': 'Unknown setup subsystem.'}
+        if action in ('stop', 'restart', 'stop_all'):
+            # Stopping any subsystem first stops motion; losing MAVROS then
+            # leaves RcSafety stale, which keeps drive and servos locked.
+            self._disable_actuation_locked()
+            self._last_command = 0.0
+            self._stop_until = time.monotonic() + STOP_TAIL_S
+            self._publish_twist(0.0, 0.0)
+        if action == 'start':
+            self._bringup.start(subsystem)
+        elif action == 'stop':
+            self._bringup.stop(subsystem)
+        elif action == 'restart':
+            self._bringup.restart(subsystem)
+        elif action == 'stop_all':
+            self._bringup.stop_all()
+        else:
+            skipped = self._bringup.start_all()
+            if skipped:
+                labels = ', '.join(bringup.SUBSYSTEMS[name]['label'] for name in skipped)
+                return {'type': 'error', 'message': f'Not started, hardware not found: {labels}.'}
+        return None
 
     def _enforce_safety_locked(self):
         safety = self._rc_safety.snapshot()
@@ -618,6 +662,7 @@ class OperatorGateway(Node):
                 },
                 'detections': list(self._detections),
                 'cameras': cameras,
+                'bringup': self._bringup.snapshot() if self._bringup is not None else {'enabled': False},
             }
 
     def connected_sockets(self) -> list[web.WebSocketResponse]:
@@ -666,6 +711,9 @@ class OperatorGateway(Node):
                 flush_drive = True
             elif self._lease is not ws:
                 error = {'type': 'error', 'message': 'Spectator mode: take control before sending commands.'}
+            elif message_type == 'bringup':
+                # Before the RC safety gate: Setup must work while PX4 is still offline.
+                error = self._handle_bringup_locked(payload)
             elif message_type == 'probe_zero_contact':
                 if self._rc_safety.simulation or abs(self._speed) > self._probe_speed_limit or not safety['servo_allowed']:
                     return {'type': 'error', 'message': 'Zero contact requires stationary hardware with probe permission'}
@@ -941,6 +989,8 @@ def main() -> None:
         spinner.start()
         asyncio.run(start_server(node, stop))
     finally:
+        if node is not None:
+            node.stop_bringup()
         if executor is not None:
             executor.shutdown()
         if spinner is not None:

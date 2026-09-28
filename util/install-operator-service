@@ -1,0 +1,39 @@
+#! /bin/sh
+#
+# Install and start the peaceofmine-operator systemd unit so the operator
+# dashboard comes up at boot. Build the image first with `util/build`.
+#
+# Usage: util/install-operator-service            install and start
+#        util/install-operator-service --remove   stop and uninstall
+
+set -e
+
+. "$(dirname "$0")/config.sh"
+
+UNIT="peaceofmine-operator.service"
+TARGET="/etc/systemd/system/$UNIT"
+
+if [ "$1" = "--remove" ]; then
+    sudo systemctl disable --now "$UNIT" || true
+    sudo rm -f "$TARGET"
+    sudo systemctl daemon-reload
+    echo "Removed $UNIT"
+    exit 0
+fi
+
+docker image inspect "$IMAGE_TAG" >/dev/null 2>&1 \
+    || { echo "Error: image $IMAGE_TAG not found; run util/build first"; exit 1; }
+
+RUN_USER="${SUDO_USER:-$(id -un)}"
+id -nG "$RUN_USER" | grep -qw docker || [ "$RUN_USER" = root ] \
+    || { echo "Error: $RUN_USER must be in the docker group (sudo usermod -aG docker $RUN_USER)"; exit 1; }
+
+sed -e "s|@REPOSITORY_PATH@|$REPOSITORY_PATH|g" \
+    -e "s|@USER@|$RUN_USER|g" \
+    -e "s|@CONTAINER@|${OPERATOR_CONTAINER:-$CONTAINER_NAME-operator}|g" \
+    "$REPOSITORY_PATH/util/peaceofmine-operator.service" | sudo tee "$TARGET" >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl enable --now "$UNIT"
+
+echo "Installed $UNIT. Follow the startup log with:"
+echo "  journalctl -u $UNIT -f"

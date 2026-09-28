@@ -40,6 +40,7 @@
         <span id="rc-safety" class="badge neutral" title="PX4 safety status">RC UNKNOWN · LOCKED</span>
         <span id="control-owner" class="badge neutral">SPECTATING</span>
         <button id="take-control" class="primary">Take control</button>
+        <button id="setup" class="quiet hidden">Setup</button>
         <button id="settings" class="quiet">Settings</button>
       </div>
     </header>
@@ -181,6 +182,27 @@
       </div>
     </section>
   </main>
+
+  <dialog id="setup-dialog" aria-labelledby="setup-title">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Real car</p>
+          <h2 id="setup-title">Setup</h2>
+        </div>
+        <button value="close" formnovalidate class="quiet" aria-label="Close setup">Close</button>
+      </div>
+      <p id="setup-owner" class="setup-banner">Take control to change setup.</p>
+      <p class="dialog-help">Plug in the hardware, then start each part. Keep the wheels off the ground and the RC in hand for the first drive. Stopping the car link stops the wheels.</p>
+      <p id="setup-error" class="setup-error hidden" role="alert"></p>
+      <div id="setup-rows" class="setup-rows"></div>
+      <div class="setup-actions">
+        <button type="button" id="setup-take-control" class="primary">Take control</button>
+        <button type="button" id="setup-start-all" class="primary">Start everything</button>
+        <button type="button" id="setup-stop-all" class="danger">Stop everything</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="settings-dialog">
     <form method="dialog">

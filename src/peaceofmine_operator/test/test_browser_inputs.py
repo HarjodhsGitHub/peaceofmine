@@ -489,6 +489,37 @@ state.probe.contact_can_zero = true; updateHud(); $('probe-zero-contact').click(
 assert(sent.at(-1).type === 'probe_zero_contact', 'zero contact requests session reference');
 state.probe.contact_can_zero = false; updateHud();
 assert($('probe-zero-contact').disabled, 'zero disabled without fresh held readings');
+assert($('setup').classList.contains('hidden') && !$('setup-dialog').open, 'setup hidden without bringup');
+if (!$('settings-dialog').open) $('settings-dialog').showModal();
+state.bringup = {enabled: true, order: ['vehicle'], subsystems: {vehicle: {label: 'Car link (PX4)', state: 'stopped', exit_code: null, device: {found: true, detail: 'dev'}, log: []}}};
+updateHud();
+assert(!$('setup-dialog').open, 'setup does not open over settings');
+$('settings-dialog').close();
+const setupEntry = (label, state, found = true) => ({label, state, exit_code: null, device: {found, detail: found ? 'dev' : 'missing'}, log: ['$ ros2 launch']});
+state.bringup = {enabled: true, order: ['vehicle', 'arm'], subsystems: {
+  vehicle: setupEntry('Car link (PX4)', 'stopped'), arm: setupEntry('Arm and probe servos', 'failed', false)}};
+state.bringup.subsystems.arm.exit_code = 1;
+state.drive.you_control_owner = false; updateHud();
+assert(!$('setup').classList.contains('hidden') && $('setup-dialog').open, 'setup opens while the car is not connected');
+assert(!$('setup-owner').classList.contains('hidden') && $('setup-start-all').disabled, 'spectator cannot change setup');
+const vehicleRow = $('setup-rows').querySelector('[data-setup="vehicle"]');
+const armRow = $('setup-rows').querySelector('[data-setup="arm"]');
+assert(vehicleRow.querySelector('.setup-toggle').disabled, 'spectator row buttons disabled');
+assert(armRow.querySelector('.setup-state').textContent === 'Failed · code 1' && armRow.querySelector('.setup-device').classList.contains('missing'), 'failed row shows code and missing hardware');
+assert(driveBlockMessage().text.startsWith('Connect the car first'), 'drive waits for car link');
+state.drive.you_control_owner = true; updateHud();
+vehicleRow.querySelector('.setup-toggle').click();
+assert(sent.at(-1).type === 'bringup' && sent.at(-1).action === 'start' && sent.at(-1).subsystem === 'vehicle', 'start car link');
+$('setup-start-all').click();
+assert(sent.at(-1).action === 'start_all', 'start everything');
+state.bringup.subsystems.vehicle.state = 'running'; updateHud();
+assert(vehicleRow.querySelector('.setup-toggle').textContent === 'Stop', 'running row offers stop');
+vehicleRow.querySelector('.setup-toggle').click();
+assert(sent.at(-1).action === 'stop' && sent.at(-1).subsystem === 'vehicle', 'stop car link');
+lastDriveSent = -1000; inputLoop();
+assert(latestDrive().linear_x === 0 && !latestDrive().deadman, 'open setup blocks drive');
+$('setup-dialog').close();
+assert(!driveBlockMessage().text.startsWith('Connect the car first'), 'running car link unblocks drive message');
 document.body.textContent = 'BROWSER TESTS PASSED';
 '''
         import json

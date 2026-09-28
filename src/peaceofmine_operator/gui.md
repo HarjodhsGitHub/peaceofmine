@@ -56,6 +56,53 @@ Yes, if the dashboard is opened as a **secure context**:
 - Do not enable localization, lidar, or RTK until those sensors are
   brought up separately.
 
+## Start from the dashboard (no terminal)
+
+Once installed, the SVEA starts the dashboard at boot. The operator only
+opens the browser; the **Setup** panel connects everything else.
+
+One-time install on the SVEA, from the repository root:
+
+```bash
+util/build
+util/install-operator-service
+```
+
+This installs the `peaceofmine-operator` systemd unit. At boot it runs
+`util/operator-service`, which starts a privileged container, builds
+`peaceofmine_operator`, creates a self-signed certificate for the car's
+current addresses (regenerated when they change), and launches
+`operator_setup.launch.xml` with HTTPS. Only the gateway runs at this point.
+
+Then, on the laptop:
+
+1. Open `https://<svea-ip>:8080` and accept the certificate warning.
+2. **Setup** opens by itself while the car is not connected. Each row shows
+   whether its hardware is plugged in, its state, and an expandable log.
+3. **Take control**, then start **Car link (PX4)**. Wait for *Running* and
+   for the header to show PX4 and RC status. Driving stays locked until then.
+4. Start **Cameras**, **Metal detector**, and **Arm and probe servos** as
+   needed, or use **Start everything**, which starts them in that order and
+   skips hardware that is not plugged in.
+5. Close Setup and drive as described under **3. On the laptop** below.
+
+Stopping any row, or **Stop everything**, first stops motion. Stopping the
+car link stops the wheels and locks the servos because PX4 status goes
+stale. Only the control owner can change Setup.
+
+Useful service commands:
+
+```bash
+journalctl -u peaceofmine-operator -f        # startup and launch log
+sudo systemctl restart peaceofmine-operator
+sudo systemctl stop peaceofmine-operator     # before util/run on this car
+util/install-operator-service --remove
+```
+
+Device paths and servo settings are the arguments at the top of
+`launch/operator_setup.launch.xml`; rebuild after changing them (the service
+rebuilds on each start).
+
 ## Exact steps (real car, Xbox on the laptop)
 
 Run these on the SVEA. Privileged Docker is required so `/dev` and the
@@ -276,6 +323,11 @@ better conversion accuracy. Simulated payloads do not provide raw ADC readings.
 - `dashboard/index.html`, `app.js`, `style.css` — pad graphic, mapping, HUD
 - `scripts/operator_gateway.py` — control lease, RC authority, command timeout, `cmd_vel`
 - `launch/operator.launch.xml` — hardware or simulation, selected by `is_sim`
+- `launch/operator_setup.launch.xml` — real car, gateway only; Setup starts the rest
+- `launch/operator_drive.launch.xml`, `operator_cameras.launch.xml`,
+  `operator_detector.launch.xml`, `operator_arm.launch.xml` — subsystems
+- `peaceofmine_operator/bringup.py` — Setup supervisor (child launches, state, logs)
+- `util/operator-service`, `util/install-operator-service` — boot service
 - `launch/operator_sim.launch.py` — `sim_svea` + simulated payload
 - `gui_plan.md` — longer roadmap (cameras, map, payload, mission record)
 

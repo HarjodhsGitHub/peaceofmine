@@ -14,6 +14,17 @@ spec = importlib.util.spec_from_file_location(
     'operator_gateway', Path(__file__).parents[1] / 'scripts/operator_gateway.py')
 gateway_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gateway_module)
+REAL_MONOTONIC = gateway_module.time.monotonic
+
+
+def wait_until(condition, timeout=5.0):
+    import time
+    deadline = REAL_MONOTONIC() + timeout
+    while REAL_MONOTONIC() < deadline:
+        if condition():
+            return True
+        time.sleep(.02)
+    return False
 
 
 class TeleopTest(unittest.TestCase):
@@ -114,6 +125,48 @@ class TeleopTest(unittest.TestCase):
             self.assertFalse(self.node._armed)
             self.assertFalse(permission.call_args.args[0].data)
             self.assertIsNotNone(self.command('arm'))
+
+    def fake_bringup(self):
+        from peaceofmine_operator import bringup
+        supervisor = bringup.Bringup(commands={name: ['sleep', '30'] for name in bringup.SUBSYSTEMS},
+                                     checks=lambda name, settings: dict(found=True, detail='test'))
+        self.addCleanup(supervisor.stop_all, True)
+        self.node._bringup = supervisor
+        return supervisor
+
+    def test_setup_requires_the_lease_but_not_px4(self):
+        supervisor = self.fake_bringup()
+        self.node._rc_safety.simulation = False
+        spectator = object()
+        self.command('take_control')
+        reply = self.node.handle_command(spectator, dict(type='bringup', action='start', subsystem='vehicle'))
+        self.assertIn('Spectator', reply['message'])
+        self.assertFalse(supervisor.running('vehicle'))
+        self.assertIsNone(self.command('bringup', action='start', subsystem='vehicle'))
+        self.assertTrue(supervisor.running('vehicle'))
+        self.assertEqual(self.node.snapshot()['bringup']['subsystems']['vehicle']['state'], 'starting')
+        self.assertIsNotNone(self.command('bringup', action='start', subsystem='shell'))
+        self.assertIsNotNone(self.command('bringup', action='format'))
+
+    def test_stopping_the_car_link_zeroes_drive(self):
+        supervisor = self.fake_bringup()
+        self.arm()
+        self.assertIsNone(self.command('bringup', action='start', subsystem='vehicle'))
+        self.command('drive', linear_x=.4, deadman=True)
+        self.output.assert_called_with(.4, 0.0)
+        with patch.object(self.node._arm_command_pub, 'publish') as servo:
+            self.assertIsNone(self.command('bringup', action='stop', subsystem='vehicle'))
+            self.assertEqual(servo.call_args.args[0].data, '{"action":"stop"}')
+        self.output.assert_called_with(0.0, 0.0)
+        self.assertEqual(self.node._command, (0.0, 0.0))
+        self.node._drive_watchdog()
+        self.output.assert_called_with(0.0, 0.0)
+        self.assertTrue(wait_until(lambda: not supervisor.running('vehicle')))
+
+    def test_setup_is_unavailable_without_bringup(self):
+        self.command('take_control')
+        self.assertEqual(self.node.snapshot()['bringup'], {'enabled': False})
+        self.assertIn('not available', self.command('bringup', action='start_all')['message'])
 
     def test_camera_dimensions_survive_controller_merge(self):
         self.node._camera_frames['front'] = dict(topic='/front/camera_info',

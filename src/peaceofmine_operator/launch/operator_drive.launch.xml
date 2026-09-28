@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Car link: PX4 through MAVROS (or sim_svea), twist_consumer, and the
+       optional SVEA USB joystick. Started by the Setup panel on hardware. -->
+  <arg name="name" default="self"/>
+  <arg name="is_sim" default="false"/>
+  <arg name="lli_serial_device" default="/dev/serial/by-id/usb-SVEA_PX4_AUTOPILOT_0-if00"/>
+  <arg name="lli_baud_rate" default="921600"/>
+  <arg name="max_velocity" default="0.8"/>
+  <arg name="use_joy" default="false"/>
+  <arg name="use_localization" default="false"/>
+  <arg name="is_indoor" default="true"/>
+  <arg name="use_lidar" default="false"/>
+  <arg name="use_rtk" default="false"/>
+  <arg name="initial_pose_x" default="0.0"/>
+  <arg name="initial_pose_y" default="0.0"/>
+  <arg name="initial_pose_a" default="0.0"/>
+
+  <include file="$(find-pkg-share peaceofmine_operator)/launch/operator_vehicle.launch.py">
+    <arg name="name" value="$(var name)"/>
+    <arg name="is_sim" value="$(var is_sim)"/>
+    <arg name="initial_pose_x" value="$(var initial_pose_x)"/>
+    <arg name="initial_pose_y" value="$(var initial_pose_y)"/>
+    <arg name="initial_pose_a" value="$(var initial_pose_a)"/>
+    <arg name="lli_serial_device" value="$(var lli_serial_device)"/>
+    <arg name="lli_baud_rate" value="$(var lli_baud_rate)"/>
+    <arg name="use_localization" value="$(var use_localization)"/>
+    <arg name="is_indoor" value="$(var is_indoor)"/>
+    <arg name="use_lidar" value="$(var use_lidar)"/>
+    <arg name="use_rtk" value="$(var use_rtk)"/>
+  </include>
+
+  <group>
+    <push_ros_namespace namespace="$(var name)"/>
+    <node if="$(var use_joy)" pkg="joy" exec="joy_node" name="operator_joy" output="screen">
+      <param name="device_id" value="0"/>
+      <param name="deadzone" value="0.12"/>
+      <param name="autorepeat_rate" value="20.0"/>
+      <param name="coalesce_interval_ms" value="50"/>
+    </node>
+    <node pkg="svea_examples" exec="twist_consumer.py" name="operator_twist_consumer" output="screen">
+      <param name="twist_top" value="cmd_vel"/>
+      <param name="max_velocity" value="$(var max_velocity)"/>
+      <param name="cmd_timeout" value="0.25"/>
+    </node>
+  </group>
+</launch>

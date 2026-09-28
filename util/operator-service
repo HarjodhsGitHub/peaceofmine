@@ -1,0 +1,67 @@
+#! /bin/sh
+#
+# Run the PeaceOfMine operator dashboard in a privileged container, in the
+# foreground, for the peaceofmine-operator systemd unit. Only the gateway
+# starts; the dashboard Setup panel connects the car, cameras, detector, and
+# servos. Open https://<svea-ip>:8080 and accept the self-signed certificate.
+#
+# Stop it with `sudo systemctl stop peaceofmine-operator` before using
+# `util/run` on the same car: both need the PX4 serial device and port 8080.
+#
+# Environment: OPERATOR_PORT (default 8080), OPERATOR_CONTAINER (default
+# <image>-operator), OPERATOR_TLS_VOLUME (default peaceofmine-operator-tls).
+
+. "$(dirname "$0")/config.sh"
+
+withdefault OPERATOR_PORT       "8080"
+withdefault OPERATOR_CONTAINER  "$CONTAINER_NAME-operator"
+withdefault OPERATOR_TLS_VOLUME "peaceofmine-operator-tls"
+
+if docker container inspect "$OPERATOR_CONTAINER" >/dev/null 2>&1; then
+    docker container rm -f "$OPERATOR_CONTAINER" >/dev/null
+fi
+
+# Runs inside the container. The certificate covers every current address of
+# the car and is regenerated when that list changes (new Wi-Fi, Tailscale).
+INNER='
+set -e
+source /opt/ros/$ROSDISTRO/setup.bash
+source /opt/svea/$ROSDISTRO/setup.bash
+cd $WORKSPACE
+colcon build --symlink-install --packages-up-to peaceofmine_operator
+source install/setup.bash
+
+tls=/operator-tls
+san="DNS:localhost,DNS:$(hostname),IP:127.0.0.1"
+for address in $(hostname -I); do
+    case "$address" in *:*) ;; *) san="$san,IP:$address" ;; esac
+done
+if [ ! -f $tls/cert.pem ] || [ "$(cat $tls/san 2>/dev/null)" != "$san" ] \
+        || ! openssl x509 -in $tls/cert.pem -noout -checkend 86400 >/dev/null; then
+    echo "Creating dashboard certificate for $san"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+        -keyout $tls/key.pem -out $tls/cert.pem \
+        -subj "/CN=$(hostname)" -addext "subjectAltName=$san"
+    echo "$san" > $tls/san
+fi
+
+exec ros2 launch peaceofmine_operator operator_setup.launch.xml \
+    port:=$OPERATOR_PORT tls_cert:=$tls/cert.pem tls_key:=$tls/key.pem
+'
+
+# --init reaps processes left behind by stopped child launches.
+call docker run \
+    --rm \
+    --init \
+    --name "$OPERATOR_CONTAINER" \
+    --privileged \
+    --network host \
+    -v /dev:/dev \
+    -v "$SHARED_VOLUME" \
+    -v "$OPERATOR_TLS_VOLUME:/operator-tls" \
+    -e TERM=xterm-256color \
+    -e ROSDISTRO="$ROSDISTRO" \
+    -e WORKSPACE="$WORKSPACE" \
+    -e OPERATOR_PORT="$OPERATOR_PORT" \
+    "$IMAGE_TAG" \
+    bash -c "$INNER"

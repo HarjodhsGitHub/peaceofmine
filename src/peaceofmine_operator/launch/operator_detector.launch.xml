@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Arduino metal detector in the operator namespace, for the Setup panel. -->
+  <arg name="name" default="self"/>
+  <arg name="calibration_file" default="$(find-pkg-share peaceofmine_operator)/calibration.json"/>
+  <arg name="sensor_serial_port" default="/dev/serial/by-id/usb-Arduino_Srl_Arduino_Uno_7543134333435170D1E2-if00"/>
+  <arg name="sensor_baud_rate" default="115200"/>
+  <arg name="sensor_baseline_adc" default="0.0"/>
+  <arg name="sensor_full_response_adc" default="255.0"/>
+  <arg name="sensor_reference_voltage" default="5.0"/>
+
+  <group>
+    <push_ros_namespace namespace="$(var name)"/>
+    <include file="$(find-pkg-share peaceofmine_operator)/launch/sensor_serial.launch.xml">
+      <arg name="serial_port" value="$(var sensor_serial_port)"/>
+      <arg name="calibration_file" value="$(var calibration_file)"/>
+      <arg name="baud_rate" value="$(var sensor_baud_rate)"/>
+      <arg name="baseline_adc" value="$(var sensor_baseline_adc)"/>
+      <arg name="full_response_adc" value="$(var sensor_full_response_adc)"/>
+      <arg name="reference_voltage" value="$(var sensor_reference_voltage)"/>
+    </include>
+  </group>
+</launch>

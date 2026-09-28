@@ -30,6 +30,7 @@ const state = {
     joy: {seen: false},
   },
   robot: {x: 0, y: 0, yaw: 0, speed_mps: 0},
+  bringup: {enabled: false},
   detector: {
     signal_ratio: 0,
     threshold_ratio: 1.0,
@@ -264,6 +265,10 @@ function connect() {
     }
     if (message.type === 'error') {
       showNotice(message.message);
+      if ($('setup-dialog').open) {
+        setText($('setup-error'), message.message);
+        $('setup-error').classList.remove('hidden');
+      }
       if (metalPending) { metalPending = null; metalFeedback = message.message; }
       servoSettings.forEach(panel => panel.error(message.message));
       return;
@@ -343,7 +348,82 @@ function updatePower() {
   text('power-arm', state.connected && arm.connected ? `ID ${arm.servo_id} · ${fmt(arm.voltage, 'V')} · ${fmt(arm.current_a, 'A', 3)} · ${fmt(arm.temperature_c, '°C', 0)}` : 'No telemetry');
 }
 
+/* ---------------------------------------------------------------- Setup --- */
+
+const SETUP_STATE_TEXT = {stopped: 'Stopped', starting: 'Starting…', running: 'Running', stopping: 'Stopping…', failed: 'Failed'};
+let setupAutoOpened = false;
+
+function setupActive(entry) {
+  return entry?.state === 'starting' || entry?.state === 'running';
+}
+
+function setupRow(name) {
+  let row = $('setup-rows').querySelector(`[data-setup="${name}"]`);
+  if (row) return row;
+  row = document.createElement('div');
+  row.className = 'setup-row';
+  row.dataset.setup = name;
+  row.innerHTML = '<span class="setup-light" aria-hidden="true"></span>'
+    + '<div class="setup-name"><strong></strong><small class="setup-device"></small></div>'
+    + '<span class="setup-state badge neutral"></span>'
+    + '<button type="button" class="setup-toggle primary"></button>'
+    + '<details class="setup-log"><summary>Log</summary><pre></pre></details>';
+  row.querySelector('.setup-toggle').onclick = () => {
+    const action = setupActive(state.bringup.subsystems?.[name]) ? 'stop' : 'start';
+    send({type: 'bringup', action, subsystem: name});
+  };
+  $('setup-rows').append(row);
+  return row;
+}
+
+function openSetup() {
+  stopInput();
+  $('setup-error').classList.add('hidden');
+  if (!$('setup-dialog').open) $('setup-dialog').showModal();
+}
+
+function updateSetup() {
+  const setup = state.bringup || {};
+  $('setup').classList.toggle('hidden', !setup.enabled);
+  if (!setup.enabled) return;
+  const owner = state.connected && state.drive.you_control_owner;
+  $('setup-owner').classList.toggle('hidden', owner);
+  $('setup-take-control').classList.toggle('hidden', owner);
+  $('setup-start-all').disabled = !owner;
+  $('setup-stop-all').disabled = !owner;
+  for (const name of setup.order || []) {
+    const entry = setup.subsystems[name];
+    const row = setupRow(name);
+    row.dataset.state = entry.state;
+    setText(row.querySelector('strong'), entry.label);
+    const device = row.querySelector('.setup-device');
+    setText(device, entry.device.found ? `Found · ${entry.device.detail}` : entry.device.detail);
+    device.classList.toggle('missing', !entry.device.found);
+    const badge = row.querySelector('.setup-state');
+    setText(badge, entry.state === 'failed' && entry.exit_code != null
+      ? `Failed · code ${entry.exit_code}` : SETUP_STATE_TEXT[entry.state] || entry.state);
+    badge.className = `setup-state badge ${entry.state === 'running' ? 'safe' : entry.state === 'failed' ? 'active' : 'neutral'}`;
+    const active = setupActive(entry);
+    const toggle = row.querySelector('.setup-toggle');
+    setText(toggle, entry.state === 'stopping' ? 'Stopping…' : active ? 'Stop' : 'Start');
+    toggle.className = `setup-toggle ${active ? 'danger' : 'primary'}`;
+    toggle.disabled = !owner || entry.state === 'stopping';
+    const pre = row.querySelector('pre');
+    const log = entry.log.join('\n');
+    if (pre.textContent !== log) {
+      pre.textContent = log;
+      pre.scrollTop = pre.scrollHeight;
+    }
+  }
+  // Open once per page load while the car is not connected yet.
+  if (!setupAutoOpened && !setupActive(setup.subsystems?.vehicle) && !$('settings-dialog').open) {
+    setupAutoOpened = true;
+    openSetup();
+  }
+}
+
 function updateHud() {
+  updateSetup();
   updatePower();
   updateArmSettings();
   updateMetalSettings();
@@ -457,6 +537,10 @@ function rosJoyLive() {
 }
 
 function driveBlockMessage() {
+  const car = state.bringup?.enabled ? state.bringup.subsystems?.vehicle : null;
+  if (car && car.state !== 'running') {
+    return {text: car.state === 'starting' ? 'Car link starting…' : 'Connect the car first: open Setup and start the car link.', kind: 'blocked'};
+  }
   if (state.safety?.mode === 'override') return {text: state.drive.rc?.fresh ? 'Remote control active' : 'RC input stale', kind: 'ready'};
   const owner = state.connected && state.drive.you_control_owner;
   const padReady = Boolean(gamepad) || rosJoyLive();
@@ -803,7 +887,7 @@ function inputLoop() {
 
   renderInputs(pads, lastInput);
   const canDrive = state.connected && state.safety?.allowed && state.drive.you_control_owner
-    && !$('settings-dialog').open && !document.hidden && document.hasFocus();
+    && !$('settings-dialog').open && !$('setup-dialog').open && !document.hidden && document.hasFocus();
   if (!canDrive && !keyboardPreview) resetKeyboardRamp(now);
   // Opening Settings already sends a stop. Do not flood calibration with rejected drive commands.
   if (!$('settings-dialog').open) sendDriveIfNeeded(canDrive && lastInput.deadman ? lastInput : {linear: 0, angular: 0, deadman: false}, now);
@@ -860,6 +944,11 @@ $('settings').onclick = () => {
   $('settings-dialog').showModal();
 };
 $('offline-settings').onclick = $('settings').onclick;
+$('setup').onclick = openSetup;
+$('setup-take-control').onclick = () => send({type: 'take_control'});
+$('setup-start-all').onclick = () => send({type: 'bringup', action: 'start_all'});
+$('setup-stop-all').onclick = () => send({type: 'bringup', action: 'stop_all'});
+$('setup-dialog').addEventListener('close', stopInput);
 $('control-source').onchange = event => {
   stopInput();
   preferences.input = event.target.value;

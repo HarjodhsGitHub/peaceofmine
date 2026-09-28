@@ -1,0 +1,20 @@
+# Template for util/install-operator-service; @REPOSITORY_PATH@ and @USER@ are
+# filled in on install.
+[Unit]
+Description=PeaceOfMine operator dashboard (Setup panel on port 8080)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPOSITORY_PATH@
+ExecStart=@REPOSITORY_PATH@/util/operator-service
+ExecStop=/usr/bin/docker stop -t 20 @CONTAINER@
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=40
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,117 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Real car, GUI-driven bringup. Starts only the operator gateway; the
+       dashboard Setup panel then starts the car link, cameras, detector, and
+       arm servos. The util/operator-service boot service runs this file.
+       Hardware only: use operator.launch.xml or operator_sim.launch.py for
+       simulation. -->
+  <arg name="name" default="self"/>
+
+  <!-- Car link -->
+  <arg name="lli_serial_device" default="/dev/serial/by-id/usb-SVEA_PX4_AUTOPILOT_0-if00"/>
+  <arg name="lli_baud_rate" default="921600"/>
+  <arg name="max_velocity" default="0.8"/>
+  <arg name="use_joy" default="false"/>
+  <arg name="odometry_topic" default="odometry/local"/>
+  <arg name="rc_steering_channel" default="1"/>
+  <arg name="rc_throttle_channel" default="2"/>
+
+  <!-- Cameras -->
+  <arg name="use_front_camera" default="true"/>
+  <arg name="use_auxiliary_camera" default="false"/>
+  <arg name="front_camera_device" default="auto"/>
+  <arg name="auxiliary_camera_device" default="auto"/>
+  <arg name="camera_width" default="640"/>
+  <arg name="camera_height" default="480"/>
+  <arg name="front_camera_framerate" default="30.0"/>
+  <arg name="auxiliary_camera_framerate" default="30.0"/>
+  <arg name="front_camera_pixel_format" default="mjpeg2rgb"/>
+  <arg name="auxiliary_camera_pixel_format" default="yuyv2rgb"/>
+  <arg name="camera_stream_port" default="8081"/>
+
+  <!-- Metal detector and servos -->
+  <arg name="calibration_file" default="$(find-pkg-share peaceofmine_operator)/calibration.json"/>
+  <arg name="sensor_serial_port" default="/dev/serial/by-id/usb-Arduino_Srl_Arduino_Uno_7543134333435170D1E2-if00"/>
+  <arg name="sensor_baud_rate" default="115200"/>
+  <arg name="sensor_baseline_adc" default="0.0"/>
+  <arg name="sensor_full_response_adc" default="255.0"/>
+  <arg name="sensor_reference_voltage" default="5.0"/>
+  <arg name="detector_threshold_ratio" default="1.0"/>
+  <arg name="arm_serial_port" default="auto"/>
+  <arg name="arm_servo_id" default="1"/>
+  <arg name="arm_minimum" default="-1"/>
+  <arg name="arm_center" default="-1"/>
+  <arg name="arm_maximum" default="-1"/>
+  <arg name="arm_speed" default="116"/>
+  <arg name="arm_sweep_endpoint_tolerance_deg" default="4.0"/>
+  <arg name="arm_sweep_acceleration_deg_s2" default="34.332"/>
+  <arg name="probe_servo_id" default="2"/>
+  <arg name="probe_minimum" default="-1"/>
+  <arg name="probe_center" default="-1"/>
+  <arg name="probe_maximum" default="-1"/>
+
+  <!-- Dashboard and HTTPS -->
+  <arg name="host" default="0.0.0.0"/>
+  <arg name="port" default="8080"/>
+  <arg name="tls_cert" default=""/>
+  <arg name="tls_key" default=""/>
+
+  <group>
+    <push_ros_namespace namespace="$(var name)"/>
+    <node pkg="peaceofmine_operator" exec="operator_gateway.py" name="operator_gateway" output="screen">
+      <param name="safety_simulation" value="false"/>
+      <param name="bringup_enabled" value="true"/>
+      <param name="detector_threshold_ratio" value="$(var detector_threshold_ratio)"/>
+      <param name="rc_steering_channel" value="$(var rc_steering_channel)" type="int"/>
+      <param name="rc_throttle_channel" value="$(var rc_throttle_channel)" type="int"/>
+      <param name="host" value="$(var host)"/>
+      <param name="port" value="$(var port)"/>
+      <param name="tls_cert" value="$(var tls_cert)" type="str"/>
+      <param name="tls_key" value="$(var tls_key)" type="str"/>
+      <param name="cmd_vel_topic" value="cmd_vel"/>
+      <param name="odometry_topic" value="$(var odometry_topic)"/>
+      <param name="max_velocity_mps" value="$(var max_velocity)"/>
+      <param name="camera_stream_base_url" value="http://127.0.0.1:$(var camera_stream_port)"/>
+      <param name="front_camera_topic" value="/$(var name)/camera_front/image_raw"/>
+      <param name="auxiliary_camera_topic" value="/$(var name)/camera_auxiliary/image_raw"/>
+      <param name="front_camera_info_topic" value="/$(var name)/camera_front/camera_info"/>
+      <param name="auxiliary_camera_info_topic" value="/$(var name)/camera_auxiliary/camera_info"/>
+
+      <!-- Forwarded unchanged to the child launches started from Setup. -->
+      <param name="bringup.name" value="$(var name)" type="str"/>
+      <param name="bringup.lli_serial_device" value="$(var lli_serial_device)" type="str"/>
+      <param name="bringup.lli_baud_rate" value="$(var lli_baud_rate)" type="str"/>
+      <param name="bringup.max_velocity" value="$(var max_velocity)" type="str"/>
+      <param name="bringup.use_joy" value="$(var use_joy)" type="str"/>
+      <param name="bringup.use_front_camera" value="$(var use_front_camera)" type="str"/>
+      <param name="bringup.use_auxiliary_camera" value="$(var use_auxiliary_camera)" type="str"/>
+      <param name="bringup.front_camera_device" value="$(var front_camera_device)" type="str"/>
+      <param name="bringup.auxiliary_camera_device" value="$(var auxiliary_camera_device)" type="str"/>
+      <param name="bringup.camera_width" value="$(var camera_width)" type="str"/>
+      <param name="bringup.camera_height" value="$(var camera_height)" type="str"/>
+      <param name="bringup.front_camera_framerate" value="$(var front_camera_framerate)" type="str"/>
+      <param name="bringup.auxiliary_camera_framerate" value="$(var auxiliary_camera_framerate)" type="str"/>
+      <param name="bringup.front_camera_pixel_format" value="$(var front_camera_pixel_format)" type="str"/>
+      <param name="bringup.auxiliary_camera_pixel_format" value="$(var auxiliary_camera_pixel_format)" type="str"/>
+      <param name="bringup.camera_stream_port" value="$(var camera_stream_port)" type="str"/>
+      <param name="bringup.calibration_file" value="$(var calibration_file)" type="str"/>
+      <param name="bringup.sensor_serial_port" value="$(var sensor_serial_port)" type="str"/>
+      <param name="bringup.sensor_baud_rate" value="$(var sensor_baud_rate)" type="str"/>
+      <param name="bringup.sensor_baseline_adc" value="$(var sensor_baseline_adc)" type="str"/>
+      <param name="bringup.sensor_full_response_adc" value="$(var sensor_full_response_adc)" type="str"/>
+      <param name="bringup.sensor_reference_voltage" value="$(var sensor_reference_voltage)" type="str"/>
+      <param name="bringup.arm_serial_port" value="$(var arm_serial_port)" type="str"/>
+      <param name="bringup.arm_servo_id" value="$(var arm_servo_id)" type="str"/>
+      <param name="bringup.arm_minimum" value="$(var arm_minimum)" type="str"/>
+      <param name="bringup.arm_center" value="$(var arm_center)" type="str"/>
+      <param name="bringup.arm_maximum" value="$(var arm_maximum)" type="str"/>
+      <param name="bringup.arm_speed" value="$(var arm_speed)" type="str"/>
+      <param name="bringup.arm_sweep_endpoint_tolerance_deg" value="$(var arm_sweep_endpoint_tolerance_deg)" type="str"/>
+      <param name="bringup.arm_sweep_acceleration_deg_s2" value="$(var arm_sweep_acceleration_deg_s2)" type="str"/>
+      <param name="bringup.probe_servo_id" value="$(var probe_servo_id)" type="str"/>
+      <param name="bringup.probe_minimum" value="$(var probe_minimum)" type="str"/>
+      <param name="bringup.probe_center" value="$(var probe_center)" type="str"/>
+      <param name="bringup.probe_maximum" value="$(var probe_maximum)" type="str"/>
+    </node>
+  </group>
+</launch>
