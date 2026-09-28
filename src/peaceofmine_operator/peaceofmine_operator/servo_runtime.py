@@ -24,8 +24,15 @@ class ServoRuntime:
             self.motors[command.servo_id].stop()
 
     def enforce(self):
-        if self.active and (not self.allowed() or self.clock()-self.renewed >= .25):
-            self.stop('aborted', 'Permission lost or command watchdog expired; start a new operation')
+        if self.active and not self.allowed():
+            self.stop('aborted', 'RC or operator permission lost; start a new operation')
+        elif self.active and self.clock()-self.renewed >= .25:
+            self.stop('aborted', 'Command watchdog expired; start a new operation')
+
+    def motion_allowed(self):
+        # Serial reads can consume time after enforce(). A delayed tick must
+        # never renew firmware permission using an expired controller command.
+        return self.active is not None and self.allowed() and self.clock()-self.renewed < .25
 
     def submit(self, command):
         self.enforce()
@@ -82,7 +89,8 @@ class ServoRuntime:
                 if command.load_stop_percent and abs(sample['load_percent']) >= command.load_stop_percent:
                     self.stop('load_stop', 'Protective load threshold reached')
                 else:
-                    motor.step(self.allowed)
+                    motor.step(self.motion_allowed)
+                    self.enforce()
 
     def close(self):
         try:

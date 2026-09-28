@@ -14,6 +14,7 @@ from peaceofmine_interfaces.srv import ServoConfigure
 from peaceofmine_operator import configuration
 from peaceofmine_operator.servo_transport import ArbotiX
 from peaceofmine_operator.servo_runtime import ServoRuntime
+from peaceofmine_operator.servo_pid import apply_arm_pid
 from peaceofmine_operator.simulated_servo_bus import SimulatedServoBus
 from peaceofmine_operator.rc_safety import RcSafety
 from peaceofmine_operator.node_runner import run_node
@@ -61,6 +62,8 @@ class ServoDriver(Node):
         try:
             proposed = configuration.actuator_settings(self.path,self.simulation)
             if proposed != self.config:
+                if self.runtime and proposed.get('arm_pid') != self.config.get('arm_pid'):
+                    self.disconnect('PID configuration changed; reconnecting stopped')
                 changed = any(proposed.get(k) != self.config.get(k) for k in ('arm','probe','arm_motion','probe_motion'))
                 if self.runtime and changed:
                     self.runtime.stop('aborted', 'Configuration changed; start again')
@@ -108,7 +111,10 @@ class ServoDriver(Node):
                 runtime.close()
         except Exception:
             pass
-        self.reason = str(error)
+        reason = str(error)
+        if reason != self.reason and reason != 'Shutdown':
+            self.get_logger().warning('Servo connection stopped: '+reason)
+        self.reason = reason
         self.session, self.challenge = uuid.uuid4().hex, 0
         self.challenge_times.clear()
         self.next_scan = time.monotonic()+2
@@ -193,6 +199,10 @@ class ServoDriver(Node):
                 if result:
                     bus, self.device, ids = result
                     try:
+                        if not self.simulation:
+                            arm_id = self.arm_id if self.arm_id >= 0 else self.config.get('arm', {}).get('servo_id', 1)
+                            if apply_arm_pid(bus, self.config, arm_id):
+                                self.get_logger().info('Saved arm PID applied and verified with torque off')
                         self.runtime = ServoRuntime(bus, ids, self.allowed, self.limits)
                     except Exception:
                         bus.close()
@@ -219,7 +229,7 @@ class ServoDriver(Node):
                 message.servos.append(ServoTelemetry(servo_id=ident, connected=True,
                     position=sample['position'], goal=sample['goal_position'], minimum=sample['position_minimum'],
                     maximum=sample['position_maximum'], multiturn=sample['position_mode']=='multi-turn',
-                    torque=self.runtime.motors[ident].torque,
+                    torque=sample['torque'],
                     speed_deg_s=float(sample['speed_deg_s']), load_percent=float(sample['load_percent']),
                     current_a=float(sample['current_a']), voltage=float(sample['voltage']),
                     temperature_c=float(sample['temperature_c']), torque_limit_percent=float(sample['torque_limit_percent']),

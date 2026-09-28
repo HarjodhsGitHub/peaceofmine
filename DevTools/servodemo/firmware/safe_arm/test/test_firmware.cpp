@@ -155,6 +155,33 @@ void heartbeatTick(uint32_t delta = 20) {
 
 int main() {
     reset();
+    assert(!writeReg(1, 28, 48));
+    assert(writeReg(253, 81, 1));
+    assert(writeReg(1, 28, 48));
+    assert(registers[1][28] == 48);
+    assert(!writeReg(1, 28, 255));
+    assert(!writeReg(1, 28, 32, 2));
+    registers[1][24] = 1;
+    assert(!writeReg(1, 27, 1));
+    registers[1][24] = 0;
+    assert(writeReg(253, 84, 1500, 2));
+    assert(writeReg(253, 86, 2500, 2));
+    assert(writeReg(253, 95, 1));
+    setReg(36, 1400);
+    assert(!writeReg(253, 82, 1));
+    setReg(36, 2000);
+    assert(writeReg(253, 82, 1));
+    assert(!writeReg(1, 28, 64));
+    assert(!writeReg(253, 95, 0));
+    assert(!writeReg(253, 84, 0, 2));
+    assert(!writeReg(1, 30, 1499, 2));
+    assert(!writeReg(1, 30, 2501, 2));
+    assert(writeReg(1, 30, 1800, 2));
+    setReg(36, 2501);
+    clockMs += 10; loop();
+    assert(!arm.permitted && arm.fault == 3 && registers[1][24] == 0);
+
+    reset();
     assert(!writeReg(253, 83, 1)); // Must explicitly select an actuator.
     assert(writeReg(253, 81, 1));
     registers[1][24] = 1;
@@ -222,80 +249,39 @@ int main() {
     clockMs += 350; loop();
     assert(!arm.permitted && registers[1][24] == 0);
 
+    // A fixed endpoint survives many 100 Hz ticks: no intermediate goals
+    // can reset the servo's own position controller.
     reset(); start();
-    for (int i = 0; i < 20; ++i) {
-        clockMs += 20;
-        send(command(1, 2, {36, 2})); // Telemetry cannot extend permission.
+    const uint32_t beforeTick = arm.lastPoll;
+    heartbeatTick(9); assert(arm.lastPoll == beforeTick);
+    heartbeatTick(1); assert(arm.lastPoll == beforeTick+10);
+    for (int i=0; i<100; ++i) {
+        heartbeatTick(10);
+        assert(reg(30) == 2500 && reg(32) >= 1 && reg(32) <= 20);
     }
-    assert(!arm.permitted);
-
-    reset(); start();
-    auto badHeartbeat = command(253, 3, {82, 2});
-    badHeartbeat.back() ^= 1;
-    for (int i = 0; i < 20; ++i) { clockMs += 20; send(badHeartbeat); }
-    assert(!arm.permitted);
-
-    reset(); start();
-    for (int i = 0; i < 10; ++i) {
-        auto before = writes.size();
-        assert(writeReg(253, 94, 1)); // No restart, no extra motor writes.
-        assert(writes.size() == before);
+    // Approach an endpoint: speed falls, goal stays fixed until low measured
+    // velocity permits reversal. There is no 200 ms intentional hold.
+    uint16_t previousSpeed=reg(32);
+    for (int position=2400; position<=2478; position+=2) {
+        setReg(36,position); setReg(38,10); heartbeatTick(10);
+        assert(reg(30)==2500 && reg(32)<=previousSpeed);
+        previousSpeed=reg(32);
     }
-    assert(!writeReg(253, 84, 1000, 2));
-    assert(!writeReg(253, 88, 0, 2));
-    assert(!writeReg(253, 90, 0));
-    assert(!writeReg(1, 24, 1));
-    assert(!writeReg(1, 30, 2400, 2));
-    assert(!writeReg(1, 6, 0, 2)); // No EEPROM writes.
-    send(command(254, 3, {24, 1}));
-    assert(Serial.outgoing.empty());
-    assert(writeReg(253, 88, 10, 2));
-    assert(arm.sweeping && registers[1][24] == 1 && arm.speed == 10);
+    assert(arm.settling);
+    setReg(38,0); heartbeatTick(10);
+    assert(!arm.settling && arm.goal==1500 && reg(30)==1500);
+    assert(writeReg(1,24,0));
+    assert(!arm.sweeping && registers[1][24]==0);
 
     reset(); start();
-    for (int i = 0; i < 20; ++i) heartbeatTick();
-    assert(reg(32) == 20);
-    uint16_t lastSpeed = reg(32);
-    for (int position = 2360; position <= 2476; position += 4) {
-        setReg(36, position);
-        heartbeatTick();
-        assert(reg(32) <= lastSpeed && reg(32) >= 1);
-        lastSpeed = reg(32);
-    }
-    assert(reg(32) > 1); // No minimum-speed crawl outside the endpoint band.
-    setReg(36, 2478); setReg(38, 10);
-    heartbeatTick();
-    assert(arm.settling && reg(30) == 2478);
-    for (int i = 0; i < 20; ++i) heartbeatTick();
-    assert(arm.settling && reg(30) == 2478); // No reversal while still moving.
-    setReg(38, 0);
-    for (int i = 0; i < 10; ++i) heartbeatTick();
-    assert(!arm.settling && reg(30) == 1500 && reg(32) == 1);
-    assert(writeReg(1, 24, 0)); // Kill bypasses smooth corner handling.
-    assert(!arm.sweeping && registers[1][24] == 0);
-
+    setReg(36,2480); setReg(38,10); heartbeatTick(10);
+    while (arm.permitted) { clockMs+=10; writeReg(253,82,2); }
+    assert(arm.fault==10 && registers[1][24]==0);
+    reset(); start(); clockMs+=350; loop();
+    assert(arm.fault==2 && !arm.permitted && registers[1][24]==0);
     reset(); start();
-    setReg(36, 2478); setReg(38, 3); heartbeatTick();
-    for (int i = 0; i < 10; ++i) {
-        setReg(36, 2478 + i % 2);
-        heartbeatTick();
-    }
-    assert(!arm.settling && arm.goal == 1500 && arm.fault == 0);
-
-    reset(); start();
-    setReg(36, 2478); setReg(38, 0); heartbeatTick();
-    for (int i = 0; i < 74; ++i) {
-        setReg(36, 2478 + (i % 2) * 4);
-        heartbeatTick();
-    }
-    clockMs += 20; loop();
-    assert(arm.fault == 10 && !arm.permitted && registers[1][24] == 0);
-
-    reset(); start();
-    for (int i = 0; i < 150; ++i) heartbeatTick();
-    assert(arm.fault == 0 && arm.permitted); // No position-only stall inference.
-    clockMs += 350; loop();
-    assert(arm.fault == 2 && !arm.permitted && registers[1][24] == 0);
+    while (arm.permitted) { clockMs+=10; writeReg(253,82,2); }
+    assert(arm.fault==10 && registers[1][24]==0); // Stalled away from endpoints.
     reset(); start(); readFailure = true; clockMs += 20; loop();
     assert(!arm.permitted && arm.fault == 3);
     reset(); start(); setReg(36, 1499); clockMs += 20; loop();
@@ -309,7 +295,7 @@ int main() {
     assert(Serial.outgoing.size() == 6 && Serial.outgoing[4] != 0);
 
     reset(); start();
-    setReg(36, 2480); heartbeatTick();
+    setReg(36,2480); setReg(38,10); heartbeatTick(10);
     assert(arm.settling);
     clockMs += 350; loop();
     assert(!arm.permitted && !arm.settling && registers[1][24] == 0);

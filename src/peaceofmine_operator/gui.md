@@ -138,7 +138,7 @@ If the Wi-Fi address changes, regenerate the certificate with the new address.
 3. Accept the certificate warning.
 4. Confirm the Drive panel shows the pad and the graphic moves.
 5. **Take control** and select ROS authority on the physical RC.
-6. Click **Arm controls**. RT forward, LT reverse, left stick steer. Release the input deadman or click **Disarm** to stop.
+6. Use the RC to permit motion; there is no separate dashboard arm/disarm step. RT forward, LT reverse, left stick steer. Release the input deadman to stop driving. Servo STOP releases dashboard control; click **Take control** before a new operation. Opening Settings stops motion and blocks driving while calibrating; jogging needs only RC permission and a held movement control.
 
 The status line must read `ROS cmd_vel …`. Stick lights alone are not
 enough. The virtual forward camera is first-person, so the car will not
@@ -245,15 +245,27 @@ for persistence across restarts.
 
 The arm driver requires [safe_arm firmware v1](../../DevTools/servodemo/firmware/safe_arm/README.md).
 It sends a sweep profile once and refreshes permission every 50 ms while the
-ROS safety gate allows motion. Firmware slows near each endpoint and waits for
-low measured speed before reversing. If permission heartbeats stop for 350 ms,
+ROS safety gate allows motion. The new firmware uses fixed endpoint goals with a bounded speed ramp and
+100 Hz feedback target. It confirms low measured speed before reversing,
+without a fixed endpoint pause. This requires flashing the updated firmware; restarting ROS alone does
+not install it. Sweep speed changes adjust the bounded ramp while running. The slider range
+uses the configured arm maximum, including its ROS status message. The default
+116 motor units correspond to 79.344 degrees/s; this is a configurable software
+limit, not the motor's physical maximum. Acceleration and available travel can
+prevent reaching the requested speed. If permission heartbeats stop for 350 ms,
 it cancels motion and releases torque. RC kill still uses ROS/USB; no extra
 wiring is required. The firmware must be flashed separately before this driver
 can move the arm. See the linked build and commissioning instructions.
 
 Arm position is published on each 50 ms control tick, independent of the slower
 electrical diagnostics. Dashboard telemetry targets 20 Hz; the radar redraws
-at 30 Hz. These are scheduling targets, not guaranteed measured rates.
+at the display refresh rate (60 Hz on a 60 Hz display). Charts reuse their
+layout between telemetry updates for smooth scrolling. The virtual drive
+view, map pose, radar and probe graphic interpolate measured samples with
+50 ms display delay; they never predict through telemetry gaps. Raw values,
+commands and safety state remain unmodified. Input graphics follow browser
+frames, and measurements retain their original sampling rate. Camera frame rate depends on the camera stream.
+These are scheduling targets, not guaranteed measured rates.
 Confirmed firmware motion stops retain the connection after torque-off is
 verified and require a new user motion request, not adapter rediscovery.
 Transport disconnects retry discovery in the background after a two-second
@@ -377,8 +389,9 @@ exclusive actuator ownership, operation identities and watchdogs. Controllers
 exchange typed commands and telemetry without synchronous register requests.
 The website is served by `operator_web`, which communicates through ROS.
 
-The browser's control lease expires after 0.5 seconds without heartbeats. Explicit
-arming and held drive input are required; drive commands expire after 0.25 seconds.
+The browser's control lease expires after 0.5 seconds without heartbeats. RC
+permission, a control lease and held drive input are required; there is no separate
+browser arming latch. Drive commands expire after 0.25 seconds.
 Servo controller, driver and firmware safety checks remain independent. A timed-out
 operation cannot resume from renewed stale commands. Release and start again.
 

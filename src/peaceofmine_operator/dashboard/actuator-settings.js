@@ -6,7 +6,11 @@ function createServoSettings(role) {
   let loadHistory = [];
   let loadSample = null;
   let loadServo = null;
-  function updateLoadChart(servo, active) {
+  let loadLatest = null, loadActive = false;
+  function updateLoadChart(servo, active, animate = false) {
+    loadLatest = servo; loadActive = active;
+    if (animate && (!$('settings-dialog').open || document.getElementById(`settings-${role}`).hidden)) return;
+    if (animate && loadChart && scrollTimeChart(loadChart, performance.now())) return;
     const now = performance.now();
     const key = `${servo.serial_port || ''}:${servo.servo_id}`;
     if (!state.connected || (active && (!servo.connected || loadServo !== key))) {
@@ -45,7 +49,8 @@ function createServoSettings(role) {
           ? [{x: -60, y: sign * threshold}, {x: 0, y: sign * threshold}] : [];
       });
     }
-    loadChart.resize();
+    loadChart.$scrollPixels = 0;
+    loadChart.$renderedAt = now;
     loadChart.update('none');
   }
   let armHoldTimer = null;
@@ -119,7 +124,7 @@ function createServoSettings(role) {
       slider.max = servo.position_maximum ?? servo.eeprom_maximum ?? 4095;
       if (!armSliderDragging) slider.value = servo.position;
     }
-    slider.disabled = !ready || !state.drive.calibrating || (armHoldTimer !== null && !armSliderMoving);
+    slider.disabled = !ready || (armHoldTimer !== null && !armSliderMoving);
     if (armSliderMoving && !armSliderDragging && servo.torque && Math.abs(servo.position - armSliderTarget) <= 3
         && servo.goal_position === armSliderTarget) stopArmMove();
     $('arm-position-label').textContent = servo.connected ? armAngle(Number(slider.value)) : '—';
@@ -141,11 +146,9 @@ function createServoSettings(role) {
     metric('arm-power', `${number(servo.voltage, 1, ' V')} / ${number(servo.temperature_c, 0, ' °C')}`);
     metric('arm-model', `${servo.model ?? '—'} / ${servo.firmware ?? '—'}`);
     $('arm-px4').textContent = state.safety?.servo_allowed ? 'Movement permitted (status 4)' : 'Movement blocked';
-    $('arm-calibration-enable').disabled = !owner || !state.safety?.servo_allowed || state.drive.calibrating || !servo.connected;
     $('arm-calibration-stop').disabled = !owner;
-    $('arm-calibration-enable').textContent = active && state.drive.calibrating ? 'Jogging enabled' : 'Enable jogging';
     const selectionBlocked = !state.connected ? 'Connect to the dashboard first.'
-      : !owner ? 'Take control to select a servo or record calibration. You do not need to arm.'
+      : !owner ? 'Take control to select a servo or record calibration. Motion permission comes from the RC.'
       : live.torque ? 'Stop the active servo before changing the servo ID.'
       : !servo.serial_connected ? 'Waiting for the servo serial adapter.' : '';
     $('arm-calibration-access').textContent = owner && active && state.drive.calibrating ? 'Hold a jog button to move. Release it, then record the position.' : selectionBlocked || 'Ready to select a servo and record positions.';
@@ -166,7 +169,7 @@ function createServoSettings(role) {
       $('arm-enable-multiturn').disabled = !canRecord || servo.position_mode === 'multi-turn';
       $('arm-position-mode').textContent = servo.connected ? servo.position_mode === 'multi-turn'
         ? 'Multi-turn · −7 to +7 shaft revolutions' : 'Joint mode · enable multi-turn for travel beyond one revolution' : 'Select probe to read position mode';
-      $('arm-home').disabled = !ready || !state.drive.calibrating;
+      $('arm-home').disabled = !ready;
       $('arm-home-load').disabled = armHoldTimer !== null;
       $('arm-home-status').textContent = servo.connected ? servo.home_status || 'Not homed' : 'Not homed · connect probe';
       $('arm-home-travel').textContent = servo.connected && Number.isFinite(servo.home_position)
@@ -182,16 +185,15 @@ function createServoSettings(role) {
       }
     }
     if (role === 'arm') $('arm-apply-limits').disabled = !canRecord || !['minimum', 'center', 'maximum'].every(point => Number.isFinite(servo.captured?.[point] ?? servo.calibration?.[point]));
-    $('arm-jog-left').disabled = $('arm-jog-right').disabled = !ready || !state.drive.calibrating;
+    $('arm-jog-left').disabled = $('arm-jog-right').disabled = !ready;
     const jogReason = !state.connected ? 'Dashboard disconnected'
       : !owner ? 'Take control first'
       : !servo.connected ? 'Servo not connected'
       : !state.safety?.servo_allowed ? 'Blocked: PX4 must report status 4'
-      : !state.drive.calibrating ? 'Click Enable jogging once, then hold an arrow'
       : armHoldTimer !== null ? 'Jog command held · release to stop'
       : role === 'probe' ? 'Ready · hold up to retract or down to extend' : 'Ready · hold left or right to move';
     $('arm-jog-status').textContent = jogReason;
-    $('arm-jog-status').dataset.ready = String(Boolean(ready && state.drive.calibrating));
+    $('arm-jog-status').dataset.ready = String(Boolean(ready));
     $('arm-jog-left').title = $('arm-jog-right').title = jogReason;
     for (const point of role === 'arm' ? ['minimum', 'center', 'maximum'] : []) {
       $(`arm-capture-${point}`).disabled = !canRecord;
@@ -228,12 +230,11 @@ function createServoSettings(role) {
       };
     }
     $('arm-reconnect').onclick = () => armCommand('reconnect');
-    $('arm-take-control').onclick = () => armControlCommand({type: 'take_control'}, 'Control acquired. Select a servo or enable slow jogging.', () => state.drive.you_control_owner);
+    $('arm-take-control').onclick = () => armControlCommand({type: 'take_control'}, 'Control acquired. Select a servo; hold a movement control when the RC permits.', () => state.drive.you_control_owner);
     $('arm-servo-id').onchange = updateArmSettings;
     $('arm-select-id').onclick = () => {
       if ($('arm-servo-id').value !== '') armCommand('select', {servo_id: Number($('arm-servo-id').value)});
     };
-    $('arm-calibration-enable').onclick = () => armControlCommand({type: 'arm', calibration: true}, role === 'probe' ? 'Jogging enabled. Hold up, down, or home; release to stop.' : 'Slow jogging enabled. Hold left or right; release to stop.', () => state.drive.calibrating);
     $('arm-calibration-stop').onclick = () => { stopArmMove(); armCommand('stop'); send({type: 'estop'}); };
     function bindHold(button, action, values) {
       const start = () => {
@@ -299,7 +300,7 @@ function createServoSettings(role) {
       stopArmMove();
       if (state.drive.you_control_owner && (state.arm_servo?.active_role || 'arm') === role) {
         armCommand('stop');
-        send({type: 'estop'});
+        send({type: 'calibration_end'});
       }
     };
     $('settings-dialog').querySelector('form').addEventListener('submit', releaseArmSettings);
@@ -308,7 +309,7 @@ function createServoSettings(role) {
     document.addEventListener('visibilitychange', () => { if (document.hidden) stopArmMove(); });
   }
 
-  return {update: updateArmSettings, initialize: initializeArmSettings, stop: stopArmMove, error(message) { if (armPending) { armPending = null; setArmFeedback(message, 'error'); } }};
+  return {draw() { if (loadLatest) updateLoadChart(loadLatest, loadActive, true); }, update: updateArmSettings, initialize: initializeArmSettings, stop: stopArmMove, error(message) { if (armPending) { armPending = null; setArmFeedback(message, 'error'); } }};
 }
 const servoSettings = [createServoSettings('arm'), createServoSettings('probe')];
 function updateArmSettings() { servoSettings.forEach(panel => panel.update()); }

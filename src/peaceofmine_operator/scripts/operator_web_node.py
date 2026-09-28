@@ -54,6 +54,19 @@ def local_ipv4_addresses() -> list[str]:
 
 
 def log_dashboard_urls(node: OperatorGateway, scheme: str, host: str, port: int) -> None:
+    address = host
+    if host in {'0.0.0.0', '::'}:
+        address = (os.environ.get('OPERATOR_DASHBOARD_HOSTNAME')
+                   or os.environ.get('OPERATOR_DASHBOARD_HOST_IP') or 'localhost')
+    if ':' in address and not address.startswith('['):
+        address = f'[{address}]'
+    url = f'{scheme}://{address}:{port}/'
+    lines = ['OPERATOR DASHBOARD — OPEN IN YOUR BROWSER', url]
+    width = max(map(len, lines)) + 4
+    border = '=' * width
+    node.get_logger().info('\n\n' + border + '\n'
+                           + '\n'.join(f'  {line}' for line in lines)
+                           + '\n' + border + '\n')
     if host not in {'0.0.0.0', '::'}:
         node.get_logger().info(f'Operator dashboard listening on {scheme}://{host}:{port}')
         return

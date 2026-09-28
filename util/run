@@ -49,6 +49,22 @@ if [ -n "$DASHBOARD_HOST_IP" ]; then
     append ARGS -e "OPERATOR_DASHBOARD_HOST_IP=$DASHBOARD_HOST_IP"
 fi
 
+# Discover MagicDNS on the host; the container need not run Tailscale itself.
+DASHBOARD_HOSTNAME="${OPERATOR_DASHBOARD_HOSTNAME:-}"
+if [ -z "$DASHBOARD_HOSTNAME" ] && command -v tailscale >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+    DASHBOARD_HOSTNAME="$(python3 -c '
+import json, subprocess
+try:
+    result = subprocess.run(["tailscale", "status", "--json"], capture_output=True, text=True, timeout=2, check=True)
+    print(json.loads(result.stdout).get("Self", {}).get("DNSName", "").rstrip("."))
+except (OSError, ValueError, subprocess.SubprocessError):
+    pass
+')"
+fi
+if [ -n "$DASHBOARD_HOSTNAME" ]; then
+    append ARGS -e "OPERATOR_DASHBOARD_HOSTNAME=$DASHBOARD_HOSTNAME"
+fi
+
 # Enable device access for non-dev / non-macOS hosts
 if ! (istrue DEV || is_darwin); then
     append ARGS \

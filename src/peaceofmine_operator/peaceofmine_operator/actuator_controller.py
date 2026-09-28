@@ -107,17 +107,17 @@ class ActuatorController(Node):
 
     def permission_cb(self, msg):
         self.permission, self.permission_at = msg.data, time.monotonic()
-        if not self.permitted():
+        if self.operation and not self.permitted():
             self.stop('Permission lost', success=False)
 
     def state_cb(self, msg):
         self.safety.update_state(msg)
-        if not self.permitted():
+        if self.operation and not self.permitted():
             self.stop('PX4 interlock', success=False)
 
     def rc_cb(self, msg):
         self.safety.update_rc(msg)
-        if not self.permitted():
+        if self.operation and not self.permitted():
             self.stop('RC interlock', success=False)
 
     def driver_cb(self, msg):
@@ -352,7 +352,7 @@ class ActuatorController(Node):
         calibration=self.calibration()
         probe=self.state.get('probe',{})
         status=ActuatorStatus(role=self.role,connected=self.connected(),lifecycle=self.lifecycle,reason=self.reason,
-            servo_id=self.ident,sweeping=bool(self.state.get('sweeping')),calibrated=bool(calibration),
+            servo_id=self.ident,sweeping=bool(self.state.get('sweeping')),motion_speed_limit=self.motion_speed,calibrated=bool(calibration),
             minimum=calibration['minimum'] if calibration else 0,center=calibration['center'] if calibration else 0,
             maximum=calibration['maximum'] if calibration else 0,homed=bool(probe.get('homed')),
             probe_ready=bool(probe.get('ready')),probe_active=bool(probe.get('active')),probe_holding=bool(probe.get('holding')),

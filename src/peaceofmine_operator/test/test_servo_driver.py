@@ -39,6 +39,19 @@ class DriverTest(unittest.TestCase):
         self.allowed=True
         with self.assertRaises(ValueError):self.runtime.submit(self.command(sequence=2))
 
+    def test_slow_telemetry_cannot_enable_torque_after_command_expires(self):
+        motor = self.runtime.motors[1]
+        snapshot = motor.snapshot
+        def delayed_snapshot():
+            self.now += .26
+            return snapshot()
+        motor.snapshot = delayed_snapshot
+        self.runtime.submit(self.command())
+        self.runtime.tick()
+        self.assertFalse(self.runtime.bus.values[1][24])
+        self.assertIsNone(self.runtime.active)
+        self.assertIn('Command watchdog', self.runtime.outcomes[1][2])
+
     def test_all_motion_modes_enforce_speed_limit(self):
         for mode in (1,2):
             for speed in (0,15,1023):

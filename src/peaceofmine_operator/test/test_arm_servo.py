@@ -438,8 +438,21 @@ class ArbotiXStartupTest(unittest.TestCase):
             bus = ArbotiX('/dev/fake')
         sdk.PortHandler.assert_called_once_with('/dev/fake')
         self.assertEqual(packet.readTxRx.call_count, 3)
+        self.assertTrue(port.ser.exclusive)
+        port.ser.set_low_latency_mode.assert_called_once_with(True)
         packet.write1ByteTxRx.assert_not_called()
         bus.close()
+
+    def test_latency_configuration_failure_closes_port_without_motion(self):
+        port, packet = Mock(), Mock()
+        port.ser.set_low_latency_mode.side_effect = ValueError('permission denied')
+        sdk = SimpleNamespace(PortHandler=Mock(return_value=port), PacketHandler=Mock(return_value=packet))
+        with patch.dict('sys.modules', dynamixel_sdk=sdk):
+            with self.assertRaisesRegex(RuntimeError, 'low-latency'):
+                ArbotiX('/dev/fake')
+        packet.readTxRx.assert_not_called()
+        packet.write1ByteTxRx.assert_not_called()
+        port.closePort.assert_called_once()
 
     def test_legacy_firmware_is_rejected_without_motion(self):
         port, packet = Mock(), Mock()

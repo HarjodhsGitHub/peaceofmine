@@ -19,16 +19,15 @@ class SimulationPipelineTest(unittest.TestCase):
             fixture.spin(.2)
             bridge.handle_command(client,dict(type='take_control'))
             fixture.spin(.2)
-            bridge.handle_command(client,dict(type='arm',calibration=True))
+            # RC simulation permission plus the lease is sufficient.
             fixture.spin(.1)
             for _ in range(16):
                 bridge.handle_command(client,dict(type='arm_servo',role='probe',action='home',held=True,hold_id='pipeline',load_percent=20))
                 fixture.spin(.08)
                 if fixture.probe.home_position is not None:break
             self.assertIsNotNone(fixture.probe.home_position,fixture.probe.reason)
-            bridge.handle_command(client,dict(type='disarm'))
+            bridge.handle_command(client,dict(type='calibration_end'))
             fixture.spin(.1)
-            bridge.handle_command(client,dict(type='arm'))
             fixture.spin(.1)
             bridge.handle_command(client,dict(type='probe_target',depth_mm=20.))
             fixture.spin(.3)

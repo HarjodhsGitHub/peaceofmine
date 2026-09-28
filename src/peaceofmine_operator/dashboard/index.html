@@ -40,8 +40,6 @@
         <span id="rc-safety" class="badge neutral" title="PX4 safety status">RC UNKNOWN · LOCKED</span>
         <span id="control-owner" class="badge neutral">SPECTATING</span>
         <button id="take-control" class="primary">Take control</button>
-        <button id="enable-controls">Arm controls</button>
-        <button id="disable-controls">Disarm</button>
         <button id="settings" class="quiet">Settings</button>
       </div>
     </header>
@@ -332,7 +330,7 @@
       </section>
       <section id="settings-arm" class="settings-panel" role="tabpanel" data-settings-panel="arm" hidden>
         <h3>Arm control &amp; calibration</h3>
-        <p id="arm-feedback" class="arm-feedback" role="status" aria-live="polite">Ready. Enable jogging, then hold an arrow to move.</p>
+        <p id="arm-feedback" class="arm-feedback" role="status" aria-live="polite">Take control and use the RC to permit motion, then hold an arrow to move.</p>
         <div class="arm-workbench">
           <div class="arm-control-panel">
             <h4>Jog controls</h4>
@@ -344,7 +342,6 @@
               <button type="button" id="arm-reconnect">Reconnect</button>
             </div>
             <div class="arm-enable-controls">
-              <button type="button" id="arm-calibration-enable">Enable jogging</button>
               <button type="button" id="arm-calibration-stop" class="danger">Stop / release torque</button>
             </div>
             <div class="arm-jog-controls">
@@ -408,7 +405,7 @@
       <section id="settings-probe" class="settings-panel" role="tabpanel" data-settings-panel="probe" hidden>
         <h3>Linear probe: home &amp; travel</h3>
         <p class="dialog-help">Home to establish the top reference, then record maximum extension once. The main probe control uses the saved travel calibration in millimetres.</p>
-        <p id="probe-servo-feedback" class="arm-feedback" role="status" aria-live="polite">Ready. Enable jogging, then hold an arrow to move.</p>
+        <p id="probe-servo-feedback" class="arm-feedback" role="status" aria-live="polite">Take control and use the RC to permit motion, then hold an arrow to move.</p>
         <div class="arm-workbench">
           <div class="arm-control-panel">
             <h4>Jog controls</h4>
@@ -420,7 +417,6 @@
               <button type="button" id="probe-servo-reconnect">Reconnect</button>
             </div>
             <div class="arm-enable-controls">
-              <button type="button" id="probe-servo-calibration-enable">Enable jogging</button>
               <button type="button" id="probe-servo-calibration-stop" class="danger">Stop / release torque</button>
             </div>
             <p id="probe-servo-position-mode" role="status">Select probe to read position mode</p>

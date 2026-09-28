@@ -1,9 +1,9 @@
 {
   "arm": {
     "servo_id": 1,
-    "minimum": 920,
-    "center": 1533,
-    "maximum": 2224
+    "minimum": 511,
+    "center": 1514,
+    "maximum": 2555
   },
   "probe": {
     "servo_id": 2,
@@ -14,5 +14,10 @@
     "baseline_adc": 36.04,
     "full_response_adc": 105.0,
     "reference_voltage": 5.0
+  },
+  "schema_version": 1,
+  "revision": 2,
+  "section_revisions": {
+    "arm": 2
   }
 }

@@ -5,6 +5,7 @@ string lifecycle
 string reason
 uint16 servo_id
 bool sweeping
+uint16 motion_speed_limit
 bool calibrated
 int32 minimum
 int32 center

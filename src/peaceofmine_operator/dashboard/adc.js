@@ -127,9 +127,7 @@
     document.getElementById('probe-adc-contact').textContent = contactText;
     if (!document.getElementById('settings-dialog').open || document.getElementById('settings-adc').hidden) return;
     const seconds = Number(el('window').value), quantity = el('quantity').value;
-    if (!chart) chart = new Chart(el('history'), {type:'line', data:{datasets:[]}, options:{animation:false, responsive:true, maintainAspectRatio:false, parsing:false,
-      plugins:{legend:{labels:{color:'#b7c4d8'}}}, scales:{x:{type:'linear',min:-seconds,max:0},ads1115:{type:'linear',position:'left'}}}});
-    chart.data.datasets = datasets(null,quantity,seconds); chart.options.scales.x.min = -seconds; chart.update('none');
+    window.operatorADCFrame?.();
     const recent = history.filter(s => now()-s.time <= 2);
     el('rate').textContent = `${(recent.length/2).toFixed(1)} samples/s total · ${latest.config.rate} SPS chip rate shared across enabled inputs`;
     el('readings').innerHTML = latest.config.channels.filter(ch => ch.enabled).map(ch => {
@@ -141,6 +139,15 @@
     }).join('');
     el('registers').textContent = `${latest.applied === latest.revision ? 'Applied' : 'Pending until acquisition starts'} · revision ${latest.revision}\n` + Object.entries(latest.registers).map(([k,v])=>`${k}: 0x${v.toString(16).padStart(4,'0')}  ${v.toString(2).padStart(16,'0')}`).join('\n');
   }
+  // Plot refresh follows the display; acquisition and table updates do not.
+  window.operatorADCFrame = () => {
+    if (!latest || !document.getElementById('settings-dialog').open || document.getElementById('settings-adc').hidden) return;
+    if (chart && scrollTimeChart(chart, performance.now())) return;
+    const seconds = Number(el('window').value), quantity = el('quantity').value;
+    if (!chart) chart = new Chart(el('history'), {type:'line', data:{datasets:[]}, options:{animation:false, responsive:true, maintainAspectRatio:false, parsing:false,
+      plugins:{decimation:{enabled:true,algorithm:'min-max'},legend:{labels:{color:'#b7c4d8'}}}, scales:{x:{type:'linear',min:-seconds,max:0},ads1115:{type:'linear',position:'left'}}}});
+    chart.data.datasets = datasets(null,quantity,seconds); chart.options.scales.x.min = -seconds; chart.$scrollPixels = 0; chart.$renderedAt = performance.now(); chart.update('none');
+  };
   async function poll() {
     try {
       const response = await fetch(`/api/adc?after=${cursor}&session=${encodeURIComponent(session || "")}`, {cache:'no-store', signal:AbortSignal.timeout(3000)});

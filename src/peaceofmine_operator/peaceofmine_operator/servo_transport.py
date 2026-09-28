@@ -34,6 +34,17 @@ class ArbotiX:
         if not self.port.setBaudRate(115200):
             raise RuntimeError('Cannot open ArbotiX serial port')
         try:
+            # One process owns this gateway. FTDI's Linux default buffers each
+            # short reply for 16 ms, starving the ROS callbacks during a series
+            # of reads/writes and occasionally exceeding the SDK reply timeout.
+            self.port.ser.exclusive = True
+            low_latency = getattr(self.port.ser, 'set_low_latency_mode', None)
+            if low_latency is not None:
+                try:
+                    low_latency(True)
+                except (ValueError, OSError) as exc:
+                    raise RuntimeError('Cannot enable servo USB low-latency mode; '
+                                       'check serial-device permissions') from exc
             # Opening serial can reset the ArbotiX into its bootloader.
             # Keep the port open while waiting, as in the proven demo.
             deadline = time.monotonic() + 5.0
@@ -196,5 +207,4 @@ class ArbotiX:
             if time.monotonic() >= deadline:
                 raise RuntimeError('Multi-turn EEPROM readback failed; reconnect before moving')
             time.sleep(.02)
-
 

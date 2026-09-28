@@ -141,11 +141,14 @@ class OperatorControl(Node):
         self._emit_cmd_vel()
 
     def _disable_actuation_locked(self):
-        self._calibrating = False
         self._armed = False
+        self._permission_pub.publish(Bool(data=False))
+        self._stop_motion_locked()
+
+    def _stop_motion_locked(self):
+        self._calibrating = False
         self._deadman = False
         self._command = (0.0, 0.0)
-        self._permission_pub.publish(Bool(data=False))
         self._sweep_enabled_pub.publish(command_message(dict(action='sweep',enabled=False)))
         self._arm_command_pub.publish(command_message(dict(action='stop')))
         self._probe_command_pub.publish(command_message(dict(action='stop')))
@@ -161,7 +164,10 @@ class OperatorControl(Node):
 
     def _enforce_safety_locked(self):
         safety = self._rc_safety.snapshot()
-        if not safety['servo_allowed']:
+        # Compatibility telemetry field: readiness is derived from RC and the
+        # control lease, never a second dashboard arming latch.
+        self._armed = bool(safety['servo_allowed'] and self._lease is not None and not self._shutting_down)
+        if not self._armed:
             self._disable_actuation_locked()
         elif not safety['allowed']:
             self._deadman = False
@@ -395,16 +401,20 @@ class OperatorControl(Node):
                 return {'type': 'error', 'message': 'Operator control node is shutting down.'}
             safety = self._enforce_safety_locked()
             if message_type == 'take_control':
-                # Transferring a lease stops the rover; the new operator must
-                # consciously arm again before commands can take effect.
+                # A new owner must send fresh motion/deadman commands.
                 self._disable_actuation_locked()
                 self._lease = ws
                 self._armed = False
                 self._deadman = False
                 self._command = (0.0, 0.0)
+                self._enforce_safety_locked()
                 flush_drive = True
             elif self._lease != ws:
                 error = {'type': 'error', 'message': 'Spectator mode: take control before sending commands.'}
+            elif message_type in ('calibration_begin', 'calibration_end'):
+                self._stop_motion_locked()
+                self._calibrating = message_type == 'calibration_begin'
+                flush_drive = True
             elif message_type in ('adc', 'settings'):
                 publisher = self._adc_command_pub if message_type == 'adc' else self._settings_command_pub
                 publisher.publish(String(data=json.dumps(payload)))
@@ -425,17 +435,22 @@ class OperatorControl(Node):
             elif message_type not in ('disarm', 'estop') and not safety['servo_allowed']:
                 return {'type': 'error', 'message': self._rc_safety.servo_snapshot()['reason']}
             elif message_type == 'arm':
+                # Older clients may still select calibration this way; this
+                # message cannot override the RC gate.
+                self._disable_actuation_locked()
                 self._calibrating = payload.get('calibration') is True
-                self._armed = True
+                self._enforce_safety_locked()
                 flush_drive = True
             elif message_type in ('disarm', 'estop'):
+                # STOP stays stopped until control is explicitly taken again.
+                self._lease = None
                 self._disable_actuation_locked()
                 self._armed = False
                 self._deadman = False
                 self._command = (0.0, 0.0)
                 flush_drive = True
             elif not self._armed:
-                return {'type':'error', 'message':'Arm controls before requesting motion.'}
+                return {'type':'error', 'message':'Take control and enable motion on the RC.'}
             elif self._calibrating and message_type in ('drive', 'probe_target', 'sweep_enabled', 'sweep_speed'):
                 return {'type': 'error', 'message': 'Vehicle and probe motion are blocked during arm calibration.'}
             elif message_type == 'drive':
@@ -449,8 +464,14 @@ class OperatorControl(Node):
                     )
                     flush_drive = True
             elif message_type == 'arm_servo':
-                if payload.get('action') in ('jog', 'position', 'home') and not self._calibrating:
-                    return {'type': 'error', 'message': 'Enable calibration before jogging.'}
+                if payload.get('action') in ('jog', 'position', 'home', 'move') and not self._calibrating:
+                    # Stop prior work without briefly revoking permission:
+                    # that false heartbeat can otherwise race the new jog.
+                    self._stop_motion_locked()
+                    self._calibrating = True
+                    self._enforce_safety_locked()
+                    self._stop_until = time.monotonic() + STOP_TAIL_S
+                    self._publish_twist(0.0, 0.0)
                 command = {key: payload[key] for key in ('action', 'request_id', 'role', 'point', 'held', 'direction', 'position', 'speed_deg_s', 'hold_id', 'load_percent') if key in payload}
                 return self._actuator_command(command)
             elif message_type == 'probe_target':

@@ -74,6 +74,26 @@ class ActuatorTest(unittest.TestCase):
         rclpy.shutdown()
         self.tmp.cleanup()
 
+    def test_configured_speed_limit_survives_typed_status(self):
+        from peaceofmine_interfaces.msg import ActuatorStatus
+        from peaceofmine_operator.actuator_protocol import status_dict
+        received=[]
+        sub=self.observer.create_subscription(ActuatorStatus,'arm/state',received.append,1)
+        self.arm.motion_speed=116
+        self.spin(.15)
+        self.assertTrue(received)
+        value=status_dict(received[-1])
+        self.assertEqual(value['motion_speed_limit'],116)
+        self.assertAlmostEqual(value['motion_speed_limit']*.684,79.344)
+        self.observer.destroy_subscription(sub)
+
+    def test_idle_permission_updates_preserve_stop_reason(self):
+        self.arm.stop('Servo overload; inspect the mechanism')
+        self.arm.permission_cb(Bool(data=False))
+        self.arm.permission_cb(Bool(data=False))
+        self.assertEqual(self.arm.reason, 'Servo overload; inspect the mechanism')
+        self.assertIsNone(self.arm.operation)
+
     def test_slider_and_jog_obey_saved_speed(self):
         self.command(self.arm,action='configure_motion',max_speed_deg_s=10.,acceleration_deg_s2=34.332)
         self.spin(1.1)

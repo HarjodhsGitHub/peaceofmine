@@ -113,7 +113,7 @@ class TeleopTest(unittest.TestCase):
             self.assertIsNone(self.node.handle_command(spectator, dict(type='detector_calibrate', action='zero', request_id='new-owner')))
             detector.assert_called_once()
 
-    def test_px4_safety_disarms_all_outputs_and_blocks_rearming(self):
+    def test_rc_loss_stops_motion_and_recovery_requires_fresh_commands(self):
         try:
             from test_rc_safety import healthy
         except ImportError:
@@ -134,7 +134,9 @@ class TeleopTest(unittest.TestCase):
             self.assertTrue(all(command_dict(call.args[0])['action'] == 'stop' for call in probe.call_args_list))
             self.node._rc_safety.samples['state'][1].system_status = 4
             self.node._drive_watchdog()
-            self.assertFalse(self.node._armed)
+            self.assertTrue(self.node._armed)
+            self.assertFalse(self.node._deadman)
+            self.assertEqual(self.node._command, (0.0, 0.0))
 
     def test_calibration_blocks_browser_and_ros_vehicle_input(self):
         self.command('take_control')
@@ -149,18 +151,46 @@ class TeleopTest(unittest.TestCase):
         self.command('disarm')
         self.assertFalse(self.node._calibrating)
 
-    def test_browser_requires_lease_arming_and_deadman(self):
+    def test_browser_requires_lease_rc_permission_and_deadman(self):
         drive = dict(linear_x=0.4, angular_z=-0.2)
         self.assertIsNotNone(self.command('drive', **drive))
         self.command('take_control')
-        self.assertIsNotNone(self.command('drive', **drive))
-        self.command('arm')
+        self.assertTrue(self.node._armed)
+        self.assertIsNone(self.command('drive', **drive))
+        self.assertFalse(self.node.snapshot()['drive']['publishing'])
         self.command('drive', **dict(drive,deadman=True))
         self.output.assert_called_with(0.4, -0.2)
         self.command('drive', **dict(drive, deadman=False))
         self.output.assert_called_with(0.0, 0.0)
 
-    def test_sweep_with_rc_override_requires_explicit_arm(self):
+    def test_estop_releases_control_and_cannot_auto_resume(self):
+        self.command('take_control')
+        self.command('drive', linear_x=.4, deadman=True)
+        self.command('estop')
+        self.node._drive_watchdog()
+        self.assertIsNone(self.node._lease)
+        self.assertFalse(self.node._armed)
+        self.assertIsNotNone(self.command('drive', linear_x=.4, deadman=True))
+        self.command('take_control')
+        self.assertTrue(self.node._armed)
+        self.assertFalse(self.node._deadman)
+
+    def test_manual_servo_enters_calibration_without_arm_command(self):
+        self.command('take_control')
+        self.command('drive', linear_x=.4, deadman=True)
+        with patch.object(self.node._arm_command_pub, 'publish') as servo:
+            self.assertIsNone(self.command('arm_servo', action='jog', direction=1, held=True))
+            self.assertEqual(command_dict(servo.call_args.args[0])['action'], 'jog')
+        self.assertTrue(self.node._calibrating)
+        self.assertFalse(self.node._deadman)
+        self.output.assert_called_with(0.0, 0.0)
+        self.assertIsNotNone(self.command('drive', linear_x=.4, deadman=True))
+        self.command('calibration_end')
+        self.assertFalse(self.node._calibrating)
+        self.assertTrue(self.node._armed)
+        self.assertFalse(self.node._deadman)
+
+    def test_sweep_with_rc_override_needs_no_ui_arm(self):
         from mavros_msgs.msg import RCIn
         from test_rc_safety import healthy
         self.node._rc_safety.simulation = False
@@ -169,7 +199,6 @@ class TeleopTest(unittest.TestCase):
         remote.header.stamp.sec = 2000000
         self.node._rc_cb(remote)
         self.command('take_control')
-        self.command('arm')
         self.node._arm_state = dict(connected=True, calibration=dict(minimum=1000, center=2000, maximum=3000))
         self.node._arm_state_at = 100.0
         with patch.object(self.node._sweep_enabled_pub, 'publish') as sweep, patch.object(self.node._permission_pub, 'publish') as permission:

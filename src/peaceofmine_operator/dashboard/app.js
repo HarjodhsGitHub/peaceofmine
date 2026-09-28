@@ -7,7 +7,7 @@ const CAMERA_RANGE_M = 26;
 
 const DRIVE_KEEPALIVE_MS = 50;
 const DRIVE_MIN_INTERVAL_MS = 8;
-const PAD_UI_PERIOD_MS = 50;
+const PAD_UI_PERIOD_MS = 0; // Input graphics follow requestAnimationFrame.
 const LATENCY_PERIOD_MS = 1000;
 const LATENCY_HISTORY_LENGTH = 30;
 const TELEMETRY_TIMEOUT_MS = 3000;
@@ -55,6 +55,38 @@ const state = {
   safety: {allowed: false, mode: 'unknown', reason: 'Waiting for PX4 safety status'},
   arm_servo: {},
 };
+
+// Display samples are separate from authoritative telemetry and controls.
+const motionFrames = [];
+function recordMotionFrame(now) {
+  if (motionFrames.length && now-motionFrames.at(-1).at > 250) motionFrames.length = 0;
+  motionFrames.push({at: now, robot: {...state.robot}, depth: state.probe.depth_mm});
+  while (motionFrames.length > 8) motionFrames.shift();
+}
+function displayMotion(now) {
+  const fallback = {robot: state.robot, depth: state.probe.depth_mm};
+  if (!state.connected || motionFrames.length < 2) return fallback;
+  const at = now-50;
+  for (let i=motionFrames.length-1; i>0; --i) {
+    const a=motionFrames[i-1], b=motionFrames[i];
+    if (a.at <= at && at <= b.at && b.at > a.at && b.at-a.at <= 250) {
+      const f=(at-a.at)/(b.at-a.at);
+      const mix=(x,y)=>Number.isFinite(x)&&Number.isFinite(y)?x+(y-x)*f:y;
+      const robot={...b.robot};
+      for (const key of ['x','y','speed_mps']) robot[key]=mix(a.robot[key],b.robot[key]);
+      // Interpolate headings through the short arc across +/- pi.
+      const delta=Math.atan2(Math.sin(b.robot.yaw-a.robot.yaw),Math.cos(b.robot.yaw-a.robot.yaw));
+      robot.yaw=a.robot.yaw+delta*f;
+      return {robot, depth: mix(a.depth,b.depth)};
+    }
+    if (b.at < at) break;
+  }
+  return fallback; // Never extrapolate through a telemetry gap.
+}
+function drawProbeMotion(depth) {
+  const ratio=Number.isFinite(depth)?Math.max(0,Math.min(1,depth/(state.probe.max_depth_mm||1))):0;
+  $('probe-arm').style.transform=`scaleY(${ratio})`;
+}
 
 const $ = id => document.getElementById(id);
 const forward = $('forward-view');
@@ -169,6 +201,7 @@ function sendDrive(linear, angular, deadman) {
 
 function setConnection(connected, label, detail = '') {
   state.connected = connected;
+  if (!connected) motionFrames.length = 0;
   $('connection').textContent = label;
   $('connection-dot').style.background = connected ? '#37b98e' : '#d36458';
   $('connection-overlay').classList.toggle('hidden', connected);
@@ -277,6 +310,7 @@ function connect() {
     state.connected = true;
     window.operatorSettingsState?.(message.settings);
     recordDetectorAngle(lastTelemetryAt);
+    recordMotionFrame(lastTelemetryAt);
     updateNetworkCameraOptions();
     updateCameraLatency();
     updateHud();
@@ -359,8 +393,6 @@ function updateHud() {
   $('take-control').textContent = drive.control_owner_present ? 'Steal control' : 'Take control';
 
   $('take-control').disabled = !state.connected || owner;
-  $('enable-controls').disabled = !owner || drive.armed || !state.safety?.servo_allowed;
-  $('disable-controls').disabled = !owner || !drive.armed;
   const safe = state.safety?.allowed === true;
   const servoSafe = state.safety?.servo_allowed === true && drive.armed;
   $('rc-safety').textContent = ({ros: 'RC ROS MODE', override: 'RC OVERRIDE', kill: 'RC KILL', rc_lost: 'RC LOST', ros_disarmed: 'RC DISARMED', simulation: 'SIMULATION'})[state.safety?.mode] || 'RC UNKNOWN · LOCKED';
@@ -395,6 +427,7 @@ function updateHud() {
   setRange($('sweep-speed'), detector.sweep_speed_min, detector.sweep_speed_max, 'any');
   if (!activeSliders.has('sweep-speed')) $('sweep-speed').value = detector.sweep_speed_deg_s;
   $('sweep-speed-value').textContent = `${Math.round(detector.sweep_speed_deg_s)}°/s`;
+  $('sweep-speed').title = `Configured maximum: ${detector.sweep_speed_max.toFixed(1)}°/s. Change in Settings → Servos. Actual speed also depends on acceleration and load.`;
 
   $('probe-depth').textContent = Number.isFinite(probe.depth_mm) ? `${Math.round(probe.depth_mm)} mm` : '—';
   $('probe-target').textContent = `${Math.round(probe.target_mm)} mm`;
@@ -410,7 +443,7 @@ function updateHud() {
   $('probe-zero-status').textContent = probe.contact_zeroed ? 'Contact reference set · graph shows changes from zero' : 'Absolute readings · hold clear of the ground before zeroing';
   setRange($('probe-slider'), 0, probe.max_depth_mm || 1, .1);
   if (!activeSliders.has('probe-slider')) $('probe-slider').value = probe.target_mm;
-  $('probe-arm').style.height = `${Math.max(0, Math.min(1, (probe.depth_mm || 0) / (probe.max_depth_mm || 1))) * 2.4}rem`;
+  if (!state.connected) drawProbeMotion(probe.depth_mm);
   $('probe-status').textContent = probe.ready === false ? (probe.reason || 'HOME REQUIRED') : probe.fault ? 'FAULT' : probe.holding ? 'HOLDING' : probe.depth_mm > 2 ? 'DEPLOYED' : 'STOWED';
   $('probe-status').className = `badge ${probe.fault ? 'active' : probe.depth_mm > 2 ? 'safe' : 'neutral'}`;
 
@@ -833,8 +866,6 @@ function stopLocalInput() {
 }
 
 $('take-control').onclick = () => send({type: 'take_control'});
-$('enable-controls').onclick = () => send({type: 'arm'});
-$('disable-controls').onclick = () => send({type: 'disarm'});
 $('probe-zero-contact').onclick = () => send({type: 'probe_zero_contact'});
 $('probe-stop').onclick = () => send({type: 'arm_servo', action: 'stop', role: 'probe'});
 
@@ -863,7 +894,7 @@ function savePreferences() {
 }
 
 $('settings').onclick = () => {
-  stopInput();
+  stopInput(true);
   $('settings-dialog').showModal();
 };
 $('offline-settings').onclick = $('settings').onclick;
@@ -945,7 +976,7 @@ function rampKeyboard(target, now) {
 }
 
 window.addEventListener('gamepadconnected', () => {
-  $('camera-notice').textContent = 'Controller found. Arm only after the lane is clear.';
+  $('camera-notice').textContent = 'Controller found. Use the RC to arm when the lane is clear.';
 });
 
 /* --------------------------------------------------------------- Canvas --- */
@@ -965,10 +996,10 @@ function resize(canvas) {
 
 // World to rover body frame: forward is along the rover's heading, side is to
 // its right, which is the direction screen x grows in project().
-function worldToCamera(x, y) {
-  const dx = x - state.robot.x;
-  const dy = y - state.robot.y;
-  const yaw = state.robot.yaw;
+function worldToCamera(x, y, pose = state.robot) {
+  const dx = x - pose.x;
+  const dy = y - pose.y;
+  const yaw = pose.yaw;
   return {
     forward: Math.cos(yaw) * dx + Math.sin(yaw) * dy,
     side: Math.sin(yaw) * dx - Math.cos(yaw) * dy,
@@ -993,13 +1024,13 @@ function drawSegment(context, from, to) {
   context.stroke();
 }
 
-function drawForwardView() {
+function drawForwardView(pose = state.robot) {
   if (forward.classList.contains('hidden')) return;
   const context = resize(forward);
   const width = forward.clientWidth;
   const height = forward.clientHeight;
   const horizon = height * 0.31;
-  const {x: roverX} = state.robot;
+  const {x: roverX} = pose;
 
   context.clearRect(0, 0, width, height);
   context.fillStyle = '#4f8995';
@@ -1011,8 +1042,8 @@ function drawForwardView() {
   context.strokeStyle = '#7b8e64';
   context.lineWidth = 1;
   for (let distance = 1; distance < CAMERA_RANGE_M; distance += 1) {
-    const left = project(worldToCamera(roverX + distance, 5), width, height);
-    const right = project(worldToCamera(roverX + distance, -5), width, height);
+    const left = project(worldToCamera(roverX + distance, 5, pose), width, height);
+    const right = project(worldToCamera(roverX + distance, -5, pose), width, height);
     drawSegment(context, left, right);
   }
 
@@ -1020,13 +1051,13 @@ function drawForwardView() {
   context.strokeStyle = '#e2d29a';
   context.lineWidth = 3;
   for (const laneY of [-LANE_HALF_WIDTH_M, LANE_HALF_WIDTH_M]) {
-    const start = project(worldToCamera(roverX + 0.4, laneY), width, height);
-    const end = project(worldToCamera(roverX + 28, laneY), width, height);
+    const start = project(worldToCamera(roverX + 0.4, laneY, pose), width, height);
+    const end = project(worldToCamera(roverX + 28, laneY, pose), width, height);
     drawSegment(context, start, end);
   }
 
   for (const detection of state.detections) {
-    const point = project(worldToCamera(detection.x, detection.y), width, height);
+    const point = project(worldToCamera(detection.x, detection.y, pose), width, height);
     if (!point) continue;
     context.strokeStyle = '#d75b4e';
     context.lineWidth = 2;
@@ -1050,7 +1081,7 @@ function drawForwardView() {
 
 }
 
-function drawMap() {
+function drawMap(pose = state.robot) {
   const context = resize(map);
   const width = map.clientWidth;
   const height = map.clientHeight;
@@ -1095,12 +1126,12 @@ function drawMap() {
     context.stroke();
   }
 
-  const rover = toScreen(state.robot.x, state.robot.y);
+  const rover = toScreen(pose.x, pose.y);
   context.save();
   context.translate(rover.x, rover.y);
   // Screen y is flipped relative to world y, so a counter-clockwise world yaw
   // is a clockwise canvas rotation.
-  context.rotate(-state.robot.yaw);
+  context.rotate(-pose.yaw);
   context.fillStyle = '#dff3df';
   context.beginPath();
   context.moveTo(10, 0);
@@ -1123,7 +1154,38 @@ function contactScale(axis, peak, minimum) {
   }
   return axis.max;
 }
-function drawPressureHistory() {
+// Reuse Chart.js layout between telemetry updates. Only the plotted traces
+// scroll every display frame; axes/legends stay fixed. Clip before translating
+// so old samples never paint over labels. Stagger the two dashboard layouts.
+Chart.register({id: 'operatorScroll', beforeDatasetsDraw(chart) {
+  const shift = chart.$scrollPixels || 0;
+  if (!shift) return;
+  const {left, top, right, bottom} = chart.chartArea;
+  chart.ctx.save();
+  chart.ctx.beginPath(); chart.ctx.rect(left, top, right-left, bottom-top); chart.ctx.clip();
+  chart.ctx.translate(-shift, 0);
+}, afterDatasetsDraw(chart) { if (chart.$scrollPixels) chart.ctx.restore(); }});
+function scrollTimeChart(chart, now, phase = 0) {
+  const bucket = Math.floor((now + phase) / 50);
+  if (chart.$frameBucket !== bucket) {
+    chart.$frameBucket = bucket;
+    chart.$renderedAt = now;
+    chart.$scrollPixels = 0;
+    return false;
+  }
+  const axis = chart.scales.x;
+  chart.$scrollPixels = axis ? (now-chart.$renderedAt)/1000 * axis.width/(axis.max-axis.min) : 0;
+  chart.draw();
+  return true;
+}
+
+let pressureSource = null, pressureReceivedAt = 0;
+function drawPressureHistory(now = performance.now(), animate = false) {
+  if (!$('pressure-history').getClientRects().length) return;
+  const source = state.probe.contact_samples ?? state.probe.pressure_samples ?? state.probe.pressure_history;
+  if (source !== pressureSource) { pressureSource = source; pressureReceivedAt = now; }
+  if (animate && probePressureChart && scrollTimeChart(probePressureChart, now, 25)) return;
+  const elapsed = (now - pressureReceivedAt) / 1000;
   const probe = state.probe;
   if (!probePressureChart) probePressureChart = new Chart($('pressure-history'), {
     type: 'line',
@@ -1131,7 +1193,7 @@ function drawPressureHistory() {
       {label: 'Load (%)', yAxisID: 'y', data: [], borderColor: '#57d3a8', borderWidth: 2, pointRadius: 0, spanGaps: false},
       {label: 'Current (mA)', yAxisID: 'current', data: [], borderColor: '#ffb86b', borderWidth: 2, pointRadius: 0, spanGaps: false}]},
     options: {responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
-      plugins: {legend: {display: true, labels: {color: '#b7c4d8', boxWidth: 10, font: {size: 10}}}},
+      plugins: {decimation: {enabled: true, algorithm: 'min-max'}, legend: {display: true, labels: {color: '#b7c4d8', boxWidth: 10, font: {size: 10}}}},
       scales: {x: {type: 'linear', min: -30, max: 0, ticks: {color: '#b7c4d8', callback: value => Math.abs(value)}},
         y: {min: 0, max: 10, ticks: {color: '#57d3a8'}},
         current: {position: 'right', min: 0, max: 50, grid: {drawOnChartArea: false}, ticks: {color: '#ffb86b'}}}},
@@ -1141,14 +1203,16 @@ function drawPressureHistory() {
   ['load', 'current'].forEach((field, index) => {
     const points = [];
     samples.forEach((point, i) => {
-      if (i && point.x - samples[i - 1].x > .3) points.push({x: point.x - .001, y: null});
-      points.push({x: point.x, y: point[field]});
+      if (i && point.x - samples[i - 1].x > .3) points.push({x: point.x - elapsed - .001, y: null});
+      points.push({x: point.x - elapsed, y: point[field]});
     });
     probePressureChart.data.datasets[index].data = points;
     const peak = Math.max(0, ...points.map(p => p.y || 0), (index ? probe.current_peak_ma : probe.contact_peak_percent) || 0);
     probePressureChart.options.scales[index ? 'current' : 'y'].max = contactScale(contactAxes[field], peak, index ? 50 : 10);
   });
   window.operatorADCOverlay?.(probePressureChart, 'probe', 2);
+  probePressureChart.$scrollPixels = 0;
+  probePressureChart.$renderedAt = now;
   probePressureChart.update('none');
 }
 
@@ -1170,7 +1234,21 @@ function radarGeometry(width, height, minimum, maximum) {
     cy: (height - radius * (bottom + top)) / 2};
 }
 
-function drawRadar() {
+function displayDetectorAngle(now) {
+  // One telemetry interval of display delay allows interpolation without
+  // predicting motion. Raw plots, safety gates and commands use real samples.
+  const at = now - 50;
+  for (let i = detectorAngles.length - 1; i > 0; --i) {
+    const a = detectorAngles[i-1], b = detectorAngles[i];
+    if (a.at <= at && at <= b.at && b.at > a.at && b.at-a.at <= 250 &&
+        Number.isFinite(a.angle) && Number.isFinite(b.angle)) {
+      return a.angle + (b.angle-a.angle)*(at-a.at)/(b.at-a.at);
+    }
+    if (b.at < at) break;
+  }
+  return state.detector.fixture_angle_deg;
+}
+function drawRadar(now = performance.now()) {
   const canvas = $('radar-view');
   const context = resize(canvas);
   const width = canvas.clientWidth;
@@ -1206,7 +1284,7 @@ function drawRadar() {
     context.stroke();
   }
 
-  const angle = beamScreenAngle(state.detector.fixture_angle_deg);
+  const angle = beamScreenAngle(displayDetectorAngle(now));
   context.strokeStyle = '#4de0a8';
   context.lineWidth = 2;
   drawSegment(context, {x: cx, y: cy}, {x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius});
@@ -1241,11 +1319,11 @@ function readWheel(pad, mapping) {
     deadman: true};
 }
 
-function stopInput() {
+function stopInput(forCalibration = false) {
   stopLocalInput();
   if (state.drive.you_control_owner) {
     send({type: 'drive', linear_x: 0, angular_z: 0, deadman: false});
-    send({type: 'estop'});
+    send({type: forCalibration === true ? 'calibration_begin' : 'estop'});
   }
 }
 
@@ -1511,10 +1589,8 @@ function initializeCameraSettings() {
     $(slot + '-camera-retry').onclick = () => startCamera(slot, preferences.cameras[slot], true);
   }
   new ResizeObserver(applyCameraRotations).observe($('camera-panel'));
-  let lastFrame = 0;
-  function previewLoop(now) {
-    if (!document.hidden && now - lastFrame >= 100) {
-      lastFrame = now;
+  function previewLoop() {
+    if (!document.hidden) {
       renderCameraSettings();
     }
     requestAnimationFrame(previewLoop);
@@ -1605,8 +1681,9 @@ function recordDetectorAngle(now) {
   while (detectorAngles.length && now - detectorAngles[0].at > 30000) detectorAngles.shift();
 }
 
-function drawDetectorHistory(now = performance.now()) {
-  if (now - detectorChartAt < 200) return;
+function drawDetectorHistory(now = performance.now(), animate = false) {
+  if (!$('detector-history').getClientRects().length) return;
+  if (animate && detectorChart && scrollTimeChart(detectorChart, now)) return;
   detectorChartAt = now;
   const sensor = state.detector.sensor || {};
   const elapsed = Math.max(0, (now - detectorHistoryAt) / 1000);
@@ -1624,7 +1701,7 @@ function drawDetectorHistory(now = performance.now()) {
       ]},
       options: {responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
         elements: {point: {radius: 0, hitRadius: 6}, line: {spanGaps: .25}},
-        plugins: {legend: {labels: {color: '#a4b5bb', boxWidth: 10, font: {size: 9}}}},
+        plugins: {decimation: {enabled: true, algorithm: 'min-max'}, legend: {labels: {color: '#a4b5bb', boxWidth: 10, font: {size: 9}}}},
         scales: {
           x: {type: 'linear', min: -30, max: 0, ticks: {color: '#a4b5bb', count: 3, maxRotation: 0,
             callback: v => v === 0 ? 'now' : `${v}s`}, grid: {color: '#2b3d46'}},
@@ -1641,14 +1718,18 @@ function drawDetectorHistory(now = performance.now()) {
     detectorChart.data.datasets[index].data = Number.isFinite(value) ? [{x: -30, y: value}, {x: 0, y: value}] : [];
   }
   window.operatorADCOverlay?.(detectorChart, 'detector', 4);
+  detectorChart.$scrollPixels = 0;
+  detectorChart.$renderedAt = now;
   detectorChart.update('none');
 }
 
-function drawMetalHistory() {
+function drawMetalHistory(animate = false) {
+  if (animate === true && metalChart && scrollTimeChart(metalChart, performance.now())) return;
   const canvas = $('metal-history');
   if (!canvas.parentElement.clientWidth || !canvas.parentElement.clientHeight) return;
   const seconds = Number($('metal-time-range').value) || 30;
-  const samples = (state.detector.sensor?.history || []).filter(sample => sample.age_s <= seconds);
+  const elapsed = animate === true ? Math.max(0, (performance.now()-detectorHistoryAt)/1000) : 0;
+  const samples = (state.detector.sensor?.history || []).filter(sample => sample.age_s + elapsed <= seconds);
   const values = samples.map(sample => sample.adc);
   const baseline = state.detector.sensor?.baseline_adc;
   const trigger = baseline + (state.detector.sensor?.full_response_adc - baseline) * state.detector.threshold_ratio;
@@ -1684,7 +1765,7 @@ function drawMetalHistory() {
       },
     });
   }
-  metalChart.data.datasets[0].data = samples.map(sample => ({x: -sample.age_s, y: sample.adc}));
+  metalChart.data.datasets[0].data = samples.map(sample => ({x: -sample.age_s - elapsed, y: sample.adc}));
   metalChart.data.datasets[1].data = Number.isFinite(baseline) && baseline >= low && baseline <= high
     ? [{x: -seconds, y: baseline}, {x: 0, y: baseline}] : [];
   metalChart.data.datasets[2].data = Number.isFinite(trigger)
@@ -1693,6 +1774,8 @@ function drawMetalHistory() {
   metalChart.options.scales.y.min = low;
   metalChart.options.scales.y.max = high;
   metalChart.resize();
+  metalChart.$scrollPixels = 0;
+  metalChart.$renderedAt = performance.now();
   metalChart.update('none');
   canvas.setAttribute('aria-label', `Raw metal detector amplitude over the last ${seconds} seconds`);
   $('metal-range').textContent = values.length
@@ -1787,7 +1870,7 @@ function initializeInputs() {
     selectedPadIndex = pad?.index ?? null; selectedPadId = pad?.id ?? null;
   };
   $('keyboard-test').onblur = stopLocalInput;
-  $('settings-dialog').addEventListener('close', stopInput);
+  $('settings-dialog').addEventListener('close', stopLocalInput);
   window.addEventListener('blur', stopInput);
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopInput(); });
   initializeCameraSettings();
@@ -1808,15 +1891,13 @@ function initializeInputs() {
 }
 
 let deviceSignature = '';
-let lastPreview = 0;
 let lastInputHint = 0;
 function renderInputs(pads, target) {
   if (performance.now() - lastInputHint > 100) {
     updateInputHint();
     lastInputHint = performance.now();
   }
-  if (!$('settings-dialog').open || performance.now() - lastPreview < 50) return;
-  lastPreview = performance.now();
+  if (!$('settings-dialog').open || $('settings-input').hidden) return;
   const keyboard = preferences.input === 'keyboard';
   $('device-settings').classList.toggle('hidden', keyboard);
   $('wheel-settings').classList.toggle('hidden', preferences.input !== 'wheel');
@@ -1839,15 +1920,26 @@ function renderInputs(pads, target) {
   $('mapped-input').textContent = `Forward / reverse: ${preview.linear.toFixed(3)} m/s\nSteering: ${preview.angular.toFixed(3)} rad/s\nDeadman: ${preview.deadman ? 'HELD' : 'released'}\nDrive output: stopped in Settings`;
   const axes = keyboard ? [] : gamepad?.axes ?? [];
   const buttons = keyboard ? [] : gamepad?.buttons ?? [];
-  $('raw-axes').replaceChildren(...axes.map((value, index) => {
-    const label = document.createElement('label'); label.textContent = `Axis ${index}  ${value.toFixed(3)}`;
-    const meter = document.createElement('meter'); meter.min = -1; meter.max = 1; meter.value = value;
-    label.append(meter); return label;
-  }));
-  $('raw-buttons').replaceChildren(...buttons.map((button, index) => {
-    const item = document.createElement('span'); item.className = button.pressed ? 'pressed' : '';
-    item.textContent = `B${index} ${button.value.toFixed(2)}`; return item;
-  }));
+  const axisRows = $('raw-axes'), buttonRows = $('raw-buttons');
+  if (axisRows.children.length !== axes.length) {
+    axisRows.replaceChildren(...axes.map(() => {
+      const label=document.createElement('label'), text=document.createTextNode('');
+      const meter=document.createElement('meter'); meter.min=-1; meter.max=1;
+      label.append(text,meter); return label;
+    }));
+  }
+  axes.forEach((value,index) => {
+    const row=axisRows.children[index], text=`Axis ${index}  ${value.toFixed(3)}`;
+    if (row.firstChild.nodeValue !== text) row.firstChild.nodeValue=text;
+    row.lastChild.value=value;
+  });
+  if (buttonRows.children.length !== buttons.length)
+    buttonRows.replaceChildren(...buttons.map(() => document.createElement('span')));
+  buttons.forEach((button,index) => {
+    const item=buttonRows.children[index], text=`B${index} ${button.value.toFixed(2)}`;
+    item.classList.toggle('pressed',button.pressed);
+    if (item.textContent !== text) item.textContent=text;
+  });
 }
 
 initializeInputs();
@@ -1856,19 +1948,20 @@ updateCameraVisibility();
 setConnection(false, 'Connecting to operator stack');
 connect();
 inputLoop();
-let lastCanvasFrame = 0;
-let lastInstrumentFrame = 0;
+// Render at the display refresh rate; telemetry and motion command cadence
+// remain independent. Never invent measurements to fill display frames.
 function drawDashboard(now) {
-  if (!document.hidden && now - lastCanvasFrame >= 1000 / 30) {
-    lastCanvasFrame = now;
-    drawForwardView();
-    drawRadar();
-    if (now - lastInstrumentFrame >= 100) {
-      lastInstrumentFrame = now;
-      drawMap();
-      drawPressureHistory();
-      drawDetectorHistory(now);
-    }
+  if (!document.hidden) {
+    const motion = displayMotion(now);
+    drawForwardView(motion.robot);
+    drawRadar(now);
+    drawMap(motion.robot);
+    drawProbeMotion(motion.depth);
+    drawPressureHistory(now, true);
+    drawDetectorHistory(now, true);
+    window.operatorADCFrame?.();
+    servoSettings.forEach(panel => panel.draw());
+    if ($('settings-dialog').open && !$('settings-detector').hidden) drawMetalHistory(true);
   }
   requestAnimationFrame(drawDashboard);
 }

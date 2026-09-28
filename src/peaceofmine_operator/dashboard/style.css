@@ -645,10 +645,11 @@ input[type=range] {
   left: 50%;
   top: .3rem;
   width: .32rem;
-  height: 0;
+  height: 2.4rem;
   max-height: 2.4rem;
   background: #c9d6ce;
-  transition: height .15s;
+  transform: scaleY(0);
+  transform-origin: top;
 }
 
 .probe-numbers {

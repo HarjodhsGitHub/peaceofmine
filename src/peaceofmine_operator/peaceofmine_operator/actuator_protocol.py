@@ -43,6 +43,7 @@ def status_dict(message):
     calibration = dict(minimum=message.minimum,center=message.center,maximum=message.maximum) if message.calibrated else None
     return dict(connected=message.connected,reason=message.reason,sweeping=message.sweeping,
         calibration=calibration,arm_calibration=calibration,
+        **({'motion_speed_limit': message.motion_speed_limit} if message.motion_speed_limit else {}),
         probe=dict(ready=message.probe_ready,homed=message.homed,active=message.probe_active,
             holding=message.probe_holding,depth_mm=message.depth_mm,target_mm=message.target_mm,
             max_depth_mm=message.max_depth_mm,reason=message.reason))

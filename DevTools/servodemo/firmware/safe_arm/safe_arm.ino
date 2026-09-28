@@ -20,6 +20,15 @@ struct ServoIO {
         if (!readPacket(id, address, size) || ax_rx_buffer[4] != 0) return -1;
         return uint32_t(ax_rx_buffer[5]) | (size == 2 ? uint32_t(ax_rx_buffer[6]) << 8 : 0);
     }
+    bool readMotion(uint8_t id, int &position, int &velocity, int &torque, int &limit) {
+        // One transaction replaces four separate reads in the 100 Hz loop.
+        if (!readPacket(id, 24, 18) || ax_rx_buffer[4] != 0) return false;
+        torque = ax_rx_buffer[5];
+        limit = uint16_t(ax_rx_buffer[15]) | uint16_t(ax_rx_buffer[16]) << 8;
+        position = uint16_t(ax_rx_buffer[17]) | uint16_t(ax_rx_buffer[18]) << 8;
+        velocity = uint16_t(ax_rx_buffer[19]) | uint16_t(ax_rx_buffer[20]) << 8;
+        return true;
+    }
     void write(uint8_t id, uint8_t address, uint16_t value, uint8_t size) {
         delayMicroseconds(1000);
         if (id == 254) {
@@ -72,6 +81,7 @@ void dispatch(uint32_t now) {
             switch (address) {
             case 0: value = 44; break;
             case 2: case 80: value = 2; break;
+            case 79: value = 1; break; // Stopped PID writes and bounded manual tests.
             case 81: value = arm.selected; break;
             case 96: value = arm.fault ? 3 : arm.sweeping ? 2 : arm.permitted ? 1 : 0; break;
             case 98: value = arm.fault; break;
