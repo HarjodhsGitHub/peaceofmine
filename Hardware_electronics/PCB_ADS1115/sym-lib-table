@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 0)
+  (lib (name "ProPrj_SKA-easyedapro")(type "KiCad")(uri "${KIPRJMOD}/ProPrj_SKA-easyedapro.kicad_sym")(options "")(descr ""))
+)
