@@ -1,0 +1,46 @@
+{
+  "config_sha256": "8f6d79011762d1b5ef9a09dfbc38ec30c6200f5dadb3e0124714f32cac3a3f14",
+  "limits": [
+    511,
+    2555
+  ],
+  "trials": [
+    {
+      "speed": 29,
+      "reversals": 6,
+      "duration": 23.462498008000694,
+      "peak_current": 0.729,
+      "position_range": [
+        1074,
+        1959
+      ]
+    },
+    {
+      "speed": 58,
+      "reversals": 6,
+      "duration": 16.28838691099918,
+      "peak_current": 0.6255,
+      "position_range": [
+        1072,
+        1958
+      ]
+    },
+    {
+      "speed": 116,
+      "reversals": 6,
+      "duration": 15.23516491600094,
+      "peak_current": 0.5535,
+      "position_range": [
+        1062,
+        1960
+      ]
+    }
+  ],
+  "complete": true,
+  "restoration": "torque off; PID unchanged",
+  "gains": [
+    64,
+    0,
+    0
+  ]
+}

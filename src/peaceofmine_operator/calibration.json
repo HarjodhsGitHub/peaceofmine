@@ -2,7 +2,7 @@
   "arm": {
     "servo_id": 1,
     "minimum": 920,
-    "center": 1533,
+    "center": 1472,
     "maximum": 2224
   },
   "probe": {

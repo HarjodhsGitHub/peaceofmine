@@ -1,0 +1,16 @@
+{
+  "config_sha256": "8f6d79011762d1b5ef9a09dfbc38ec30c6200f5dadb3e0124714f32cac3a3f14",
+  "limits": [
+    511,
+    2555
+  ],
+  "trials": [],
+  "complete": false,
+  "restoration": "torque off; PID unchanged; motion registers restored",
+  "gains": [
+    48,
+    0,
+    16
+  ],
+  "error": "Health limit reached: {'trial': 'sweep-29', 'p': 48, 'i': 0, 'd': 16, 'target': 0, 'elapsed': 4.538703723001163, 'position': 2301, 'torque': 1, 'goal': 2475, 'speed_limit': 29, 'velocity': 10.944, 'load': 0.5434995112414467, 'voltage': 12.0, 'temperature': 39, 'current': 1.611}"
+}

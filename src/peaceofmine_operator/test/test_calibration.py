@@ -14,7 +14,7 @@ class CalibrationTest(unittest.TestCase):
         with patch.object(Path, 'cwd', side_effect=AssertionError('cwd used')):
             path = Path(calibration.default_path())
         self.assertTrue(path.is_absolute())
-        self.assertEqual(path.name, 'calibration.json')
+        self.assertEqual(path.name, 'operator_config.json')
         self.assertEqual(path.parent.name, 'peaceofmine_operator')
 
     def test_symlink_saves_source_and_preserves_other_sections(self):
@@ -35,13 +35,13 @@ class CalibrationTest(unittest.TestCase):
             path = str(Path(directory) / 'calibration.json')
             workers = [multiprocessing.get_context('spawn').Process(target=calibration.save_section,
                        args=(path, section, dict(value=index)))
-                       for index, section in enumerate(('arm', 'probe', 'metal_detector'))]
+                       for index, section in enumerate(('arm', 'probe', 'metal_detector', 'adc', 'cameras', 'arm_motion'))]
             for worker in workers:
                 worker.start()
             for worker in workers:
                 worker.join(5)
                 self.assertEqual(worker.exitcode, 0)
-            self.assertEqual(set(calibration.load(path)), {'arm', 'probe', 'metal_detector'})
+            self.assertEqual(set(calibration.load(path)), {'arm', 'probe', 'metal_detector', 'adc', 'cameras', 'arm_motion', 'schema_version', 'revision', 'section_revisions'})
 
     def test_invalid_json_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -50,3 +50,13 @@ class CalibrationTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 calibration.save_section(str(path), 'arm', {})
             self.assertEqual(path.read_text(), '{broken')
+
+    def test_old_calibration_migrates_on_first_shared_save(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old=Path(directory)/'calibration.json'
+            old.write_text(json.dumps({'arm':{'servo_id':1},'probe':{'servo_id':2}}))
+            new=Path(directory)/'operator_config.json'
+            self.assertEqual(calibration.load(str(new))['arm'],{'servo_id':1})
+            calibration.save_section(str(new),'adc',{'routes':[]})
+            self.assertEqual(set(calibration.load(str(new))),{'arm','probe','adc','schema_version','revision','section_revisions'})
+            self.assertEqual(set(json.loads(old.read_text())),{'arm','probe'})

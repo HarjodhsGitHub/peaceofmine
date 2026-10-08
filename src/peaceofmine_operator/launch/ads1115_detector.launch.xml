@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Requires ads1115_node.py publishing adc/samples in this namespace. -->
+  <arg name="calibration_file" default="$(find-pkg-share peaceofmine_operator)/operator_config.json"/>
+  <arg name="mux" default="7"/>
+  <node pkg="peaceofmine_operator" exec="ads1115_detector_node.py" name="adc_detector" output="screen">
+    <param name="config_file" value="$(var calibration_file)" type="str"/>
+    <param name="mux" value="$(var mux)" type="int"/>
+  </node>
+</launch>

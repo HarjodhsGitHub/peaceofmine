@@ -1,0 +1,20 @@
+{
+  "gains": [
+    48,
+    0,
+    16
+  ],
+  "complete": false,
+  "entering_gains": [
+    64,
+    0,
+    0
+  ],
+  "error": "Health limit reached: {'trial': 'factory-baseline-positioning', 'p': 32, 'i': 0, 'd': 0, 'target': 1286, 'elapsed': 0.3780423440002778, 'position': 2439, 'torque': 1, 'goal': 1286, 'speed_limit': 58, 'velocity': -21.888, 'load': 0.5102639296187683, 'voltage': 12.3, 'temperature': 38, 'current': -1.5434999999999999}",
+  "final_gains": [
+    64,
+    0,
+    0
+  ],
+  "torque": 0
+}

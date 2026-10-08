@@ -645,10 +645,11 @@ input[type=range] {
   left: 50%;
   top: .3rem;
   width: .32rem;
-  height: 0;
+  height: 2.4rem;
   max-height: 2.4rem;
   background: #c9d6ce;
-  transition: height .15s;
+  transform: scaleY(0);
+  transform-origin: top;
 }
 
 .probe-numbers {
@@ -1113,3 +1114,23 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .probe-load-chart { position: relative; height: 110px; min-width: 0; }
 
 .probe-contact-readings { display: grid; gap: .3rem; font-size: .75rem; }
+
+#settings-adc .fields {display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:16px}
+#settings-adc label {display:flex; flex-direction:column; gap:6px}
+#settings-adc small {display:block; color:#a9c3bb; font-size:12px}
+#settings-adc fieldset {margin:16px 0; padding:16px; border:1px solid #334750; border-radius:8px}
+#settings-adc .table-wrap {overflow-x:auto}
+#settings-adc table {width:100%; text-align:left; border-collapse:collapse}
+#settings-adc td, #settings-adc th {padding:8px}
+#settings-adc td input[type=number] {width:100px}
+.adc-actions {display:flex; align-items:end; flex-wrap:wrap; gap:10px; margin:14px 0}
+.adc-chart {height:260px; position:relative}
+#adc-error {color:#ff9b89}
+#settings-adc pre {white-space:pre-wrap}
+#settings-adc input[type=number] {min-width:0; padding:.65rem; border:1px solid #34504f; border-radius:.4rem; background:#07191e; color:#e8f1ed; font:inherit}
+#settings-adc input[type=checkbox] {width:auto; align-self:flex-start; accent-color:#72d6b4}
+#settings-adc .electrical, #settings-adc .formula {font-size:.8rem; color:#a9c3bb; margin-top:12px}
+#camera-capture-settings {display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin:1rem 0}
+#camera-capture-settings fieldset {border:1px solid #34504f;border-radius:.5rem;padding:1rem}
+#camera-capture-settings label {display:grid;grid-template-columns:90px minmax(0,1fr);gap:.5rem;align-items:center;margin:.5rem 0}
+#camera-capture-settings input {min-width:0;padding:.65rem;background:#07191e;color:#e8f1ed;border:1px solid #34504f;border-radius:.4rem}

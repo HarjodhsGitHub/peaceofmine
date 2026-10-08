@@ -5,7 +5,33 @@ Protocol 1.0 arm. This is a replacement sketch, not a modification to the
 archived upstream ROS gateway. It uses the vendored ArbotiX Arduino core and
 Bioloid `ax12` bus library. No additional wiring is needed.
 
-**Deployment status:** flashed on 2026-09-21 via FTDI adapter AI049UTL after
+**Current deployment (2026-09-28):** endpoint-goal controller with 100 Hz
+feedback and a bounded speed ramp, plus stopped-only PID calibration and
+optional firmware-enforced manual test bounds. Native firmware simulation
+passed, and all 10,756 flash bytes were read-back verified. The physical tuning
+script verified capability register 79 before testing. Current HEX SHA-256:
+`b168f64f255be8550e1a40d70f5b5cc4b6cc7fb9269406991195c98b033eabda`.
+
+The recent streamed-position profiles showed tracking lag and stick/slip in
+physical telemetry despite enabled torque and normal communication. Physical
+PID calibration records are saved by `DevTools/servodemo/tune_pid.py`; firmware
+does not choose gains automatically or write them to EEPROM.
+
+**Previous cosine deployment (2026-09-28):** all 10,002 bytes read-back verified.
+HEX SHA-256:
+`6f79e429cc6053af990c80e75c952884d40aa4a7ba65ed8dc3ea39632599ba7d`.
+
+**Previous deployment (2026-09-28):** 100 Hz quintic sweep trajectory, built
+and simulation-tested, flashed via FTDI with servo power disconnected. All
+9,824 bytes were read-back verified against the HEX image. Physical sweep
+smoothness and actual cycle timing remain unverified.
+
+Quintic HEX SHA-256:
+`a1348f77529f60b6a76d9d14622519a044d7239bdefed027a6e41fe3311fa734`.
+
+The historical deployment record below describes an older image.
+
+**Previous deployment:** flashed on 2026-09-21 via FTDI adapter AI049UTL after
 checking ATmega644P/PA signature `0x1e960a`. All 9,030 flash bytes were read-back
 verified. A read-only runtime check returned protocol 1, state 0 (stopped),
 fault 0. The Arduino sensor and PX4 devices were not exposed to the programming
@@ -42,22 +68,18 @@ and validate the emitted sync-write packet lengths and checksums.
 
 ## Motion and stopping
 
-- ROS sends the calibrated endpoints, cruise speed and acceleration once.
-  The controller runs the sweep locally at 50 Hz. Duplicate starts do not
-  restart it. Unchanged profiles are not resent by ROS; speed changes can be
-  applied without dropping torque or restarting the sweep.
-- The servo receives full endpoint goals, not tiny position increments.
-  Its speed limit uses a braking-distance ceiling and acceleration ramp.
-  The former extra smoothstep envelope was removed because it commanded
-  minimum-speed crawling before reaching the endpoint tolerance.
-- Within the configured endpoint tolerance (default about 2 degrees), the
-  controller holds the measured position. It waits for measured speed to stay
-  at or below approximately 2.052 degrees/s and position within two encoder
-  ticks of a fixed anchor for 200 ms before reversing, then ramps up again.
-  This tolerates low-speed telemetry jitter without allowing ongoing position
-  drift. This intentionally trades a small corner pause for gentler
-  reversals. It never writes speed zero during sweeping: zero means unlimited
-  speed on the MX-64, not stop.
+- ROS sends calibrated endpoints, peak speed and acceleration limits. The
+  controller reads combined position/speed/torque feedback at a 100 Hz target.
+  It sends one endpoint goal per leg, rather than streaming intermediate goals
+  through the servo's position controller.
+- A bounded speed ramp and remaining-distance braking ceiling limit commanded
+  speed and acceleration. Reversal needs position within tolerance and measured
+  speed at or below 2.052 degrees/s, with no fixed dwell. A 1.5 second settling
+  timeout and a conservative whole-leg travel deadline stop unsuccessful moves.
+  Slower live speed requests extend the travel deadline proportionally.
+- Speed zero (unlimited) is never used during sweeping. Servo acceleration
+  limiting and startup readback remain enabled. Physical tracking still needs
+  supervised validation; simulation does not model the real load or friction.
 - Only an explicit permission heartbeat renews the **350 ms communication
   watchdog**. Reads, repeated start commands, malformed packets and other
   writes do not. A heartbeat arriving at/after expiry is rejected. There is
@@ -146,6 +168,7 @@ bounded to 24 bytes. Errors are returned as Protocol 1.0 status packets.
 | --- | --- | --- | --- |
 | 0 | 1 | Read | Legacy discovery signature 44 |
 | 2, 80 | 1 | Read | Safe arm firmware/protocol version 2 |
+| 79 | 1 | Read | Calibration capability 1: stopped PID writes and manual test bounds |
 | 81 | 1 | Read/write | Selected servo ID 0..252; change only while stopped |
 | 82 | 1 | Write | 0 stop, 1 explicit new lease, 2 renew existing lease |
 | 83 | 1 | Write | 1: explicitly enable selected MX-64 multi-turn mode, stopped with torque off; sets limits 4095/4095 and divider 1 |
@@ -155,6 +178,7 @@ bounded to 24 bytes. Errors are returned as Protocol 1.0 status packets.
 | 90 | 1 | Write | Sweep acceleration 1..254, units 8.583 degrees/s squared |
 | 91 | 2 | Write | Endpoint tolerance, at most a quarter of the range |
 | 94 | 1 | Write | 0 stop, 1 start/idempotent repeat |
+| 95 | 1 | Write | Stopped-only manual bounds: 1 enables, 0 disables; selection clears |
 | 96 | 1 | Read | 0 stopped, 1 permitted, 2 sweeping, 3 fault |
 | 98 | 1 | Read | 0 none, 2 watchdog, 3 position/read, 4 torque, 5 legacy progress fault (no longer emitted), 6..9 startup checks (above), 10 settling timeout (1.5 s) |
 | 99 | 1 | Read | 0: no independent wired kill input |
@@ -195,3 +219,75 @@ Both actuator settings panels plot signed load using the bundled Chart.js
 library. Histories cover the last 60 seconds, stay separate by actuator, and
 clear on disconnection or servo-ID changes. Repeated status publications do
 not fabricate samples between telemetry reads.
+
+## Measured PID calibration
+
+`DevTools/servodemo/tune_pid.py` runs bounded bidirectional step tests using the
+current arm ID and position limits in `operator_config.json`. Running without
+`--run` prints the plan without opening hardware. Hardware mode requires fresh
+MAVROS state/RC telemetry, exclusive servo USB access, and this firmware's
+calibration capability (gateway register 79 = 1). Stop the operator servo driver
+before starting. The test itself never publishes vehicle motion commands.
+
+```sh
+python3 DevTools/servodemo/tune_pid.py
+python3 -m unittest discover -s DevTools/servodemo -p test_tune_pid.py -v
+# With normal MAVROS RC telemetry available and the mechanism clear:
+python3 DevTools/servodemo/tune_pid.py --run --keep-best
+```
+
+Each run writes `samples.csv` and `report.json` into its own results directory.
+The report records configuration hash, original gains, candidate scores and
+restoration status. Tests retain the 350 ms firmware watchdog and abort on RC
+loss, changed configuration, failed telemetry, excessive current/load/temperature,
+invalid voltage, position guard violation or failed progress. Targets have
+interior margins. Mechanical overshoot cannot be prevented solely by checking
+targets; measured position is also monitored in the host and firmware.
+
+The search compares P=40/48/64 with D=0/8, keeping I=0 initially. It tests I=1
+only for a stable residual error. A candidate must improve the score by 10%
+without excessive overshoot, settling noise or current, then pass two larger
+validation trials against a repeated baseline. This is a conservative local
+search, not proof of an optimal controller or performance at every speed/load.
+Without `--keep-best`, original gains are restored even after a successful run.
+An abort restores original gains if communication permits and leaves torque off.
+**Gains are volatile RAM values and are lost when servo power is cycled.**
+The operator does not automatically load arbitrary reports. An explicitly saved
+`arm_pid` configuration section can reapply validated gains on connection, with
+torque off and register readback; it never enables motion.
+
+Firmware accepts one-byte P/I/D writes (addresses 28/27/26, values 0..254)
+only for the selected MX-64 while permission is revoked and torque reads off.
+Gateway register 95 enables test bounds from registers 84/86, only while stopped.
+It prevents out-of-bounds manual targets, checks position every 10 ms when the
+loop can run, rejects arming outside the bounds, and locks bounds during a lease.
+Selecting a servo again clears this optional mode; normal sweep bounds and
+watchdog checks are unchanged.
+
+### Sweep jitter audit
+
+Step accuracy is insufficient for choosing smooth sweep gains. Run
+`compare_sweep_pid.py --run --output <new-directory>` in the same ROS environment
+to compare the stopped-only gain candidates on recorded slow sweeps. It restores
+the entering PID values after the comparison. Candidate selection can be narrowed
+with repeated `--candidate P,I,D` arguments; `--reversals 6` extends validation.
+Communication, RC and health failures abort the suite. An endpoint/travel
+settling fault rejects that candidate and is retained in the report.
+
+`plot_sweep.py <samples.csv> <output.png>` produces position, raw velocity and
+encoder-derived velocity plots with cruise statistics. `plot_corners.py` overlays
+unsmoothed turnarounds. Endpoint commands are discontinuous by design and must
+not be interpreted as a continuous desired trajectory. These host captures are
+about 25–27 Hz, not proof of high-frequency mechanical smoothness. Encoder slopes
+use a short multi-sample window; the raw velocity trace remains visible alongside
+it. Speed-register quantization and sampling affect the raw ripple statistic.
+
+After inspecting the jitter graphs, `validate_pid.py --gains P,I,D --run
+--save --output <new-directory>` compares the chosen gains against factory gains
+on repeated larger steps and runs six wide-sweep reversals at each of three
+speeds. Repositioning uses small, slower steps. It saves `arm_pid` atomically
+only after validation, preserving the arm's existing position limits and other
+settings. Any failure restores the entering gains and stops. The driver reapplies
+this explicit section at connection with torque off and verifies all registers;
+a changed PID section forces a stopped reconnect. Simulation ignores the hardware
+PID profile. This validates the tested load and range, not all possible loads.

@@ -1,0 +1,56 @@
+{
+  "config_sha256": "8f6d79011762d1b5ef9a09dfbc38ec30c6200f5dadb3e0124714f32cac3a3f14",
+  "limits": [
+    511,
+    2555
+  ],
+  "trials": [
+    {
+      "score": 1116.9823509568616,
+      "iae": 421.1839744213794,
+      "tail_error": 34.15909090909091,
+      "tail_noise": 0.4979295977319692,
+      "overshoot": 0,
+      "peak_current": 1.0935,
+      "gains": [
+        32,
+        0,
+        0
+      ],
+      "name": "factory-baseline",
+      "radius": 228
+    },
+    {
+      "score": 693.5532011589858,
+      "iae": 362.70115212880955,
+      "tail_error": 16.18181818181818,
+      "tail_noise": 0.48104569292083466,
+      "overshoot": 0,
+      "peak_current": 0.855,
+      "gains": [
+        48,
+        0,
+        16
+      ],
+      "name": "candidate-1",
+      "radius": 228
+    },
+    {
+      "score": 689.23653854088,
+      "iae": 361.6902723573385,
+      "tail_error": 15.93181818181818,
+      "tail_noise": 0.38569460791993504,
+      "overshoot": 0,
+      "peak_current": 0.8414999999999999,
+      "gains": [
+        48,
+        0,
+        16
+      ],
+      "name": "candidate-2",
+      "radius": 228
+    }
+  ],
+  "complete": true,
+  "restoration": "torque off; candidate gains pending sweep validation"
+}

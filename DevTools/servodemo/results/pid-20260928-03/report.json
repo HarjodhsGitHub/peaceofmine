@@ -1,0 +1,174 @@
+{
+  "config_sha256": "8f6d79011762d1b5ef9a09dfbc38ec30c6200f5dadb3e0124714f32cac3a3f14",
+  "limits": [
+    511,
+    2555
+  ],
+  "trials": [
+    {
+      "score": 868.9442498438657,
+      "iae": 200.43887997109596,
+      "tail_error": 32.84090909090909,
+      "tail_noise": 0.4916660830178167,
+      "overshoot": 0,
+      "peak_current": 0.8729999999999999,
+      "gains": [
+        32,
+        0,
+        0
+      ],
+      "name": "baseline",
+      "radius": 114
+    },
+    {
+      "score": 688.233525246778,
+      "iae": 174.8304193465483,
+      "tail_error": 25.454545454545453,
+      "tail_noise": 0.28747978728803447,
+      "overshoot": 0,
+      "peak_current": 0.8055,
+      "gains": [
+        40,
+        0,
+        0
+      ],
+      "name": "p40-d0",
+      "radius": 114
+    },
+    {
+      "score": 619.0909844682449,
+      "iae": 164.04605524914405,
+      "tail_error": 22.227272727272727,
+      "tail_noise": 0.4916660830178167,
+      "overshoot": 0,
+      "peak_current": 0.6705,
+      "gains": [
+        48,
+        0,
+        0
+      ],
+      "name": "p48-d0",
+      "radius": 114
+    },
+    {
+      "score": 297.9156088286527,
+      "iae": 127.9156088286527,
+      "tail_error": 8.5,
+      "tail_noise": 0.0,
+      "overshoot": 0,
+      "peak_current": 0.7244999999999999,
+      "gains": [
+        64,
+        0,
+        0
+      ],
+      "name": "p64-d0",
+      "radius": 114
+    },
+    {
+      "score": 642.2807261468485,
+      "iae": 168.8776202466188,
+      "tail_error": 23.454545454545453,
+      "tail_noise": 0.28747978728803447,
+      "overshoot": 0,
+      "peak_current": 0.711,
+      "gains": [
+        48,
+        0,
+        8
+      ],
+      "name": "p48-d8",
+      "radius": 114
+    },
+    {
+      "score": 306.71637118778426,
+      "iae": 128.0443115624903,
+      "tail_error": 8.497835497835498,
+      "tail_noise": 0.29354352395090366,
+      "overshoot": 0,
+      "peak_current": 0.6255,
+      "gains": [
+        64,
+        0,
+        8
+      ],
+      "name": "p64-d8",
+      "radius": 114
+    },
+    {
+      "score": 304.8519114413508,
+      "iae": 128.34066069002984,
+      "tail_error": 8.568181818181818,
+      "tail_noise": 0.3431742925123068,
+      "overshoot": 0,
+      "peak_current": 0.711,
+      "gains": [
+        64,
+        1,
+        0
+      ],
+      "name": "integral-1",
+      "radius": 114
+    },
+    {
+      "score": 914.2936357638764,
+      "iae": 390.34048191992224,
+      "tail_error": 25.863636363636363,
+      "tail_noise": 0.4453617714151233,
+      "overshoot": 0,
+      "peak_current": 0.693,
+      "gains": [
+        32,
+        0,
+        0
+      ],
+      "name": "validation-baseline",
+      "radius": 228
+    },
+    {
+      "score": 546.2316272739959,
+      "iae": 336.0632517517506,
+      "tail_error": 10.15909090909091,
+      "tail_noise": 0.46577048936179993,
+      "overshoot": 0,
+      "peak_current": 0.6255,
+      "gains": [
+        64,
+        0,
+        0
+      ],
+      "name": "validation-candidate",
+      "radius": 228
+    },
+    {
+      "score": 553.1308281606352,
+      "iae": 343.13082816063525,
+      "tail_error": 10.5,
+      "tail_noise": 0.0,
+      "overshoot": 0,
+      "peak_current": 0.594,
+      "gains": [
+        64,
+        0,
+        0
+      ],
+      "name": "validation-repeat",
+      "radius": 228
+    }
+  ],
+  "complete": true,
+  "restoration": "gains and motion registers verified; torque off",
+  "original_gains": [
+    32,
+    0,
+    0
+  ],
+  "speed": 58,
+  "acceleration": 4,
+  "selected_gains": [
+    64,
+    0,
+    0
+  ],
+  "keep_best": true
+}

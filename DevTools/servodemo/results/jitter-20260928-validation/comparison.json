@@ -1,0 +1,83 @@
+[
+  {
+    "gains": [
+      64,
+      0,
+      16
+    ],
+    "by_direction": {
+      "-1": {
+        "samples": 473,
+        "mean": 19.736219873150105,
+        "sd": 4.27619973376739,
+        "cv_percent": 21.66676172667134
+      },
+      "1": {
+        "samples": 473,
+        "mean": 19.979162790697675,
+        "sd": 5.4629797328232,
+        "cv_percent": 27.343386657657003
+      }
+    },
+    "samples": 946,
+    "raw_speed_sd": 4.907114343221615,
+    "raw_speed_mean": 19.857691331923892,
+    "encoder_speed_sd": 1.4611780251338746,
+    "stopped_fraction": 0.005285412262156448,
+    "wrong_direction_fraction": 0.0
+  },
+  {
+    "gains": [
+      64,
+      0,
+      32
+    ],
+    "by_direction": {
+      "-1": {
+        "samples": 473,
+        "mean": 19.707298097251588,
+        "sd": 2.473256619618528,
+        "cv_percent": 12.549952852052572
+      },
+      "1": {
+        "samples": 480,
+        "mean": 19.836000000000002,
+        "sd": 7.577699281444205,
+        "cv_percent": 38.20175076348157
+      }
+    },
+    "samples": 953,
+    "raw_speed_sd": 5.653479003359567,
+    "raw_speed_mean": 19.77212172088143,
+    "encoder_speed_sd": 0.9887390649112369,
+    "stopped_fraction": 0.01049317943336831,
+    "wrong_direction_fraction": 0.0
+  },
+  {
+    "gains": [
+      48,
+      0,
+      16
+    ],
+    "by_direction": {
+      "-1": {
+        "samples": 478,
+        "mean": 19.735832635983265,
+        "sd": 3.3584512427951023,
+        "cv_percent": 17.0170233237174
+      },
+      "1": {
+        "samples": 474,
+        "mean": 19.781164556962025,
+        "sd": 5.709195146961222,
+        "cv_percent": 28.86177469744499
+      }
+    },
+    "samples": 952,
+    "raw_speed_sd": 4.6789726235670095,
+    "raw_speed_mean": 19.758403361344538,
+    "encoder_speed_sd": 1.2030612855723708,
+    "stopped_fraction": 0.0010504201680672268,
+    "wrong_direction_fraction": 0.0
+  }
+]

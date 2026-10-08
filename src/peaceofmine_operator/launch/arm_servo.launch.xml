@@ -1,9 +1,14 @@
 <?xml version="1.0"?>
 <launch>
+  <arg name="probe_velocity_topic" default=""/>
+  <arg name="fixture_angle_offset_deg" default="0.0"/>
+  <arg name="simulation" default="false"/>
+  <arg name="odometry_topic" default="odometry/local"/>
   <arg name="serial_port" default="auto"/>
   <arg name="servo_id" default="-1"/>
-  <arg name="probe_servo_id" default="2"/>
-  <arg name="calibration_file" default="$(find-pkg-share peaceofmine_operator)/calibration.json"/>
+  <arg name="probe_servo_id" default="-1"/>
+  <arg name="calibration_file" default="$(find-pkg-share peaceofmine_operator)/operator_config.json"/>
+  <arg name="config_file" default="$(var calibration_file)"/>
   <arg name="probe_minimum" default="-1"/>
   <arg name="probe_center" default="-1"/>
   <arg name="probe_maximum" default="-1"/>
@@ -11,21 +16,38 @@
   <arg name="center" default="-1"/>
   <arg name="maximum" default="-1"/>
   <arg name="speed" default="20"/>
+  <arg name="probe_speed" default="73"/>
   <arg name="sweep_endpoint_tolerance_deg" default="2.0"/>
   <arg name="sweep_acceleration_deg_s2" default="40.0"/>
-  <node pkg="peaceofmine_operator" exec="arm_servo_node.py" name="arm_servo" output="screen">
-    <param name="serial_port" value="$(var serial_port)" type="str"/>
+  <!-- Public launch name retained; each behavior has its own ROS process. -->
+  <node pkg="peaceofmine_operator" exec="servo_driver_node.py" name="servo_driver" output="screen">
+    <param name="simulation" value="$(var simulation)"/>
+    <param name="config_file" value="$(var config_file)" type="str"/>
+    <param name="speed" value="$(var speed)"/>
+    <param name="probe_speed" value="$(var probe_speed)"/>
     <param name="servo_id" value="$(var servo_id)"/>
     <param name="probe_servo_id" value="$(var probe_servo_id)"/>
-    <param name="calibration_file" value="$(var calibration_file)" type="str"/>
-    <param name="probe_minimum" value="$(var probe_minimum)"/>
-    <param name="probe_center" value="$(var probe_center)"/>
-    <param name="probe_maximum" value="$(var probe_maximum)"/>
+    <param name="sweep_acceleration_deg_s2" value="$(var sweep_acceleration_deg_s2)" type="float"/>
+    <param name="serial_port" value="$(var serial_port)" type="str"/>
+  </node>
+  <node pkg="peaceofmine_operator" exec="arm_controller_node.py" name="arm_controller" output="screen">
+    <param name="config_file" value="$(var config_file)" type="str"/>
+    <param name="simulation" value="$(var simulation)"/>
+    <param name="servo_id" value="$(var servo_id)"/>
+    <param name="speed" value="$(var speed)"/>
+    <param name="fixture_angle_offset_deg" value="$(var fixture_angle_offset_deg)" type="float"/>
     <param name="minimum" value="$(var minimum)"/>
     <param name="center" value="$(var center)"/>
     <param name="maximum" value="$(var maximum)"/>
-    <param name="speed" value="$(var speed)"/>
     <param name="sweep_endpoint_tolerance_deg" value="$(var sweep_endpoint_tolerance_deg)" type="float"/>
     <param name="sweep_acceleration_deg_s2" value="$(var sweep_acceleration_deg_s2)" type="float"/>
+  </node>
+  <node pkg="peaceofmine_operator" exec="probe_controller_node.py" name="probe_controller" output="screen">
+    <param name="velocity_topic" value="$(var probe_velocity_topic)" type="str"/>
+    <param name="odometry_topic" value="$(var odometry_topic)"/>
+    <param name="config_file" value="$(var config_file)" type="str"/>
+    <param name="simulation" value="$(var simulation)"/>
+    <param name="servo_id" value="$(var probe_servo_id)"/>
+    <param name="speed" value="$(var probe_speed)"/>
   </node>
 </launch>

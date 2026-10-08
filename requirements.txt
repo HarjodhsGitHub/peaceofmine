@@ -29,3 +29,10 @@ aiodns>=3.2,<5
 
 # ArbotiX / MX-64 arm transport (Protocol 1.0)
 dynamixel-sdk==3.7.31
+
+# ADS1115 metal detector on the Pi I2C bus
+smbus2>=0.4,<0.6
+
+# GNSS NMEA parsing and optional NTRIP environment file
+pynmea2>=1.19,<2
+python-dotenv>=1.0,<2

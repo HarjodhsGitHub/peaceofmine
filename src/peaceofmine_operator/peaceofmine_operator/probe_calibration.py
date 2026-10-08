@@ -12,12 +12,12 @@ def validate(value):
     return dict(servo_id=ident, max_extension_mm=float(distance), travel_ticks=ticks)
 
 
-def load(path):
-    from . import calibration
-    value = calibration.load(path).get('probe')
+def load(path, simulation=False):
+    from . import configuration as calibration
+    value = calibration.actuator_settings(path, simulation).get('probe')
     return validate(value) if value is not None else None
 
 
 def save(path, value):
-    from . import calibration
+    from . import configuration as calibration
     return calibration.save_section(path, 'probe', validate(value))

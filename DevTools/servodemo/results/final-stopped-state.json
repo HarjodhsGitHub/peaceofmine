@@ -1,0 +1,11 @@
+{
+  "gains": [
+    32,
+    0,
+    0
+  ],
+  "arm_torque": 0,
+  "probe_torque": 0,
+  "position": 2304,
+  "firmware_capability": 1
+}

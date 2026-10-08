@@ -1,0 +1,114 @@
+{
+  "config_sha256": "8f6d79011762d1b5ef9a09dfbc38ec30c6200f5dadb3e0124714f32cac3a3f14",
+  "limits": [
+    511,
+    2555
+  ],
+  "trials": [
+    {
+      "score": 700.5701076373243,
+      "iae": 192.96650670034342,
+      "tail_error": 25.090909090909093,
+      "tail_noise": 0.38569460791993504,
+      "overshoot": 0,
+      "peak_current": 1.323,
+      "gains": [
+        32,
+        0,
+        0
+      ],
+      "name": "baseline",
+      "radius": 114
+    },
+    {
+      "score": 897.4905464240146,
+      "iae": 203.68580726540586,
+      "tail_error": 34.34090909090909,
+      "tail_noise": 0.46577048936179993,
+      "overshoot": 0,
+      "peak_current": 1.0799999999999998,
+      "gains": [
+        40,
+        0,
+        0
+      ],
+      "name": "p40-d0",
+      "radius": 114
+    },
+    {
+      "score": 490.2781080516081,
+      "iae": 153.57064060703487,
+      "tail_error": 16.204545454545453,
+      "tail_noise": 0.4979295977319692,
+      "overshoot": 0,
+      "peak_current": 1.1475,
+      "gains": [
+        48,
+        0,
+        0
+      ],
+      "name": "p48-d0",
+      "radius": 114
+    },
+    {
+      "score": 556.3634403677602,
+      "iae": 161.31515814994054,
+      "tail_error": 14.768398268398268,
+      "tail_noise": 6.199992685241827,
+      "overshoot": 0,
+      "peak_current": 1.0034999999999998,
+      "gains": [
+        64,
+        0,
+        0
+      ],
+      "name": "p64-d0",
+      "radius": 114
+    },
+    {
+      "score": 656.7786492793364,
+      "iae": 171.68349801849126,
+      "tail_error": 23.695454545454545,
+      "tail_noise": 0.458257569495584,
+      "overshoot": 0,
+      "peak_current": 0.837,
+      "gains": [
+        48,
+        0,
+        8
+      ],
+      "name": "p48-d8",
+      "radius": 114
+    },
+    {
+      "score": 487.70418765437034,
+      "iae": 153.58175298489914,
+      "tail_error": 10.40909090909091,
+      "tail_noise": 7.898111501444899,
+      "overshoot": 0,
+      "peak_current": 0.8234999999999999,
+      "gains": [
+        64,
+        0,
+        8
+      ],
+      "name": "p64-d8",
+      "radius": 114
+    }
+  ],
+  "complete": true,
+  "restoration": "gains and motion registers verified; torque off",
+  "original_gains": [
+    32,
+    0,
+    0
+  ],
+  "speed": 58,
+  "acceleration": 4,
+  "selected_gains": [
+    32,
+    0,
+    0
+  ],
+  "keep_best": true
+}

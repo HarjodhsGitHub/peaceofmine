@@ -7,7 +7,7 @@ const CAMERA_RANGE_M = 26;
 
 const DRIVE_KEEPALIVE_MS = 50;
 const DRIVE_MIN_INTERVAL_MS = 8;
-const PAD_UI_PERIOD_MS = 50;
+const PAD_UI_PERIOD_MS = 0; // Input graphics follow requestAnimationFrame.
 const LATENCY_PERIOD_MS = 1000;
 const LATENCY_HISTORY_LENGTH = 30;
 const TELEMETRY_TIMEOUT_MS = 3000;
@@ -55,6 +55,38 @@ const state = {
   safety: {allowed: false, mode: 'unknown', reason: 'Waiting for PX4 safety status'},
   arm_servo: {},
 };
+
+// Display samples are separate from authoritative telemetry and controls.
+const motionFrames = [];
+function recordMotionFrame(now) {
+  if (motionFrames.length && now-motionFrames.at(-1).at > 250) motionFrames.length = 0;
+  motionFrames.push({at: now, robot: {...state.robot}, depth: state.probe.depth_mm});
+  while (motionFrames.length > 8) motionFrames.shift();
+}
+function displayMotion(now) {
+  const fallback = {robot: state.robot, depth: state.probe.depth_mm};
+  if (!state.connected || motionFrames.length < 2) return fallback;
+  const at = now-50;
+  for (let i=motionFrames.length-1; i>0; --i) {
+    const a=motionFrames[i-1], b=motionFrames[i];
+    if (a.at <= at && at <= b.at && b.at > a.at && b.at-a.at <= 250) {
+      const f=(at-a.at)/(b.at-a.at);
+      const mix=(x,y)=>Number.isFinite(x)&&Number.isFinite(y)?x+(y-x)*f:y;
+      const robot={...b.robot};
+      for (const key of ['x','y','speed_mps']) robot[key]=mix(a.robot[key],b.robot[key]);
+      // Interpolate headings through the short arc across +/- pi.
+      const delta=Math.atan2(Math.sin(b.robot.yaw-a.robot.yaw),Math.cos(b.robot.yaw-a.robot.yaw));
+      robot.yaw=a.robot.yaw+delta*f;
+      return {robot, depth: mix(a.depth,b.depth)};
+    }
+    if (b.at < at) break;
+  }
+  return fallback; // Never extrapolate through a telemetry gap.
+}
+function drawProbeMotion(depth) {
+  const ratio=Number.isFinite(depth)?Math.max(0,Math.min(1,depth/(state.probe.max_depth_mm||1))):0;
+  $('probe-arm').style.transform=`scaleY(${ratio})`;
+}
 
 const $ = id => document.getElementById(id);
 const forward = $('forward-view');
@@ -169,6 +201,7 @@ function sendDrive(linear, angular, deadman) {
 
 function setConnection(connected, label, detail = '') {
   state.connected = connected;
+  if (!connected) motionFrames.length = 0;
   $('connection').textContent = label;
   $('connection-dot').style.background = connected ? '#37b98e' : '#d36458';
   $('connection-overlay').classList.toggle('hidden', connected);
@@ -262,6 +295,8 @@ function connect() {
       recordLatency(message.probe_id);
       return;
     }
+    if (message.type === 'settings_result') { window.operatorSettingsResult?.(message); return; }
+    if (message.type === 'adc_result') { window.operatorADCResult?.(message); return; }
     if (message.type === 'error') {
       showNotice(message.message);
       if (metalPending) { metalPending = null; metalFeedback = message.message; }
@@ -273,7 +308,9 @@ function connect() {
     if (!state.connected) setConnection(true, 'Raspberry Pi connected');
     Object.assign(state, message);
     state.connected = true;
+    window.operatorSettingsState?.(message.settings);
     recordDetectorAngle(lastTelemetryAt);
+    recordMotionFrame(lastTelemetryAt);
     updateNetworkCameraOptions();
     updateCameraLatency();
     updateHud();
@@ -290,6 +327,7 @@ setInterval(() => {
 }, 500);
 
 $('retry-connection').onclick = connect;
+$('arm-motion').onclick = () => send({type: state.drive.armed ? 'disarm' : 'arm'});
 
 // The camera notice is rewritten on every telemetry tick, so rejected
 // commands need their own element to stay readable.
@@ -339,7 +377,7 @@ function updatePower() {
       rows.append(row);
     });
   } else rows.textContent = esc.stale ? 'ESC readings are stale' : 'No ESC measurements received';
-  const arm = state.arm_servo || {};
+  const arm = state.actuators?.arm || state.arm_servo || {};
   text('power-arm', state.connected && arm.connected ? `ID ${arm.servo_id} · ${fmt(arm.voltage, 'V')} · ${fmt(arm.current_a, 'A', 3)} · ${fmt(arm.temperature_c, '°C', 0)}` : 'No telemetry');
 }
 
@@ -357,7 +395,7 @@ function updateHud() {
 
   $('take-control').disabled = !state.connected || owner;
   const safe = state.safety?.allowed === true;
-  const servoSafe = state.safety?.servo_allowed === true;
+  const servoSafe = state.safety?.servo_allowed === true && drive.armed;
   $('rc-safety').textContent = ({ros: 'RC ROS MODE', override: 'RC OVERRIDE', kill: 'RC KILL', rc_lost: 'RC LOST', ros_disarmed: 'RC DISARMED', simulation: 'SIMULATION'})[state.safety?.mode] || 'RC UNKNOWN · LOCKED';
   if (servoSafe && !safe) $('rc-safety').textContent += ' · SERVOS READY';
   $('rc-safety').title = state.safety?.reason || 'Waiting for PX4 safety status';
@@ -386,10 +424,11 @@ function updateHud() {
   $('sweep-status').textContent = detector.sweep_enabled ? 'Sweeping'
     : !owner ? 'Take control to sweep'
     : !servoSafe ? state.safety?.reason || 'RC blocks servo movement'
-    : state.arm_servo?.reason || (state.safety?.simulated ? 'Ready' : 'Waiting for arm driver');
+    : state.actuators?.arm?.reason || state.arm_servo?.reason || (state.safety?.simulated ? 'Ready' : 'Waiting for arm controller');
   setRange($('sweep-speed'), detector.sweep_speed_min, detector.sweep_speed_max, 'any');
   if (!activeSliders.has('sweep-speed')) $('sweep-speed').value = detector.sweep_speed_deg_s;
   $('sweep-speed-value').textContent = `${Math.round(detector.sweep_speed_deg_s)}°/s`;
+  $('sweep-speed').title = `Configured maximum: ${detector.sweep_speed_max.toFixed(1)}°/s. Change in Settings → Servos. Actual speed also depends on acceleration and load.`;
 
   $('probe-depth').textContent = Number.isFinite(probe.depth_mm) ? `${Math.round(probe.depth_mm)} mm` : '—';
   $('probe-target').textContent = `${Math.round(probe.target_mm)} mm`;
@@ -405,11 +444,14 @@ function updateHud() {
   $('probe-zero-status').textContent = probe.contact_zeroed ? 'Contact reference set · graph shows changes from zero' : 'Absolute readings · hold clear of the ground before zeroing';
   setRange($('probe-slider'), 0, probe.max_depth_mm || 1, .1);
   if (!activeSliders.has('probe-slider')) $('probe-slider').value = probe.target_mm;
-  $('probe-arm').style.height = `${Math.max(0, Math.min(1, (probe.depth_mm || 0) / (probe.max_depth_mm || 1))) * 2.4}rem`;
+  if (!state.connected) drawProbeMotion(probe.depth_mm);
   $('probe-status').textContent = probe.ready === false ? (probe.reason || 'HOME REQUIRED') : probe.fault ? 'FAULT' : probe.holding ? 'HOLDING' : probe.depth_mm > 2 ? 'DEPLOYED' : 'STOWED';
   $('probe-status').className = `badge ${probe.fault ? 'active' : probe.depth_mm > 2 ? 'safe' : 'neutral'}`;
 
-  $('arm-state').textContent = state.safety?.mode === 'override' ? 'RC CONTROL' : !owner ? 'SPECTATOR' : safe ? (drive.publishing ? 'ROS CONTROL' : 'READY') : 'RC LOCKED';
+  window.operatorPayloadState?.(state);
+  $('arm-motion').disabled = !state.connected || !owner || state.safety?.servo_allowed !== true;
+  $('arm-motion').textContent = drive.armed ? 'Disarm' : 'Arm motion';
+  $('arm-state').textContent = !drive.armed ? 'DISARMED' : state.safety?.mode === 'override' ? 'RC CONTROL' : !owner ? 'SPECTATOR' : safe ? (drive.publishing ? 'ROS CONTROL' : 'READY') : 'RC LOCKED';
   $('arm-state').className = `badge ${owner && drive.armed ? 'active' : 'neutral'}`;
   $('camera-notice').textContent = state.safety?.mode === 'override' ? 'Remote control drives the vehicle.'
     : !owner ? 'Spectator mode' : safe ? 'RC permits ROS driving' : state.safety?.reason || 'Waiting for RC';
@@ -802,7 +844,7 @@ function inputLoop() {
   }
 
   renderInputs(pads, lastInput);
-  const canDrive = state.connected && state.safety?.allowed && state.drive.you_control_owner
+  const canDrive = state.connected && state.drive.armed && state.safety?.allowed && state.drive.you_control_owner
     && !$('settings-dialog').open && !document.hidden && document.hasFocus();
   if (!canDrive && !keyboardPreview) resetKeyboardRamp(now);
   // Opening Settings already sends a stop. Do not flood calibration with rejected drive commands.
@@ -856,7 +898,7 @@ function savePreferences() {
 }
 
 $('settings').onclick = () => {
-  stopInput();
+  stopInput(true);
   $('settings-dialog').showModal();
 };
 $('offline-settings').onclick = $('settings').onclick;
@@ -938,7 +980,7 @@ function rampKeyboard(target, now) {
 }
 
 window.addEventListener('gamepadconnected', () => {
-  $('camera-notice').textContent = 'Controller found. Arm only after the lane is clear.';
+  $('camera-notice').textContent = 'Controller found. Use the RC to arm when the lane is clear.';
 });
 
 /* --------------------------------------------------------------- Canvas --- */
@@ -958,10 +1000,10 @@ function resize(canvas) {
 
 // World to rover body frame: forward is along the rover's heading, side is to
 // its right, which is the direction screen x grows in project().
-function worldToCamera(x, y) {
-  const dx = x - state.robot.x;
-  const dy = y - state.robot.y;
-  const yaw = state.robot.yaw;
+function worldToCamera(x, y, pose = state.robot) {
+  const dx = x - pose.x;
+  const dy = y - pose.y;
+  const yaw = pose.yaw;
   return {
     forward: Math.cos(yaw) * dx + Math.sin(yaw) * dy,
     side: Math.sin(yaw) * dx - Math.cos(yaw) * dy,
@@ -986,13 +1028,13 @@ function drawSegment(context, from, to) {
   context.stroke();
 }
 
-function drawForwardView() {
+function drawForwardView(pose = state.robot) {
   if (forward.classList.contains('hidden')) return;
   const context = resize(forward);
   const width = forward.clientWidth;
   const height = forward.clientHeight;
   const horizon = height * 0.31;
-  const {x: roverX} = state.robot;
+  const {x: roverX} = pose;
 
   context.clearRect(0, 0, width, height);
   context.fillStyle = '#4f8995';
@@ -1004,8 +1046,8 @@ function drawForwardView() {
   context.strokeStyle = '#7b8e64';
   context.lineWidth = 1;
   for (let distance = 1; distance < CAMERA_RANGE_M; distance += 1) {
-    const left = project(worldToCamera(roverX + distance, 5), width, height);
-    const right = project(worldToCamera(roverX + distance, -5), width, height);
+    const left = project(worldToCamera(roverX + distance, 5, pose), width, height);
+    const right = project(worldToCamera(roverX + distance, -5, pose), width, height);
     drawSegment(context, left, right);
   }
 
@@ -1013,13 +1055,13 @@ function drawForwardView() {
   context.strokeStyle = '#e2d29a';
   context.lineWidth = 3;
   for (const laneY of [-LANE_HALF_WIDTH_M, LANE_HALF_WIDTH_M]) {
-    const start = project(worldToCamera(roverX + 0.4, laneY), width, height);
-    const end = project(worldToCamera(roverX + 28, laneY), width, height);
+    const start = project(worldToCamera(roverX + 0.4, laneY, pose), width, height);
+    const end = project(worldToCamera(roverX + 28, laneY, pose), width, height);
     drawSegment(context, start, end);
   }
 
   for (const detection of state.detections) {
-    const point = project(worldToCamera(detection.x, detection.y), width, height);
+    const point = project(worldToCamera(detection.x, detection.y, pose), width, height);
     if (!point) continue;
     context.strokeStyle = '#d75b4e';
     context.lineWidth = 2;
@@ -1043,7 +1085,7 @@ function drawForwardView() {
 
 }
 
-function drawMap() {
+function drawMap(pose = state.robot) {
   const context = resize(map);
   const width = map.clientWidth;
   const height = map.clientHeight;
@@ -1088,12 +1130,12 @@ function drawMap() {
     context.stroke();
   }
 
-  const rover = toScreen(state.robot.x, state.robot.y);
+  const rover = toScreen(pose.x, pose.y);
   context.save();
   context.translate(rover.x, rover.y);
   // Screen y is flipped relative to world y, so a counter-clockwise world yaw
   // is a clockwise canvas rotation.
-  context.rotate(-state.robot.yaw);
+  context.rotate(-pose.yaw);
   context.fillStyle = '#dff3df';
   context.beginPath();
   context.moveTo(10, 0);
@@ -1116,7 +1158,38 @@ function contactScale(axis, peak, minimum) {
   }
   return axis.max;
 }
-function drawPressureHistory() {
+// Reuse Chart.js layout between telemetry updates. Only the plotted traces
+// scroll every display frame; axes/legends stay fixed. Clip before translating
+// so old samples never paint over labels. Stagger the two dashboard layouts.
+Chart.register({id: 'operatorScroll', beforeDatasetsDraw(chart) {
+  const shift = chart.$scrollPixels || 0;
+  if (!shift) return;
+  const {left, top, right, bottom} = chart.chartArea;
+  chart.ctx.save();
+  chart.ctx.beginPath(); chart.ctx.rect(left, top, right-left, bottom-top); chart.ctx.clip();
+  chart.ctx.translate(-shift, 0);
+}, afterDatasetsDraw(chart) { if (chart.$scrollPixels) chart.ctx.restore(); }});
+function scrollTimeChart(chart, now, phase = 0) {
+  const bucket = Math.floor((now + phase) / 50);
+  if (chart.$frameBucket !== bucket) {
+    chart.$frameBucket = bucket;
+    chart.$renderedAt = now;
+    chart.$scrollPixels = 0;
+    return false;
+  }
+  const axis = chart.scales.x;
+  chart.$scrollPixels = axis ? (now-chart.$renderedAt)/1000 * axis.width/(axis.max-axis.min) : 0;
+  chart.draw();
+  return true;
+}
+
+let pressureSource = null, pressureReceivedAt = 0;
+function drawPressureHistory(now = performance.now(), animate = false) {
+  if (!$('pressure-history').getClientRects().length) return;
+  const source = state.probe.contact_samples ?? state.probe.pressure_samples ?? state.probe.pressure_history;
+  if (source !== pressureSource) { pressureSource = source; pressureReceivedAt = now; }
+  if (animate && probePressureChart && scrollTimeChart(probePressureChart, now, 25)) return;
+  const elapsed = (now - pressureReceivedAt) / 1000;
   const probe = state.probe;
   if (!probePressureChart) probePressureChart = new Chart($('pressure-history'), {
     type: 'line',
@@ -1124,7 +1197,7 @@ function drawPressureHistory() {
       {label: 'Load (%)', yAxisID: 'y', data: [], borderColor: '#57d3a8', borderWidth: 2, pointRadius: 0, spanGaps: false},
       {label: 'Current (mA)', yAxisID: 'current', data: [], borderColor: '#ffb86b', borderWidth: 2, pointRadius: 0, spanGaps: false}]},
     options: {responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
-      plugins: {legend: {display: true, labels: {color: '#b7c4d8', boxWidth: 10, font: {size: 10}}}},
+      plugins: {decimation: {enabled: true, algorithm: 'min-max'}, legend: {display: true, labels: {color: '#b7c4d8', boxWidth: 10, font: {size: 10}}}},
       scales: {x: {type: 'linear', min: -30, max: 0, ticks: {color: '#b7c4d8', callback: value => Math.abs(value)}},
         y: {min: 0, max: 10, ticks: {color: '#57d3a8'}},
         current: {position: 'right', min: 0, max: 50, grid: {drawOnChartArea: false}, ticks: {color: '#ffb86b'}}}},
@@ -1134,13 +1207,16 @@ function drawPressureHistory() {
   ['load', 'current'].forEach((field, index) => {
     const points = [];
     samples.forEach((point, i) => {
-      if (i && point.x - samples[i - 1].x > .3) points.push({x: point.x - .001, y: null});
-      points.push({x: point.x, y: point[field]});
+      if (i && point.x - samples[i - 1].x > .3) points.push({x: point.x - elapsed - .001, y: null});
+      points.push({x: point.x - elapsed, y: point[field]});
     });
     probePressureChart.data.datasets[index].data = points;
     const peak = Math.max(0, ...points.map(p => p.y || 0), (index ? probe.current_peak_ma : probe.contact_peak_percent) || 0);
     probePressureChart.options.scales[index ? 'current' : 'y'].max = contactScale(contactAxes[field], peak, index ? 50 : 10);
   });
+  window.operatorADCOverlay?.(probePressureChart, 'probe', 2);
+  probePressureChart.$scrollPixels = 0;
+  probePressureChart.$renderedAt = now;
   probePressureChart.update('none');
 }
 
@@ -1162,7 +1238,21 @@ function radarGeometry(width, height, minimum, maximum) {
     cy: (height - radius * (bottom + top)) / 2};
 }
 
-function drawRadar() {
+function displayDetectorAngle(now) {
+  // One telemetry interval of display delay allows interpolation without
+  // predicting motion. Raw plots, safety gates and commands use real samples.
+  const at = now - 50;
+  for (let i = detectorAngles.length - 1; i > 0; --i) {
+    const a = detectorAngles[i-1], b = detectorAngles[i];
+    if (a.at <= at && at <= b.at && b.at > a.at && b.at-a.at <= 250 &&
+        Number.isFinite(a.angle) && Number.isFinite(b.angle)) {
+      return a.angle + (b.angle-a.angle)*(at-a.at)/(b.at-a.at);
+    }
+    if (b.at < at) break;
+  }
+  return state.detector.fixture_angle_deg;
+}
+function drawRadar(now = performance.now()) {
   const canvas = $('radar-view');
   const context = resize(canvas);
   const width = canvas.clientWidth;
@@ -1198,7 +1288,7 @@ function drawRadar() {
     context.stroke();
   }
 
-  const angle = beamScreenAngle(state.detector.fixture_angle_deg);
+  const angle = beamScreenAngle(displayDetectorAngle(now));
   context.strokeStyle = '#4de0a8';
   context.lineWidth = 2;
   drawSegment(context, {x: cx, y: cy}, {x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius});
@@ -1233,11 +1323,11 @@ function readWheel(pad, mapping) {
     deadman: true};
 }
 
-function stopInput() {
+function stopInput(forCalibration = false) {
   stopLocalInput();
   if (state.drive.you_control_owner) {
     send({type: 'drive', linear_x: 0, angular_z: 0, deadman: false});
-    send({type: 'estop'});
+    send({type: forCalibration === true ? 'calibration_begin' : 'estop'});
   }
 }
 
@@ -1503,332 +1593,14 @@ function initializeCameraSettings() {
     $(slot + '-camera-retry').onclick = () => startCamera(slot, preferences.cameras[slot], true);
   }
   new ResizeObserver(applyCameraRotations).observe($('camera-panel'));
-  let lastFrame = 0;
-  function previewLoop(now) {
-    if (!document.hidden && now - lastFrame >= 100) {
-      lastFrame = now;
+  function previewLoop() {
+    if (!document.hidden) {
       renderCameraSettings();
     }
     requestAnimationFrame(previewLoop);
   }
   requestAnimationFrame(previewLoop);
 }
-
-let servoRequestSequence = 0;
-function createServoSettings(role) {
-  const $ = id => document.getElementById(role === 'probe' && id.startsWith('arm-') ? id.replace(/^arm-/, 'probe-servo-') : id);
-  let loadChart = null;
-  let loadHistory = [];
-  let loadSample = null;
-  let loadServo = null;
-  function updateLoadChart(servo, active) {
-    const now = performance.now();
-    const key = `${servo.serial_port || ''}:${servo.servo_id}`;
-    if (!state.connected || (active && (!servo.connected || loadServo !== key))) {
-      loadHistory = []; loadSample = null;
-      if (active) loadServo = key;
-    }
-    if (state.connected && active && servo.connected && Number.isFinite(servo.sample_time)
-        && servo.sample_time !== loadSample && Number.isFinite(servo.load_percent)) {
-      if (loadHistory.length && now - loadHistory.at(-1).at > 600)
-        loadHistory.push({at: now - 1, value: null});
-      loadHistory.push({at: now, value: servo.load_percent});
-      loadSample = servo.sample_time;
-    }
-    loadHistory = loadHistory.filter(sample => now - sample.at <= 60000).slice(-600);
-    const panel = document.getElementById(`settings-${role}`);
-    if (!$('settings-dialog').open || panel.hidden) return;
-    if (!loadChart) loadChart = new Chart($('arm-load-history'), {
-      type: 'line', data: {datasets: [{label: 'Estimated load (%)', data: [],
-        borderColor: '#76b9ff', borderWidth: 2, pointRadius: 0, spanGaps: false},
-        ...(role === 'probe' ? [1, -1].map(sign => ({label: `${sign > 0 ? '+' : '−'}Contact threshold`,
-          data: [], borderColor: '#ffb86b', borderDash: [6, 4], borderWidth: 1, pointRadius: 0})) : [])]},
-      options: {responsive: true, maintainAspectRatio: false, animation: false,
-        parsing: false, plugins: {legend: {display: false}},
-        scales: {
-          x: {type: 'linear', min: -60, max: 0, title: {display: true, text: 'Seconds ago', color: '#b7c4d8'},
-            ticks: {color: '#b7c4d8', callback: value => Math.abs(value)}},
-          y: {min: -100, max: 100, title: {display: true, text: 'Signed load (%)', color: '#b7c4d8'},
-            ticks: {color: '#b7c4d8'}},
-        }},
-    });
-    loadChart.data.datasets[0].data = loadHistory.map(sample => ({x: (sample.at - now) / 1000, y: sample.value}));
-    if (role === 'probe') {
-      const threshold = Number($('arm-home-load').value);
-      [1, -1].forEach((sign, index) => {
-        loadChart.data.datasets[index + 1].data = Number.isFinite(threshold) && threshold >= 10 && threshold <= 60
-          ? [{x: -60, y: sign * threshold}, {x: 0, y: sign * threshold}] : [];
-      });
-    }
-    loadChart.resize();
-    loadChart.update('none');
-  }
-  let armHoldTimer = null;
-  let armSliderMoving = false;
-  let armSliderDragging = false;
-  let armSliderTarget = null;
-  let armPending = null;
-  function setArmFeedback(text, kind = 'pending') {
-    $('arm-feedback').textContent = text;
-    $('arm-feedback').dataset.kind = kind;
-  }
-  function armCommand(action, values = {}, feedback = true) {
-    const payload = {type: 'arm_servo', action, role, ...values};
-    if (feedback) {
-      payload.request_id = `${Date.now()}-${++servoRequestSequence}`;
-      armPending = {id: payload.request_id, at: performance.now()};
-      setArmFeedback(({select: 'Selecting servo…', capture: 'Recording position…', configure: 'Applying limits…', stop: 'Stopping…', jog: 'Starting jog…', position: 'Moving to slider target…', move: 'Starting movement…'})[action] || 'Sending command…');
-    }
-    send(payload);
-  }
-  function armControlCommand(payload, confirmation, predicate) {
-    armPending = {at: performance.now(), predicate, confirmation};
-    setArmFeedback('Waiting for dashboard confirmation…');
-    send(payload);
-  }
-  function armAngle(position) {
-    return Number.isFinite(position) ? `${(position * 360 / 4096).toFixed(1)}°` : '—';
-  }
-  function stopArmMove() {
-    armSliderMoving = false;
-    if (armHoldTimer !== null) {
-      clearInterval(armHoldTimer);
-      armHoldTimer = null;
-      armCommand('stop');
-    }
-  }
-  function updateArmSettings() {
-    const live = state.arm_servo || {};
-    const active = (live.active_role || 'arm') === role;
-    const servo = active ? live : {serial_connected: live.serial_connected, scanning: live.scanning, discovered_servos: live.discovered_servos, servo_id: live.role_ids?.[role] ?? (role === 'probe' ? 2 : live.servo_id), reason: `Select the ${role} servo to load its calibration and telemetry.`};
-    updateLoadChart(servo, active);
-    const servoSelect = $('arm-servo-id');
-    const ids = servo.discovered_servos || [];
-    const signature = JSON.stringify(ids);
-    if (servoSelect.dataset.discovery !== signature) {
-      const previous = servoSelect.value;
-      servoSelect.replaceChildren(new Option(servo.scanning ? 'Scanning for servos…' : 'Select a detected servo', ''));
-      ids.forEach(id => servoSelect.add(new Option(`Servo ${id}`, String(id))));
-      const assignedId = live.role_ids?.[role] ?? servo.servo_id;
-      servoSelect.value = ids.includes(Number(previous)) && previous !== '' ? previous
-        : ids.includes(assignedId) ? String(assignedId) : '';
-      servoSelect.dataset.discovery = signature;
-    }
-    const owner = state.connected && state.drive.you_control_owner;
-    $('arm-reconnect').disabled = !owner || Boolean(live.scanning || live.torque || live.sweeping) || armHoldTimer !== null;
-    if (armPending) {
-      const acknowledgement = live.last_command;
-      if (armPending.id && acknowledgement?.request_id === armPending.id) {
-        setArmFeedback(acknowledgement.message, acknowledgement.success ? 'success' : 'error');
-        armPending = null;
-      } else if (armPending.predicate?.()) {
-        setArmFeedback(armPending.confirmation, 'success'); armPending = null;
-      } else if (performance.now() - armPending.at > 4000) {
-        setArmFeedback('No confirmation received. Check the driver connection and retry.', 'error'); armPending = null;
-      }
-    }
-    const ready = owner && state.safety?.servo_allowed && servo.connected;
-    const slider = $('arm-position-slider');
-    if (servo.connected) {
-      slider.min = servo.position_minimum ?? servo.eeprom_minimum ?? 0;
-      slider.max = servo.position_maximum ?? servo.eeprom_maximum ?? 4095;
-      if (!armSliderDragging) slider.value = servo.position;
-    }
-    slider.disabled = !ready || !state.drive.calibrating || (armHoldTimer !== null && !armSliderMoving);
-    if (armSliderMoving && !armSliderDragging && servo.torque && Math.abs(servo.position - armSliderTarget) <= 3
-        && servo.goal_position === armSliderTarget) stopArmMove();
-    $('arm-position-label').textContent = servo.connected ? armAngle(Number(slider.value)) : '—';
-    $('arm-jog-speed').disabled = armHoldTimer !== null && !armSliderMoving;
-
-    $('arm-servo-status').textContent = servo.reason || 'Servo driver not running';
-    $('arm-servo-position').textContent = servo.connected ? `${armAngle(servo.position)} (${servo.position ?? '—'} ticks)` : servo.serial_connected ? 'Adapter connected · no servo selected' : 'Disconnected';
-    $('arm-servo-details').textContent = servo.connected ? `Servo ${servo.servo_id} · ${servo.serial_port || 'serial adapter'}` : servo.serial_connected ? `Select the ID of the ${role} servo, then click Select servo.` : servo.serial_port ? `Arm serial port: ${servo.serial_port}` : 'Start hardware launch with use_arm_servo:=true and arm_serial_port:=<adapter path>.';
-    const number = (value, digits = 1, unit = '') => Number.isFinite(value) ? `${value.toFixed(digits)}${unit}` : '—';
-    const metric = (id, value) => { $(id).textContent = servo.connected ? value : '—'; };
-    metric('arm-goal', armAngle(servo.goal_position));
-    metric('arm-torque', typeof servo.torque === 'boolean' ? (servo.torque ? 'On' : 'Off') : '—');
-    metric('arm-load', number(servo.load_percent, 1, ' %'));
-    metric('arm-torque-limit', number(servo.torque_limit_percent, 1, ' %'));
-    metric('arm-max-torque', number(servo.max_torque_percent, 1, ' %'));
-    metric('arm-current', number(servo.current_a, 3, ' A'));
-    metric('arm-speed', `${number(servo.speed_deg_s, 1, '°/s')} / ${servo.speed_limit_deg_s === 0 ? 'Full speed' : number(servo.speed_limit_deg_s, 1, '°/s')}`);
-    metric('arm-moving', typeof servo.moving === 'boolean' ? (servo.moving ? 'Yes' : 'No') : '—');
-    metric('arm-power', `${number(servo.voltage, 1, ' V')} / ${number(servo.temperature_c, 0, ' °C')}`);
-    metric('arm-model', `${servo.model ?? '—'} / ${servo.firmware ?? '—'}`);
-    $('arm-px4').textContent = state.safety?.servo_allowed ? 'Movement permitted (status 4)' : 'Movement blocked';
-    $('arm-calibration-enable').disabled = !owner || !state.safety?.servo_allowed || state.drive.calibrating || !servo.connected;
-    $('arm-calibration-stop').disabled = !owner;
-    $('arm-calibration-enable').textContent = active && state.drive.calibrating ? 'Jogging enabled' : 'Enable jogging';
-    const selectionBlocked = !state.connected ? 'Connect to the dashboard first.'
-      : !owner ? 'Take control to select a servo or record calibration. You do not need to arm.'
-      : live.torque ? 'Stop the active servo before changing the servo ID.'
-      : !servo.serial_connected ? 'Waiting for the servo serial adapter.' : '';
-    $('arm-calibration-access').textContent = owner && active && state.drive.calibrating ? 'Hold a jog button to move. Release it, then record the position.' : selectionBlocked || 'Ready to select a servo and record positions.';
-    $('arm-take-control').hidden = owner;
-    $('arm-take-control').disabled = !state.connected;
-    $('arm-select-id').disabled = Boolean(selectionBlocked) || servoSelect.value === '';
-    $('arm-select-id').title = selectionBlocked || 'Select the servo ID; position updates automatically.';
-    const canRecord = owner && servo.connected && !servo.torque && armHoldTimer === null;
-    if (role === 'probe') {
-      const probe = live.probe || {};
-      $('arm-save-extension').disabled = !canRecord || !Number.isFinite(servo.home_position) || servo.home_position - servo.position <= 3;
-      $('arm-extension-status').textContent = probe.calibrated
-        ? `Saved maximum: ${probe.max_depth_mm} mm · retained after restart` : 'Maximum extension not calibrated';
-      if ($('arm-max-extension').dataset.saved !== String(probe.max_depth_mm)) {
-        $('arm-max-extension').value = probe.max_depth_mm || '';
-        $('arm-max-extension').dataset.saved = String(probe.max_depth_mm);
-      }
-      $('arm-enable-multiturn').disabled = !canRecord || servo.position_mode === 'multi-turn';
-      $('arm-position-mode').textContent = servo.connected ? servo.position_mode === 'multi-turn'
-        ? 'Multi-turn · −7 to +7 shaft revolutions' : 'Joint mode · enable multi-turn for travel beyond one revolution' : 'Select probe to read position mode';
-      $('arm-home').disabled = !ready || !state.drive.calibrating;
-      $('arm-home-load').disabled = armHoldTimer !== null;
-      $('arm-home-status').textContent = servo.connected ? servo.home_status || 'Not homed' : 'Not homed · connect probe';
-      $('arm-home-travel').textContent = servo.connected && Number.isFinite(servo.home_position)
-        ? `${((servo.home_position - servo.position) * 360 / 4096).toFixed(1)}° from top (shaft)` : 'Home required';
-    }
-    if (role === 'arm') {
-      $('arm-apply-motion').disabled = !canRecord;
-      const motionSignature = JSON.stringify([servo.motion_speed_limit, servo.sweep_acceleration_deg_s2]);
-      if ($('arm-apply-motion').dataset.profile !== motionSignature) {
-        $('arm-max-speed').value = ((servo.motion_speed_limit || 80) * .684).toFixed(3);
-        $('arm-acceleration').value = (servo.sweep_acceleration_deg_s2 || 40).toFixed(3);
-        $('arm-apply-motion').dataset.profile = motionSignature;
-      }
-    }
-    if (role === 'arm') $('arm-apply-limits').disabled = !canRecord || !['minimum', 'center', 'maximum'].every(point => Number.isFinite(servo.captured?.[point] ?? servo.calibration?.[point]));
-    $('arm-jog-left').disabled = $('arm-jog-right').disabled = !ready || !state.drive.calibrating;
-    const jogReason = !state.connected ? 'Dashboard disconnected'
-      : !owner ? 'Take control first'
-      : !servo.connected ? 'Servo not connected'
-      : !state.safety?.servo_allowed ? 'Blocked: PX4 must report status 4'
-      : !state.drive.calibrating ? 'Click Enable jogging once, then hold an arrow'
-      : armHoldTimer !== null ? 'Jog command held · release to stop'
-      : role === 'probe' ? 'Ready · hold up to retract or down to extend' : 'Ready · hold left or right to move';
-    $('arm-jog-status').textContent = jogReason;
-    $('arm-jog-status').dataset.ready = String(Boolean(ready && state.drive.calibrating));
-    $('arm-jog-left').title = $('arm-jog-right').title = jogReason;
-    for (const point of role === 'arm' ? ['minimum', 'center', 'maximum'] : []) {
-      $(`arm-capture-${point}`).disabled = !canRecord;
-      $(`arm-move-${point}`).disabled = !ready || !servo.calibration;
-      $(`arm-recorded-${point}`).textContent = armAngle(servo.captured?.[point] ?? servo.calibration?.[point]);
-    }
-    if (!ready) stopArmMove();
-    if (role === 'probe') return;
-    if (servo.calibration) {
-      const escape = value => String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
-      $('arm-launch-xml').value = [
-        '<arg name="use_arm_servo" default="true"/>',
-        `<arg name="arm_serial_port" default="${escape(servo.serial_port || '')}"/>`,
-        `<arg name="${role}_servo_id" default="${servo.servo_id}"/>`,
-        ...['minimum', 'center', 'maximum'].map(point => `<arg name="${role}_${point}" default="${servo.calibration[point]}"/>`),
-        ...(role === 'arm' ? [`<arg name="arm_speed" default="${servo.motion_speed_limit || 20}"/>`] : []),
-        ...(role === 'arm' ? [`<arg name="arm_sweep_endpoint_tolerance_deg" default="${servo.sweep_endpoint_tolerance_deg ?? 2.0}"/>`] : []),
-        ...(role === 'arm' ? [`<arg name="arm_sweep_acceleration_deg_s2" default="${servo.sweep_acceleration_deg_s2 || 40}"/>`] : []),
-      ].join('\n');
-    } else $('arm-launch-xml').value = 'Record and apply all three positions to generate launch XML.';
-  }
-  function initializeArmSettings() {
-    if (role === 'probe') $('arm-save-extension').onclick = () => {
-      if (!$('arm-max-extension').reportValidity()) return;
-      armCommand('save_probe_extension', {max_extension_mm: Number($('arm-max-extension').value)});
-    };
-    if (role === 'probe') $('arm-home-load').oninput = updateArmSettings;
-    if (role === 'probe') $('arm-enable-multiturn').onclick = () => armCommand('enable_multiturn');
-    if (role === 'arm') {
-      $('arm-apply-motion').onclick = () => {
-        if (!$('arm-max-speed').reportValidity() || !$('arm-acceleration').reportValidity()) return;
-        armCommand('configure_motion', {max_speed_deg_s: Number($('arm-max-speed').value),
-          acceleration_deg_s2: Number($('arm-acceleration').value)});
-      };
-    }
-    $('arm-reconnect').onclick = () => armCommand('reconnect');
-    $('arm-take-control').onclick = () => armControlCommand({type: 'take_control'}, 'Control acquired. Select a servo or enable slow jogging.', () => state.drive.you_control_owner);
-    $('arm-servo-id').onchange = updateArmSettings;
-    $('arm-select-id').onclick = () => {
-      if ($('arm-servo-id').value !== '') armCommand('select', {servo_id: Number($('arm-servo-id').value)});
-    };
-    $('arm-calibration-enable').onclick = () => armControlCommand({type: 'arm', calibration: true}, role === 'probe' ? 'Jogging enabled. Hold up, down, or home; release to stop.' : 'Slow jogging enabled. Hold left or right; release to stop.', () => state.drive.calibrating);
-    $('arm-calibration-stop').onclick = () => { stopArmMove(); armCommand('stop'); send({type: 'estop'}); };
-    function bindHold(button, action, values) {
-      const start = () => {
-        if (button.disabled) return;
-        stopArmMove();
-        const selected = typeof values === 'function' ? values() : values;
-        if (action === 'home' && !$('arm-home-load').reportValidity()) return;
-        if (action === 'jog' && (['arm-jog-speed'].some(id => !$(id).checkValidity() || !Number.isFinite(Number($(id).value)) || Number($(id).value) <= 0))) {
-          setArmFeedback('Enter a positive jog speed.', 'error'); return;
-        }
-        const held = {...selected, held: true};
-        armCommand(action, held);
-        armHoldTimer = setInterval(() => armCommand(action, held, false), 80);
-        updateArmSettings();
-      };
-      button.onpointerdown = event => { event.preventDefault(); button.setPointerCapture(event.pointerId); start(); };
-      button.onpointerup = button.onpointercancel = button.onlostpointercapture = stopArmMove;
-      button.onkeydown = event => { if ([' ', 'Enter'].includes(event.key) && !event.repeat) { event.preventDefault(); start(); } };
-      button.onkeyup = event => { if ([' ', 'Enter'].includes(event.key)) stopArmMove(); };
-      button.onblur = stopArmMove;
-    }
-    const jogOptions = () => ({speed_deg_s: Number($('arm-jog-speed').value)});
-    bindHold($('arm-jog-left'), 'jog', () => ({direction: -1, ...jogOptions()}));
-    bindHold($('arm-jog-right'), 'jog', () => ({direction: 1, ...jogOptions()}));
-    if (role === 'probe') bindHold($('arm-home'), 'home', () => ({
-      hold_id: `${Date.now()}-${++servoRequestSequence}`,
-      load_percent: Number($('arm-home-load').value),
-    }));
-    const positionSlider = $('arm-position-slider');
-    positionSlider.onpointerdown = () => { armSliderDragging = true; };
-    positionSlider.onpointerup = positionSlider.onpointercancel = positionSlider.onlostpointercapture = () => {
-      armSliderDragging = false; updateArmSettings();
-    };
-    positionSlider.onkeydown = event => {
-      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) armSliderDragging = true;
-    };
-    positionSlider.onkeyup = positionSlider.onblur = () => { armSliderDragging = false; updateArmSettings(); };
-    positionSlider.oninput = () => {
-      if (positionSlider.disabled) return;
-      armSliderTarget = Number(positionSlider.value);
-      $('arm-position-label').textContent = armAngle(armSliderTarget);
-      const target = () => ({position: armSliderTarget, held: true});
-      if (armSliderMoving) {
-        armCommand('position', target(), false);
-        return;
-      }
-      stopArmMove();
-      armSliderMoving = true;
-      armCommand('position', target());
-      armHoldTimer = setInterval(() => armCommand('position', target(), false), 80);
-      updateArmSettings();
-    };
-    for (const point of role === 'arm' ? ['minimum', 'center', 'maximum'] : []) {
-      $(`arm-capture-${point}`).onclick = () => armCommand('capture', {point});
-      bindHold($(`arm-move-${point}`), 'move', {point});
-    }
-    if (role === 'arm') $('arm-apply-limits').onclick = () => {
-      const servo = state.arm_servo || {};
-      const calibration = Object.fromEntries(['minimum', 'center', 'maximum'].map(point => [point, servo.captured?.[point] ?? servo.calibration?.[point]]));
-      armCommand('configure', calibration);
-    };
-    const releaseArmSettings = () => {
-      stopArmMove();
-      if (state.drive.you_control_owner && (state.arm_servo?.active_role || 'arm') === role) {
-        armCommand('stop');
-        send({type: 'estop'});
-      }
-    };
-    $('settings-dialog').querySelector('form').addEventListener('submit', releaseArmSettings);
-    $('settings-dialog').addEventListener('close', releaseArmSettings);
-    window.addEventListener('blur', stopArmMove);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) stopArmMove(); });
-  }
-
-  return {update: updateArmSettings, initialize: initializeArmSettings, stop: stopArmMove, error(message) { if (armPending) { armPending = null; setArmFeedback(message, 'error'); } }};
-}
-const servoSettings = [createServoSettings('arm'), createServoSettings('probe')];
-function updateArmSettings() { servoSettings.forEach(panel => panel.update()); }
-function initializeArmSettings() { servoSettings.forEach(panel => panel.initialize()); }
-function stopArmMove() { servoSettings.forEach(panel => panel.stop()); }
 
 let metalPending = null;
 let metalFeedback = '';
@@ -1855,7 +1627,7 @@ function updateMetalSettings() {
   $('metal-port').textContent = sensor.port || '--';
   $('metal-counts').textContent = `${sensor.received ?? 0} / ${sensor.invalid_lines ?? 0}`;
   $('metal-sequence').textContent = sensor.packet ? `${sensor.packet.seq} / ${sensor.packet.uptime_ms} ms` : '--';
-  $('metal-error').textContent = !available ? 'Arduino driver unavailable' : sensor.error || (fresh ? 'Receiving valid packets' : 'Waiting for valid readings');
+  $('metal-error').textContent = !available ? 'Detector driver unavailable' : sensor.error || (fresh ? 'Receiving valid packets' : 'Waiting for valid readings');
   const reference = sensor.reference_voltage ?? 5;
   const voltage = sensor.packet?.amplitude_adc * reference / 255;
   $('metal-voltage').textContent = fresh ? `${voltage.toFixed(3)} V` : '-- V';
@@ -1882,7 +1654,7 @@ function updateMetalSettings() {
   for (const id of ['metal-zero', 'metal-apply', 'metal-reset']) $(id).disabled = !allowed;
   $('metal-control').hidden = owner;
   $('metal-control').disabled = !state.connected;
-  $('metal-feedback').textContent = !fresh ? 'Fresh Arduino readings required for calibration.'
+  $('metal-feedback').textContent = !fresh ? 'Fresh detector readings required for calibration.'
     : !owner ? 'Take control to calibrate.' : moving ? 'Stop the vehicle to calibrate.'
     : metalPending ? 'Applying calibration...' : metalFeedback || 'Ready';
   const packetKey = JSON.stringify(sensor.packet);
@@ -1908,13 +1680,14 @@ const detectorAngles = [];
 function recordDetectorAngle(now) {
   detectorHistoryAt = now;
   const angle = state.detector.fixture_angle_deg;
-  const available = state.safety?.simulated || (state.arm_servo?.connected && state.arm_servo?.active_role === 'arm');
+  const available = state.safety?.simulated || state.actuators?.arm?.connected || (state.arm_servo?.connected && state.arm_servo?.active_role === 'arm');
   detectorAngles.push({at: now, angle: available && Number.isFinite(angle) ? angle : null});
   while (detectorAngles.length && now - detectorAngles[0].at > 30000) detectorAngles.shift();
 }
 
-function drawDetectorHistory(now = performance.now()) {
-  if (now - detectorChartAt < 200) return;
+function drawDetectorHistory(now = performance.now(), animate = false) {
+  if (!$('detector-history').getClientRects().length) return;
+  if (animate && detectorChart && scrollTimeChart(detectorChart, now)) return;
   detectorChartAt = now;
   const sensor = state.detector.sensor || {};
   const elapsed = Math.max(0, (now - detectorHistoryAt) / 1000);
@@ -1932,7 +1705,7 @@ function drawDetectorHistory(now = performance.now()) {
       ]},
       options: {responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
         elements: {point: {radius: 0, hitRadius: 6}, line: {spanGaps: .25}},
-        plugins: {legend: {labels: {color: '#a4b5bb', boxWidth: 10, font: {size: 9}}}},
+        plugins: {decimation: {enabled: true, algorithm: 'min-max'}, legend: {labels: {color: '#a4b5bb', boxWidth: 10, font: {size: 9}}}},
         scales: {
           x: {type: 'linear', min: -30, max: 0, ticks: {color: '#a4b5bb', count: 3, maxRotation: 0,
             callback: v => v === 0 ? 'now' : `${v}s`}, grid: {color: '#2b3d46'}},
@@ -1948,14 +1721,19 @@ function drawDetectorHistory(now = performance.now()) {
   for (const [index, value] of [[2, zero], [3, trigger]]) {
     detectorChart.data.datasets[index].data = Number.isFinite(value) ? [{x: -30, y: value}, {x: 0, y: value}] : [];
   }
+  window.operatorADCOverlay?.(detectorChart, 'detector', 4);
+  detectorChart.$scrollPixels = 0;
+  detectorChart.$renderedAt = now;
   detectorChart.update('none');
 }
 
-function drawMetalHistory() {
+function drawMetalHistory(animate = false) {
+  if (animate === true && metalChart && scrollTimeChart(metalChart, performance.now())) return;
   const canvas = $('metal-history');
   if (!canvas.parentElement.clientWidth || !canvas.parentElement.clientHeight) return;
   const seconds = Number($('metal-time-range').value) || 30;
-  const samples = (state.detector.sensor?.history || []).filter(sample => sample.age_s <= seconds);
+  const elapsed = animate === true ? Math.max(0, (performance.now()-detectorHistoryAt)/1000) : 0;
+  const samples = (state.detector.sensor?.history || []).filter(sample => sample.age_s + elapsed <= seconds);
   const values = samples.map(sample => sample.adc);
   const baseline = state.detector.sensor?.baseline_adc;
   const trigger = baseline + (state.detector.sensor?.full_response_adc - baseline) * state.detector.threshold_ratio;
@@ -1991,7 +1769,7 @@ function drawMetalHistory() {
       },
     });
   }
-  metalChart.data.datasets[0].data = samples.map(sample => ({x: -sample.age_s, y: sample.adc}));
+  metalChart.data.datasets[0].data = samples.map(sample => ({x: -sample.age_s - elapsed, y: sample.adc}));
   metalChart.data.datasets[1].data = Number.isFinite(baseline) && baseline >= low && baseline <= high
     ? [{x: -seconds, y: baseline}, {x: 0, y: baseline}] : [];
   metalChart.data.datasets[2].data = Number.isFinite(trigger)
@@ -2000,6 +1778,8 @@ function drawMetalHistory() {
   metalChart.options.scales.y.min = low;
   metalChart.options.scales.y.max = high;
   metalChart.resize();
+  metalChart.$scrollPixels = 0;
+  metalChart.$renderedAt = performance.now();
   metalChart.update('none');
   canvas.setAttribute('aria-label', `Raw metal detector amplitude over the last ${seconds} seconds`);
   $('metal-range').textContent = values.length
@@ -2094,7 +1874,7 @@ function initializeInputs() {
     selectedPadIndex = pad?.index ?? null; selectedPadId = pad?.id ?? null;
   };
   $('keyboard-test').onblur = stopLocalInput;
-  $('settings-dialog').addEventListener('close', stopInput);
+  $('settings-dialog').addEventListener('close', stopLocalInput);
   window.addEventListener('blur', stopInput);
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopInput(); });
   initializeCameraSettings();
@@ -2115,15 +1895,13 @@ function initializeInputs() {
 }
 
 let deviceSignature = '';
-let lastPreview = 0;
 let lastInputHint = 0;
 function renderInputs(pads, target) {
   if (performance.now() - lastInputHint > 100) {
     updateInputHint();
     lastInputHint = performance.now();
   }
-  if (!$('settings-dialog').open || performance.now() - lastPreview < 50) return;
-  lastPreview = performance.now();
+  if (!$('settings-dialog').open || $('settings-input').hidden) return;
   const keyboard = preferences.input === 'keyboard';
   $('device-settings').classList.toggle('hidden', keyboard);
   $('wheel-settings').classList.toggle('hidden', preferences.input !== 'wheel');
@@ -2146,15 +1924,26 @@ function renderInputs(pads, target) {
   $('mapped-input').textContent = `Forward / reverse: ${preview.linear.toFixed(3)} m/s\nSteering: ${preview.angular.toFixed(3)} rad/s\nDeadman: ${preview.deadman ? 'HELD' : 'released'}\nDrive output: stopped in Settings`;
   const axes = keyboard ? [] : gamepad?.axes ?? [];
   const buttons = keyboard ? [] : gamepad?.buttons ?? [];
-  $('raw-axes').replaceChildren(...axes.map((value, index) => {
-    const label = document.createElement('label'); label.textContent = `Axis ${index}  ${value.toFixed(3)}`;
-    const meter = document.createElement('meter'); meter.min = -1; meter.max = 1; meter.value = value;
-    label.append(meter); return label;
-  }));
-  $('raw-buttons').replaceChildren(...buttons.map((button, index) => {
-    const item = document.createElement('span'); item.className = button.pressed ? 'pressed' : '';
-    item.textContent = `B${index} ${button.value.toFixed(2)}`; return item;
-  }));
+  const axisRows = $('raw-axes'), buttonRows = $('raw-buttons');
+  if (axisRows.children.length !== axes.length) {
+    axisRows.replaceChildren(...axes.map(() => {
+      const label=document.createElement('label'), text=document.createTextNode('');
+      const meter=document.createElement('meter'); meter.min=-1; meter.max=1;
+      label.append(text,meter); return label;
+    }));
+  }
+  axes.forEach((value,index) => {
+    const row=axisRows.children[index], text=`Axis ${index}  ${value.toFixed(3)}`;
+    if (row.firstChild.nodeValue !== text) row.firstChild.nodeValue=text;
+    row.lastChild.value=value;
+  });
+  if (buttonRows.children.length !== buttons.length)
+    buttonRows.replaceChildren(...buttons.map(() => document.createElement('span')));
+  buttons.forEach((button,index) => {
+    const item=buttonRows.children[index], text=`B${index} ${button.value.toFixed(2)}`;
+    item.classList.toggle('pressed',button.pressed);
+    if (item.textContent !== text) item.textContent=text;
+  });
 }
 
 initializeInputs();
@@ -2163,19 +1952,20 @@ updateCameraVisibility();
 setConnection(false, 'Connecting to operator stack');
 connect();
 inputLoop();
-let lastCanvasFrame = 0;
-let lastInstrumentFrame = 0;
+// Render at the display refresh rate; telemetry and motion command cadence
+// remain independent. Never invent measurements to fill display frames.
 function drawDashboard(now) {
-  if (!document.hidden && now - lastCanvasFrame >= 1000 / 30) {
-    lastCanvasFrame = now;
-    drawForwardView();
-    drawRadar();
-    if (now - lastInstrumentFrame >= 100) {
-      lastInstrumentFrame = now;
-      drawMap();
-      drawPressureHistory();
-      drawDetectorHistory(now);
-    }
+  if (!document.hidden) {
+    const motion = displayMotion(now);
+    drawForwardView(motion.robot);
+    drawRadar(now);
+    drawMap(motion.robot);
+    drawProbeMotion(motion.depth);
+    drawPressureHistory(now, true);
+    drawDetectorHistory(now, true);
+    window.operatorADCFrame?.();
+    servoSettings.forEach(panel => panel.draw());
+    if ($('settings-dialog').open && !$('settings-detector').hidden) drawMetalHistory(true);
   }
   requestAnimationFrame(drawDashboard);
 }

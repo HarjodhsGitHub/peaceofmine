@@ -63,14 +63,18 @@ selectedPadIndex = 0; selectedPadId = pad.id; preferences.input = 'wheel';
 state.safety = {allowed: true, servo_allowed: true, mode: 'simulation'};
 state.connected = true; state.drive.armed = true; state.drive.you_control_owner = true;
 $('settings').click();
-assert(sent.some(m => m.type === 'estop'), 'settings disarms');
+assert(sent.some(m => m.type === 'calibration_begin'), 'settings stops motion and blocks driving');
 lastDriveSent = -1000; inputLoop();
 assert(latestDrive().deadman === false && latestDrive().linear_x === 0, 'settings blocks drive');
 const beforeSettingsClose = sent.length;
 $('settings-dialog').querySelector('button[value="close"]').click();
 const closeMessages = sent.slice(beforeSettingsClose);
 assert(closeMessages.some(m => m.type === 'arm_servo' && m.action === 'stop'), 'closing settings releases arm');
-assert(closeMessages.some(m => m.type === 'estop'), 'closing settings exits calibration');
+assert(closeMessages.some(m => m.type === 'calibration_end'), 'closing settings exits calibration');
+assert(!closeMessages.some(m => ['calibration_begin', 'estop'].includes(m.type)), 'closing settings preserves control and leaves calibration');
+const beforeBlur = sent.length;
+window.dispatchEvent(new Event('blur'));
+assert(sent.slice(beforeBlur).some(m => m.type === 'estop'), 'focus loss still revokes control');
 preferences.input = 'controller'; lastDriveSent = -1000; inputLoop();
 assert(!latestDrive().deadman, 'unmapped wheel has no trigger drive');
 preferences.input = 'wheel';
@@ -230,12 +234,14 @@ $('arm-max-speed').value = '200';
 $('arm-acceleration').value = '100';
 $('arm-apply-motion').click();
 assert(sent.at(-1).action === 'configure_motion' && sent.at(-1).max_speed_deg_s === 200, 'motion settings reach driver');
-state.drive.armed = false;
+state.drive.armed = true;
 state.drive.calibrating = false;
 state.safety = {allowed: false, servo_allowed: true, mode: 'override'};
 state.arm_servo.calibration = null;
 updateArmSettings();
-assert(!$('arm-calibration-enable').disabled, 'jog setup available before limits exist');
+assert(!document.getElementById('enable-controls') && !document.getElementById('disable-controls'), 'no dashboard arming buttons');
+assert(!document.getElementById('arm-calibration-enable'), 'no extra jogging enable step');
+assert(!$('arm-jog-left').disabled && !$('arm-position-slider').disabled, 'RC permits jogging without calibration enable');
 $('arm-select-id').click();
 const selection = sent.at(-1);
 assert(selection.request_id && $('arm-feedback').textContent.includes('Selecting'), 'selection gives immediate pending feedback');
@@ -489,10 +495,43 @@ state.probe.contact_can_zero = true; updateHud(); $('probe-zero-contact').click(
 assert(sent.at(-1).type === 'probe_zero_contact', 'zero contact requests session reference');
 state.probe.contact_can_zero = false; updateHud();
 assert($('probe-zero-contact').disabled, 'zero disabled without fresh held readings');
+const originalRobot=state.robot, originalProbe=state.probe, originalConnected=state.connected;
+state.connected=true;
+state.robot={x:0,y:0,yaw:179*Math.PI/180,speed_mps:0}; state.probe={...state.probe,depth_mm:0};
+recordMotionFrame(1000);
+state.robot={x:2,y:4,yaw:-179*Math.PI/180,speed_mps:1}; state.probe={...state.probe,depth_mm:100};
+recordMotionFrame(1050);
+const midMotion=displayMotion(1075);
+assert(midMotion.robot.x===1 && midMotion.robot.y===2 && midMotion.depth===50,'drive and probe interpolate between telemetry frames');
+assert(Math.abs(Math.abs(midMotion.robot.yaw)-Math.PI)<.001,'heading takes short arc');
+assert(state.robot.x===2 && state.probe.depth_mm===100,'display interpolation leaves real telemetry untouched');
+assert(displayMotion(1400).robot===state.robot,'display never extrapolates stale vehicle pose');
+state.connected=false;
+assert(displayMotion(1075).robot===state.robot,'disconnect immediately bypasses interpolation');
+motionFrames.length=0; state.robot=originalRobot; state.probe=originalProbe; state.connected=originalConnected;
+const savedAngles = detectorAngles.splice(0);
+detectorAngles.push({at:1000,angle:0}, {at:1050,angle:10});
+assert(displayDetectorAngle(1075) === 5, 'radar interpolates measured angle at display refresh');
+assert(displayDetectorAngle(1200) === state.detector.fixture_angle_deg, 'radar never extrapolates stale motion');
+detectorAngles.splice(0, detectorAngles.length, ...savedAngles);
+// Display frames between telemetry updates reuse layout and scroll measured
+// data without adding fabricated samples or sending motion commands.
+const oldDraw = detectorChart.draw.bind(detectorChart);
+let frameDraws = 0;
+detectorChart.draw = () => { frameDraws++; oldDraw(); };
+const measuredCount = detectorChart.data.datasets[1].data.length;
+const commandCount = sent.length;
+assert(scrollTimeChart(detectorChart, 1000) === false, 'new telemetry layout bucket');
+assert(scrollTimeChart(detectorChart, 1016) === true, 'first 60 Hz frame renders');
+assert(scrollTimeChart(detectorChart, 1033) === true, 'second 60 Hz frame renders');
+assert(frameDraws === 2 && detectorChart.$scrollPixels > 0, 'chart scrolls between measurements');
+assert(detectorChart.data.datasets[1].data.length === measuredCount, 'rendering does not invent angle samples');
+assert(sent.length === commandCount, 'rendering never renews motion permission');
+detectorChart.draw = oldDraw;
 document.body.textContent = 'BROWSER TESTS PASSED';
 '''
         import json
-        source = (DASHBOARD / 'app.js').read_text()
+        source = (DASHBOARD / 'actuator-settings.js').read_text() + '\n' + (DASHBOARD / 'app.js').read_text()
         gamepad_checks = (DASHBOARD.parent / 'test/test_gamepad.cjs').read_text().split("if (typeof require")[0]
         script = setup + (DASHBOARD / 'chart-4.4.8.umd.js').read_text() + (DASHBOARD / 'keydrown-1.3.0.js').read_text() + source + gamepad_checks + '\nconst dashboardSource = ' + json.dumps(source) + ';\n'
         html += '<script>(async () => {try {' + script + checks + "} catch(e) {document.body.textContent = 'TEST FAILED: ' + e.stack;}})();</script>"

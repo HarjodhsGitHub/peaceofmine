@@ -1,15 +1,12 @@
-# PeaceOfMine operator simulator
+# PeaceOfMine operator
 
-A browser operator surface for the SVEA stack, split into two nodes:
+ROS 2 operator controls for the vehicle, arm, probe, detector, ADS1115 and cameras.
+A dedicated web node serves the dashboard. Separate control, behavior, hardware and
+settings nodes communicate through ROS topics, services and actions. Simulation
+runs the same arm/probe controllers against a simulated device bus.
 
-- `operator_gateway.py` serves the dashboard and translates a small WebSocket
-  protocol to and from ROS. It publishes `cmd_vel` and nothing else.
-- `simulated_payload.py` stands in for the detector and probe hardware. It is
-  the only source of simulated payload data.
-
-The gateway and the dashboard never compute detector, pressure, depth, or
-fixture values; they only display what arrives on ROS topics. Swapping in real
-drivers means replacing `simulated_payload.py` alone.
+See [architecture](architecture.md), [ROS graph](ros_graph.md), and the
+[operator guide](gui.md) for ownership, interfaces, configuration and setup.
 
 ## Run the simulator
 
@@ -29,15 +26,14 @@ the browser Gamepad API requires a secure context on non-localhost origins.
 
 For a persistent local setup, edit the defaults near the top of
 `launch/operator.launch.xml`. The main switches are `is_sim`,
-`simulate_payload`, and `use_camera`. A real vehicle should use
+`simulate_payload`, and `use_cameras`. A real vehicle should use
 `is_sim="false"`; this starts the SVEA low-level interface, so verify the serial
 device and keep the vehicle safe before launching it. A USB camera can be used
-with either vehicle mode by setting `use_camera="true"`; it requires the
-`usb_cam` ROS package and container access to `camera_device`. It publishes ROS
+with either vehicle mode by setting `use_cameras="true"`; it requires the
+`usb_cam` ROS package and container access to `front_camera_device`. It publishes ROS
 images for onboard integration work.
 
-The Settings dialog is split into **Controls**, **Cameras**, and **Connection**
-tabs. The Cameras tab independently assigns either Raspberry Pi ROS camera to
+Settings provides controls, ADC, independent arm/probe panels, cameras and connection options. The Cameras tab independently assigns either Raspberry Pi ROS camera to
 the main preview or optional inset preview. It can also use cameras connected
 to the computer running the browser; click **Allow laptop cameras** to grant
 access and populate those device names. Browser camera access and Gamepad input
@@ -98,7 +94,7 @@ viewer count and whether this browser holds the control lease. Any viewer can
 take or steal control at any time; ownership transfers immediately, the
 previous owner becomes a spectator, and the gateway stops active motion.
 Only the owner can drive, sweep, move the probe, or change calibration.
-The physical RC determines drive authority; there is no extra browser arm step.
+Take control, then click **Arm controls**. The physical RC still determines drive authority; motion requires the configured held input/deadman. **Disarm** stops outputs.
 
 Plug the Xbox 360 (or another gamepad) into the computer that is showing this
 dashboard, then press any button if the Drive panel still says no controller

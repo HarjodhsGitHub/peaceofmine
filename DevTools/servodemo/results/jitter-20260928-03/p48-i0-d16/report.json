@@ -1,0 +1,26 @@
+{
+  "config_sha256": "8f6d79011762d1b5ef9a09dfbc38ec30c6200f5dadb3e0124714f32cac3a3f14",
+  "limits": [
+    511,
+    2555
+  ],
+  "trials": [
+    {
+      "speed": 29,
+      "reversals": 3,
+      "duration": 24.005126074000145,
+      "peak_current": 0.39599999999999996,
+      "position_range": [
+        609,
+        2458
+      ]
+    }
+  ],
+  "complete": true,
+  "restoration": "torque off; PID unchanged; motion registers restored",
+  "gains": [
+    48,
+    0,
+    16
+  ]
+}

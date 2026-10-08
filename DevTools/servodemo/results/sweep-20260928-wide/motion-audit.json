@@ -1,0 +1,59 @@
+{
+  "sweep-29": {
+    "samples": 1207,
+    "sample_rate_hz": 26.295890697033286,
+    "reversals": 8,
+    "requested_deg_s": 19.836000000000002,
+    "max_actual_deg_s": 38.304,
+    "cruise_samples": 899,
+    "pauses_over_100ms": [
+      0.32001230000059877,
+      0.43414637699970626,
+      0.2800129850002122,
+      0.39705418099947565,
+      0.20088843799931055
+    ],
+    "cruise_mean_deg_s": 19.760676307007788,
+    "cruise_sd_deg_s": 6.266144468606832,
+    "cruise_cv_percent": 31.710172117867494,
+    "encoder_slope_sd_deg_s": 2.310452558733633,
+    "cruise_stopped_fraction": 0.01668520578420467
+  },
+  "sweep-58": {
+    "samples": 734,
+    "sample_rate_hz": 25.925707352077687,
+    "reversals": 7,
+    "requested_deg_s": 39.672000000000004,
+    "max_actual_deg_s": 49.248000000000005,
+    "cruise_samples": 360,
+    "pauses_over_100ms": [
+      0.24114589899909333,
+      0.3510447770004248,
+      0.22704273899944383,
+      0.19903082700147934,
+      0.2649134639996191,
+      0.31703990300047735
+    ],
+    "cruise_mean_deg_s": 39.5656,
+    "cruise_sd_deg_s": 3.5947598306423756,
+    "cruise_cv_percent": 9.085568854364334,
+    "encoder_slope_sd_deg_s": 1.9746875691707881,
+    "cruise_stopped_fraction": 0.0
+  },
+  "sweep-116": {
+    "samples": 568,
+    "sample_rate_hz": 25.213175274727764,
+    "reversals": 7,
+    "requested_deg_s": 79.34400000000001,
+    "max_actual_deg_s": 79.34400000000001,
+    "cruise_samples": 0,
+    "pauses_over_100ms": [
+      0.276049874999444,
+      0.23602248600036546,
+      0.31504358900019724,
+      0.2417517450012383,
+      0.2740516720004962,
+      0.19203576499967312
+    ]
+  }
+}

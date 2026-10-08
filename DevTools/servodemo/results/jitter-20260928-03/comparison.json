@@ -1,0 +1,70 @@
+[
+  {
+    "gains": [
+      32,
+      0,
+      0
+    ],
+    "rejected": "Servo write failed: id=253, register=82, value=2, size=1, communication=0, device=8, firmware_fault=10 (endpoint did not settle within 1.5 seconds)"
+  },
+  {
+    "gains": [
+      48,
+      0,
+      0
+    ],
+    "samples": 477,
+    "raw_speed_sd": 8.531188055958996,
+    "raw_speed_mean": 19.966490566037738,
+    "encoder_speed_sd": 4.237577950544859,
+    "stopped_fraction": 0.04821802935010482
+  },
+  {
+    "gains": [
+      48,
+      0,
+      8
+    ],
+    "samples": 474,
+    "raw_speed_sd": 5.227673895647786,
+    "raw_speed_mean": 19.63108860759494,
+    "encoder_speed_sd": 2.329805518704352,
+    "stopped_fraction": 0.02109704641350211
+  },
+  {
+    "gains": [
+      64,
+      0,
+      8
+    ],
+    "samples": 477,
+    "raw_speed_sd": 4.620588674412949,
+    "raw_speed_mean": 19.76,
+    "encoder_speed_sd": 1.727706296280384,
+    "stopped_fraction": 0.0041928721174004195
+  },
+  {
+    "gains": [
+      48,
+      0,
+      16
+    ],
+    "samples": 472,
+    "raw_speed_sd": 3.0288938321763292,
+    "raw_speed_mean": 19.812813559322034,
+    "encoder_speed_sd": 1.0945271306896451,
+    "stopped_fraction": 0.0
+  },
+  {
+    "gains": [
+      64,
+      0,
+      16
+    ],
+    "samples": 466,
+    "raw_speed_sd": 4.259582924900054,
+    "raw_speed_mean": 19.791965665236052,
+    "encoder_speed_sd": 0.8760930406561827,
+    "stopped_fraction": 0.002145922746781116
+  }
+]

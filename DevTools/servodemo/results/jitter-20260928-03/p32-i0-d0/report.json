@@ -1,0 +1,16 @@
+{
+  "config_sha256": "8f6d79011762d1b5ef9a09dfbc38ec30c6200f5dadb3e0124714f32cac3a3f14",
+  "limits": [
+    511,
+    2555
+  ],
+  "trials": [],
+  "complete": false,
+  "restoration": "torque off; PID unchanged; motion registers restored",
+  "gains": [
+    32,
+    0,
+    0
+  ],
+  "error": "Servo write failed: id=253, register=82, value=2, size=1, communication=0, device=8, firmware_fault=10 (endpoint did not settle within 1.5 seconds)"
+}

@@ -1,0 +1,10 @@
+{
+  "config_sha256": "8f6d79011762d1b5ef9a09dfbc38ec30c6200f5dadb3e0124714f32cac3a3f14",
+  "limits": [
+    511,
+    2555
+  ],
+  "trials": [],
+  "complete": false,
+  "restoration": "torque off; candidate gains pending sweep validation"
+}

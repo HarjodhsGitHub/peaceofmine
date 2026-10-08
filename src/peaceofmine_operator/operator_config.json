@@ -1,0 +1,191 @@
+{
+  "arm": {
+    "servo_id": 1,
+    "minimum": 920,
+    "center": 1472,
+    "maximum": 2224
+  },
+  "probe": {
+    "servo_id": 2,
+    "max_extension_mm": 120.0,
+    "travel_ticks": 5430
+  },
+  "metal_detector": {
+    "baseline_adc": 36.04,
+    "full_response_adc": 105.0,
+    "reference_voltage": 5.0
+  },
+  "schema_version": 1,
+  "revision": 1,
+  "section_revisions": {
+    "adc_simulation": 1
+  },
+  "adc": {
+    "config": {
+      "bus": 1,
+      "address": 72,
+      "rate": 128,
+      "pga": 1,
+      "mode": "single",
+      "interval_ms": 0,
+      "alert": "disabled",
+      "polarity": 0,
+      "queue": 1,
+      "latch": false,
+      "low": -1000,
+      "high": 1000,
+      "channels": [
+        {
+          "mux": 0,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 1,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 2,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 3,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 4,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 5,
+          "enabled": true,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 6,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 7,
+          "enabled": true,
+          "multiplier": 1,
+          "offset": 0
+        }
+      ]
+    },
+    "routes": [
+      "none",
+      "none",
+      "none",
+      "none",
+      "none",
+      "probe",
+      "none",
+      "detector"
+    ],
+    "probe_trigger": {
+      "enabled": false,
+      "mux": 5,
+      "level": 1,
+      "direction": "above",
+      "hysteresis": 0,
+      "debounce_ms": 0
+    }
+  },
+  "adc_simulation": {
+    "config": {
+      "bus": 1,
+      "address": 72,
+      "rate": 128,
+      "pga": 1,
+      "mode": "single",
+      "interval_ms": 0,
+      "alert": "disabled",
+      "polarity": 0,
+      "queue": 1,
+      "latch": false,
+      "low": -1000,
+      "high": 1000,
+      "channels": [
+        {
+          "mux": 0,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 1,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 2,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 3,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 4,
+          "enabled": true,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 5,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 6,
+          "enabled": false,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 7,
+          "enabled": true,
+          "multiplier": 1,
+          "offset": 0
+        }
+      ]
+    },
+    "routes": [
+      "none",
+      "none",
+      "none",
+      "none",
+      "probe",
+      "none",
+      "none",
+      "detector"
+    ],
+    "probe_trigger": {
+      "enabled": false,
+      "mux": 5,
+      "level": 1,
+      "direction": "above",
+      "hysteresis": 0,
+      "debounce_ms": 0
+    }
+  }
+}

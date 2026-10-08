@@ -5,17 +5,14 @@ import math
 import json
 import time
 from collections import deque
-import signal
-import threading
 
-import rclpy
 from rclpy.node import Node
-from rclpy.executors import ExternalShutdownException
-from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool, Float32, UInt16, String
 
 from peaceofmine_operator.sensor_serial import SensorSerial
-from peaceofmine_operator import calibration
+from peaceofmine_operator import configuration as calibration
+from peaceofmine_operator.settings_client import SettingsClient
+from peaceofmine_operator.node_runner import run_node
 
 
 class SensorSerialNode(Node):
@@ -29,7 +26,8 @@ class SensorSerialNode(Node):
                         fresh_topic='detector/fresh')
         values = {key: self.declare_parameter(key, value).value
                   for key, value in defaults.items()}
-        self.calibration_file = values['calibration_file']
+        self.calibration_file = self.declare_parameter('config_file', '').value or values['calibration_file']
+        self.settings = SettingsClient(self, self.calibration_file)
         saved = calibration.load(self.calibration_file).get('metal_detector')
         if saved is not None:
             for key in ('baseline_adc', 'full_response_adc', 'reference_voltage'):
@@ -48,8 +46,7 @@ class SensorSerialNode(Node):
                 raise ValueError(f'{key} must be finite and positive')
         if not values['serial_port'] or values['baud_rate'] <= 0:
             raise ValueError('Set a serial port and positive baud rate')
-        self.sensor = SensorSerial(values['serial_port'], values['baud_rate'],
-                                   values['stale_timeout'], values['reconnect_interval'])
+        self.sensor = self.create_sensor(values)
         self.raw_pub = self.create_publisher(UInt16, values['amplitude_topic'], 10)
         self.ratio_pub = self.create_publisher(Float32, values['signal_topic'], 10)
         self.fresh_pub = self.create_publisher(Bool, values['fresh_topic'], 10)
@@ -64,6 +61,28 @@ class SensorSerialNode(Node):
         self.create_subscription(String, 'detector/command', self.calibrate, 10)
         self.create_timer(0.2, self.publish_state)
         self.create_timer(0.02, self.poll)
+        self.applied_config_revision=0
+        self.configuration_error=None
+        self.create_timer(.5,self.reload_settings)
+
+    def create_sensor(self, values):
+        return SensorSerial(values['serial_port'], values['baud_rate'],
+                            values['stale_timeout'], values['reconnect_interval'])
+
+    def reload_settings(self):
+        try:
+            saved=calibration.load(self.calibration_file)
+            value=saved.get('metal_detector')
+            revision=saved.get('section_revisions',{}).get('metal_detector',0)
+            if value is not None and revision != self.applied_config_revision:
+                baseline,full,reference=(value[k] for k in ('baseline_adc','full_response_adc','reference_voltage'))
+                if not all(type(v) in (int,float) and math.isfinite(v) for v in (baseline,full,reference)) or not (0 <= baseline <= 255 and 0 <= full <= 255 and abs(full-baseline)>=1 and 0<reference<=5.5):
+                    raise ValueError('Invalid persisted detector calibration')
+                self.baseline,self.full_response,self.reference_voltage=float(baseline),float(full),float(reference)
+                self.applied_config_revision=revision
+            self.configuration_error=None
+        except (ValueError,KeyError,TypeError,OSError) as exc:
+            self.configuration_error=str(exc)
 
     def poll(self):
         samples = self.sensor.poll()
@@ -104,7 +123,7 @@ class SensorSerialNode(Node):
             if not isinstance(request_id, str) or len(request_id) > 100:
                 raise ValueError('Invalid request ID')
             if not self.sensor.fresh:
-                raise ValueError('Fresh Arduino readings required')
+                raise ValueError('Fresh detector readings required')
             baseline, full = self.baseline, self.full_response
             reference = self.reference_voltage
             action = command.get('action')
@@ -127,16 +146,13 @@ class SensorSerialNode(Node):
                 raise ValueError('Endpoints must be within 0..255 and at least one count apart')
             if type(reference) not in (int, float) or not math.isfinite(reference) or not 0 < reference <= 5.5:
                 raise ValueError('ADC reference voltage must be within 0..5.5 V')
-            calibration.save_section(self.calibration_file, 'metal_detector', dict(
-                baseline_adc=float(baseline), full_response_adc=float(full), reference_voltage=float(reference)))
-            self.baseline, self.full_response = float(baseline), float(full)
-            self.reference_voltage = float(reference)
-            message = 'Zero level and detection trigger applied'
-            if action == 'zero':
-                span = now - self.recent_samples[0][0]
-                message = f'Zero level {baseline:.2f} ADC: averaged {len(recent)} readings over {span:.1f} s'
-            self.command_result = dict(request_id=request_id, ok=True, message=message)
-            self.get_logger().info(f'Detector calibration: zero={baseline:.2f}, trigger={full:.2f}')
+            def complete(ok, message):
+                if ok:
+                    self.baseline, self.full_response, self.reference_voltage = float(baseline), float(full), float(reference)
+                self.command_result = dict(request_id=request_id, ok=ok, message=message)
+                self.publish_state()
+            self.settings.save('metal_detector', dict(baseline_adc=float(baseline), full_response_adc=float(full),
+                reference_voltage=float(reference)), complete)
         except (ValueError, TypeError, OSError) as exc:
             self.command_result = dict(request_id=request_id, ok=False, message=str(exc))
         self.publish_state()
@@ -154,7 +170,8 @@ class SensorSerialNode(Node):
                      packet=self.latest_packet, baseline_adc=self.baseline,
                      full_response_adc=self.full_response, error=self.sensor.error,
                      reference_voltage=self.reference_voltage,
-                     command_result=self.command_result)
+                     command_result=self.command_result, applied_config_revision=self.applied_config_revision,
+                     configuration_error=self.configuration_error)
         self.state_pub.publish(String(data=json.dumps(value, allow_nan=False)))
 
     def destroy_node(self):
@@ -163,22 +180,7 @@ class SensorSerialNode(Node):
 
 
 def main():
-    stop = threading.Event()
-    # Launch can forward SIGINT twice, including during node cleanup.
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, lambda *_: stop.set())
-    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
-    node = None
-    try:
-        node = SensorSerialNode()
-        while not stop.is_set():
-            rclpy.spin_once(node, timeout_sec=0.05)
-    except (KeyboardInterrupt, ExternalShutdownException):
-        pass
-    finally:
-        if node is not None:
-            node.destroy_node()
-        rclpy.try_shutdown()
+    run_node(SensorSerialNode)
 
 
 if __name__ == '__main__':
