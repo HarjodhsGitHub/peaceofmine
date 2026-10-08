@@ -51,6 +51,8 @@ def save_section(path, section, value, expected_revision=None):
         data['revision'] = data.get('revision', 0) + 1
         data.setdefault('section_revisions', {})[section] = data['revision']
         data[section] = value
+        if isinstance(value, dict) and ((section in ('adc', 'adc_simulation') and {'config', 'routes'} <= value.keys()) or (section == 'cameras' and {'forward', 'capture'} <= value.keys())):
+            data.setdefault('lean_migrations', {})[section] = 1
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:

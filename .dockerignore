@@ -1,0 +1,11 @@
+.git
+build
+install
+log
+site
+**/__pycache__
+**/*.pyc
+**/.env
+**/*.pre-lean-v1.bak
+**/.*.lock
+DevTools

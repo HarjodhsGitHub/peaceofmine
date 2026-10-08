@@ -6,7 +6,7 @@ import time
 class AdcContact:
     def __init__(self, clock=time.monotonic):
         self.clock = clock
-        self.config = dict(enabled=False, mux=5, level=1., direction='above', hysteresis=0., debounce_ms=0.)
+        self.config = dict(enabled=False, mux=4, level=1., direction='above', hysteresis=0., debounce_ms=0.)
         self.value = None
         self.received = 0.
         self.detected = False

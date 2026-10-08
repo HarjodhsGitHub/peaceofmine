@@ -14,6 +14,7 @@ class BrowserInputs(unittest.TestCase):
         html = (DASHBOARD / 'index.html').read_text()
         import re
         html = re.sub(r'<script src="/assets/[^"]+"></script>', '', html)
+        html = re.sub(r'<iframe[^>]*>.*?</iframe>', '', html)
         html = html.replace('<link rel="stylesheet" href="/assets/style.css">', '<style>' + (DASHBOARD / 'style.css').read_text() + '</style>')
         setup = '''
 window.requestAnimationFrame = () => 0;
@@ -98,7 +99,7 @@ assert(getComputedStyle($('forward-network-camera')).objectFit === 'contain', 'c
 assert(!$('settings-input').classList.contains('active'), 'control tab closes');
 state.cameras = {front: {label: 'Front', topic: '/camera_front/camera_info'}, auxiliary: {label: 'Auxiliary', topic: '/camera_auxiliary/camera_info'}};
 updateNetworkCameraOptions();
-assert(preferences.cameras.forward === 'virtual', 'discovery preserves virtual selection');
+assert(preferences.cameras.forward === 'virtual', 'discovery preserves manual virtual selection');
 assert([...$('forward-camera-source').options].some(option => option.value === 'raspberry:front'), 'Raspberry Pi front camera listed');
 assert([...$('forward-camera-source').options].some(option => option.value === 'raspberry:auxiliary'), 'Raspberry Pi auxiliary camera listed');
 localCameras = [{deviceId: 'local-1', label: 'Laptop'}];
@@ -528,6 +529,36 @@ assert(frameDraws === 2 && detectorChart.$scrollPixels > 0, 'chart scrolls betwe
 assert(detectorChart.data.datasets[1].data.length === measuredCount, 'rendering does not invent angle samples');
 assert(sent.length === commandCount, 'rendering never renews motion permission');
 detectorChart.draw = oldDraw;
+// Desktop ratio uses usable column width, excluding the gap.
+const columns = getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns.split(' ').map(parseFloat);
+assert(columns.length === 2 && Math.abs(columns[0]/(columns[0]+columns[1])-.6) < .002, 'desktop camera/functions ratio is 60/40');
+// Auto needs successful stream probes and never asks for laptop permission.
+preferences.cameras.forward = 'auto';
+state.cameras = {z_aux:{topic:'/self/camera_auxiliary/camera_info',fps:30,frame_age_ms:0},
+  a_front:{topic:'/self/camera_front/camera_info',fps:30,frame_age_ms:0}};
+let laptopRequests = 0;
+const oldImage = window.Image;
+window.Image = class { removeAttribute() {} };
+const oldStart = startCamera;
+let chosen = null;
+startCamera = (slot, source) => { chosen = source; cameraSources[slot] = source; };
+resolveAutoCamera();
+assert(chosen === 'virtual', 'metadata alone never displays a live stream');
+autoCameraProbes.get('z_aux').image.onload();
+assert(chosen === 'raspberry:z_aux', 'working fallback becomes live');
+autoCameraProbes.get('a_front').image.onload();
+assert(chosen === 'raspberry:a_front', 'preferred forward replaces working fallback only after frames');
+state.cameras.a_front.frame_age_ms = 800; resolveAutoCamera();
+assert(chosen === 'raspberry:z_aux', 'stale preferred falls back');
+state.cameras.z_aux.frame_age_ms = 800; resolveAutoCamera();
+assert(chosen === 'virtual', 'all stale streams use labelled virtual fallback');
+state.cameras.a_front.frame_age_ms = 0;
+autoCameraProbes.get('a_front').at -= 3000; resolveAutoCamera();
+autoCameraProbes.get('a_front').image.onload();
+assert(chosen === 'raspberry:a_front', 'recovery returns automatically');
+preferences.cameras.forward = 'virtual'; chosen = null; resolveAutoCamera();
+assert(chosen === null, 'manual virtual selection persists');
+window.Image = oldImage; startCamera = oldStart;
 document.body.textContent = 'BROWSER TESTS PASSED';
 '''
         import json
@@ -538,10 +569,9 @@ document.body.textContent = 'BROWSER TESTS PASSED';
         with tempfile.TemporaryDirectory() as tmp:
             page = pathlib.Path(tmp) / 'test.html'
             page.write_text(html)
-            result = subprocess.run(['chromium', '--headless', '--no-sandbox', '--disable-gpu',
-                                     '--user-data-dir=' + tmp + '/profile', '--dump-dom', page.as_uri()],
-                                    capture_output=True, text=True, timeout=60)
-        self.assertIn('BROWSER TESTS PASSED</body>', result.stdout, result.stdout + result.stderr[-2000:])
+            from browser_harness import render
+            output = render(page, tmp)
+        self.assertIn('BROWSER TESTS PASSED</body>', output, output)
 
 
 if __name__ == '__main__':

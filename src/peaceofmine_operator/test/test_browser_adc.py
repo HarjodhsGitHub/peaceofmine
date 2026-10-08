@@ -81,7 +81,7 @@ preferences.cameras.forward='laptop-private-id';
 state.settings.cameras.forward.rotation=180; operatorSettingsState(state.settings);
 assert(preferences.cameras.forward==='laptop-private-id', 'laptop device selection remains local');
 $('camera-save-shared').click();
-assert(sent.at(-1).value.forward.source==='virtual', 'laptop ID never stored on robot');
+assert(sent.at(-1).value.forward.source==='auto', 'laptop ID never stored on robot');
 state.drive.you_control_owner=false; operatorSettingsState(state.settings);
 assert($('camera-save-shared').disabled, 'spectator cannot save robot defaults');
 await window.nextPoll();
@@ -91,13 +91,13 @@ assert($('adc-status').textContent==='DISCONNECTED', 'network failure surfaced')
 document.body.textContent='ADC BROWSER TESTS PASSED';
 '''
         html = re.sub(r'<script src="/assets/[^"]+"></script>', '', (DASHBOARD/'index.html').read_text())
+        html = re.sub(r'<iframe[^>]*>.*?</iframe>', '', html)
         html = html.replace('<link rel="stylesheet" href="/assets/style.css">', '<style>'+(DASHBOARD/'style.css').read_text()+'</style>')
         scripts = setup + 'window.adcResponse='+json.dumps(value)+';\nwindow.cameraDefaults='+json.dumps(CAMERA_DEFAULTS)+';\n'
         scripts += '\n'.join((DASHBOARD/name).read_text() for name in ('chart-4.4.8.umd.js','keydrown-1.3.0.js','actuator-settings.js','app.js','adc.js','camera-config.js'))
         html += '<script>(async()=>{try{'+scripts+checks+"}catch(e){document.body.textContent='FAILED: '+e.stack;}})();</script>"
         with tempfile.TemporaryDirectory() as tmp:
             page=Path(tmp)/'test.html'; page.write_text(html)
-            result=subprocess.run(['chromium','--headless','--no-sandbox','--disable-gpu',
-                                   '--user-data-dir='+tmp+'/profile','--dump-dom',page.as_uri()],
-                                  capture_output=True,text=True,timeout=60)
-        self.assertIn('ADC BROWSER TESTS PASSED</body>',re.sub(r'<head>.*?</head>', '', result.stdout, flags=re.S),re.sub(r'<head>.*?</head>', '', result.stdout, flags=re.S)+result.stderr[-2000:])
+            from browser_harness import render
+            output = render(page, tmp)
+        self.assertIn('ADC BROWSER TESTS PASSED</body>',re.sub(r'<head>.*?</head>', '', output, flags=re.S),re.sub(r'<head>.*?</head>', '', output, flags=re.S))

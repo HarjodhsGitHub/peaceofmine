@@ -127,6 +127,18 @@ def build_app(node: OperatorGateway) -> web.Application:
             raise web.HTTPNotFound()
         return web.FileResponse(dashboard / filename, headers={'Cache-Control': 'no-store'})
 
+    async def gnss_asset(request):
+        filename = request.match_info.get('filename') or 'index.html'
+        # Allow only packaged files; preserve colcon's symlink-install support.
+        from pathlib import PurePosixPath
+        parts = PurePosixPath(filename).parts
+        if not parts or any(part in ('.', '..') for part in parts) or filename.startswith('/'):
+            raise web.HTTPNotFound()
+        target = dashboard / 'gnss' / filename
+        if not target.is_file():
+            raise web.HTTPNotFound()
+        return web.FileResponse(target, headers={'Cache-Control': 'no-store'})
+
     async def camera_handler(request: web.Request) -> web.StreamResponse:
         camera = node._camera_frames.get(request.match_info['camera'])
         if camera is None:
@@ -165,6 +177,7 @@ def build_app(node: OperatorGateway) -> web.Application:
             node.release(ws)
         return ws
 
+    app.router.add_get('/gnss/{filename:.*}', gnss_asset)
     app.router.add_get('/', index_handler)
     app.router.add_get('/assets/{filename}', asset_handler)
     app.router.add_get('/camera/{camera}', camera_handler)

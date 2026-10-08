@@ -22,7 +22,7 @@ class DetectorTelemetry:
         if isinstance(packet, dict) and value.get('fresh'):
             key = (packet.get('seq'), packet.get('uptime_ms'))
             raw = packet.get('amplitude_adc')
-            if key != self.last_packet and type(raw) is int and 0 <= raw <= 255:
+            if key != self.last_packet and ((value.get('unit') == 'V' and type(raw) in (int, float)) or (type(raw) is int and 0 <= raw <= 255)):
                 self.history.append((self.updated, raw))
                 self.last_packet = key
 

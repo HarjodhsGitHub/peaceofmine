@@ -141,7 +141,7 @@ class ShutdownTest(unittest.TestCase):
         self.assertIn('ADC cleanup completed', result.stdout)
 
     def test_drive_signals_publish_neutral_before_ros_shutdown(self):
-        script = SCRIPTS.parents[1] / 'svea_examples/scripts/twist_consumer.py'
+        script = SCRIPTS.parents[1] / 'svea_core/scripts/twist_consumer.py'
         for sig in (signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=sig):
                 code = textwrap.dedent(f"""

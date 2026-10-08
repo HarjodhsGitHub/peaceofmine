@@ -54,7 +54,7 @@ class ADCNodeTest(unittest.TestCase):
                 spin(.4)
                 state = gateway.adc.snapshot()
                 self.assertTrue(state['demo'])
-                self.assertFalse(state['running'])
+                self.assertTrue(state['running'])
                 ws = object()
                 gateway.connect_client(ws)
                 spin(.2)

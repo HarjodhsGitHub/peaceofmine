@@ -10,10 +10,10 @@
     <label>Frames/s<input id="${slot}-capture-framerate" type="number" min="1" max="120" step="any"></label>
     <label>Pixel format<select id="${slot}-capture-pixel_format">${['mjpeg2rgb','yuyv2rgb','uyvy2rgb','rgb8','mono8'].map(v=>`<option>${v}</option>`).join('')}</select></label>
     </fieldset>`).join('');
-  const portable = source => ['off','virtual'].includes(source) || source.startsWith('raspberry:');
+  const portable = source => ['auto','off','virtual'].includes(source) || source.startsWith('raspberry:');
   function applyViews(cameras) {
     for (const slot of slots) {
-      if (!portable(preferences.cameras[slot])) continue;
+      if (!portable(preferences.cameras[slot]) || preferences.cameraManualChoice?.[slot]) continue;
       preferences.cameras[slot] = cameras[slot].source;
       preferences.cameraRotation[slot] = cameras[slot].rotation;
       startCamera(slot, cameras[slot].source);

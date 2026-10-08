@@ -28,7 +28,7 @@ class OperatorADCTest(unittest.TestCase):
                 result = adc.snapshot()
                 self.assertGreaterEqual(result['sequence'], 10)
                 self.assertEqual(result['applied'], result['revision'])
-                self.assertEqual({s['mux'] for s in result['samples']}, {4, 5})
+                self.assertEqual({s['mux'] for s in result['samples']}, {4, 7})
                 sample = next(s for s in result['samples'] if s['mux'] == 4)
                 self.assertAlmostEqual(sample['scaled'], sample['volts'] * 3 - 2)
                 self.assertEqual(adc.snapshot(result['sequence'])['samples'], [])

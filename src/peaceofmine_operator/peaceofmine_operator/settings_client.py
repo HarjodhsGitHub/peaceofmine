@@ -17,7 +17,7 @@ class SettingsClient:
             raise ValueError('A settings save is already pending')
         if not self.client.service_is_ready():
             raise ValueError('Settings service unavailable; nothing was saved')
-        if getattr(self.node,'simulation',False) and section in ('arm','probe','arm_motion','probe_motion'):
+        if getattr(self.node,'simulation',False) and section in ('arm','probe','arm_motion','probe_motion','metal_detector_adc'):
             section += '_simulation'
         revision = configuration.load(self.path).get('revision', 0)
         request = SaveSettings.Request(section=section, value_json=json.dumps(value, allow_nan=False), expected_revision=revision)

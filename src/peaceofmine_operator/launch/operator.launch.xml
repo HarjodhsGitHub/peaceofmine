@@ -50,7 +50,9 @@
   <arg name="probe_center" default="-1"/>
   <arg name="probe_maximum" default="-1"/>
 
-  <!-- Arduino detector -->
+  <!-- ADC replacement remains opt-in on hardware until detector sampling is validated. -->
+  <arg name="use_adc_detector" default="$(var is_sim)"/>
+  <!-- Legacy detector retained pending physical A3 acceptance. -->
   <arg name="use_sensor_serial" default="true"/>
   <arg name="sensor_serial_port" default="/dev/serial/by-id/usb-Arduino_Srl_Arduino_Uno_7543134333435170D1E2-if00"/>
   <arg name="sensor_baud_rate" default="115200"/>
@@ -111,6 +113,7 @@
     </node>
     <group unless="$(var is_sim)">
     <group unless="$(var simulate_payload)">
+    <group unless="$(var use_adc_detector)">
     <include if="$(var use_sensor_serial)" file="$(find-pkg-share peaceofmine_operator)/launch/sensor_serial.launch.xml">
       <arg name="serial_port" value="$(var sensor_serial_port)"/>
       <arg name="calibration_file" value="$(var config_file)"/>
@@ -119,6 +122,7 @@
       <arg name="full_response_adc" value="$(var sensor_full_response_adc)"/>
       <arg name="reference_voltage" value="$(var sensor_reference_voltage)"/>
     </include>
+    </group>
     <include if="$(var use_arm_servo)" file="$(find-pkg-share peaceofmine_operator)/launch/arm_servo.launch.xml">
       <arg name="serial_port" value="$(var arm_serial_port)"/>
       <arg name="servo_id" value="$(var arm_servo_id)"/>
@@ -140,7 +144,7 @@
     </include>
     </group>
     </group>
-    <node pkg="svea_examples" exec="twist_consumer.py" name="operator_twist_consumer" output="screen">
+    <node pkg="svea_core" exec="twist_consumer.py" name="operator_twist_consumer" output="screen">
       <param name="twist_top" value="cmd_vel"/>
       <param name="max_velocity" value="$(var max_velocity)"/>
       <param name="cmd_timeout" value="0.25"/>
@@ -157,6 +161,7 @@
     <node if="$(var simulate_payload)" pkg="peaceofmine_operator" exec="simulated_payload.py" name="simulated_payload" output="screen">
       <param name="odometry_topic" value="$(var odometry_topic)"/>
       <param name="fixture_angle_offset_deg" value="$(var fixture_angle_offset_deg)"/>
+      <param name="publish_detector" value="$(eval '&quot;false&quot; if &quot;$(var use_adc_detector)&quot; == &quot;true&quot; else &quot;true&quot;')"/>
     </node>
     <node pkg="peaceofmine_operator" exec="ads1115_node.py" name="ads1115" output="screen">
       <param name="simulation" value="$(var is_sim)"/>
@@ -171,9 +176,19 @@
       <param name="odometry_topic" value="$(var odometry_topic)" />
       <param name="max_velocity_mps" value="$(var max_velocity)" />
     </node>
+    <node if="$(var use_adc_detector)" pkg="peaceofmine_operator" exec="adc_detector_node.py" name="adc_detector" output="screen">
+      <param name="simulation" value="$(var is_sim)"/>
+      <param name="config_file" value="$(var config_file)" type="str"/>
+    </node>
     <node pkg="peaceofmine_operator" exec="detector_node.py" name="detector" output="screen">
       <param name="detector_threshold_ratio" value="$(var detector_threshold_ratio)"/>
       <param name="odometry_topic" value="$(var odometry_topic)"/>
+    </node>
+    <node pkg="peaceofmine_operator" exec="gnss_node.py" name="gnss" output="screen">
+      <param name="simulation" value="$(var is_sim)"/>
+      <param name="device" value="/dev/ttyAMA0"/>
+      <param name="frame_id" value="$(var name)/gps"/>
+      <param name="baud" value="115200"/>
     </node>
     <node pkg="peaceofmine_operator" exec="power_node.py" name="operator_power" output="screen"/>
     <node pkg="peaceofmine_operator" exec="camera_registry_node.py" name="camera_registry" output="screen"/>

@@ -7,7 +7,6 @@
   <maintainer email="kajarf@kth.se">Kaj Munhoz Arfvidsson</maintainer>
   <license>TODO: License declaration</license>
 
-  <depend>foxglove_bridge</depend>
   <depend>geometry_msgs</depend>
   <depend>mavros</depend>
   <depend>mavros_msgs</depend>

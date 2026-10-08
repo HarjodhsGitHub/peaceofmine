@@ -53,6 +53,9 @@ class DetectorNode(Node):
         try:
             value = json.loads(msg.data)
             self.sensor.update(value)
+            if value.get('unit') == 'V' and (not value.get('fresh') or value.get('calibration_required')):
+                self.signal_at = 0.
+                self.detected = False
             result = value.get('command_result') or {}
             if self.threshold_request and result.get('request_id') == self.threshold_request:
                 if result.get('ok'):

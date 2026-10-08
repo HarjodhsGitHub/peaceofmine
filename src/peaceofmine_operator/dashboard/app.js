@@ -99,10 +99,20 @@ if (!Number.isFinite(preferences.sensitivity)) preferences.sensitivity = 100;
 preferences.sensitivity = Math.max(50, Math.min(150, preferences.sensitivity));
 preferences.wheel = Object.assign({steering: 0, throttle: 1, brake: 2, deadman: 0,
   invertSteering: false, invertThrottle: true, invertBrake: true, deadzone: 0.05}, preferences.wheel);
-preferences.cameras = Object.assign({forward: 'virtual', auxiliary: 'off'}, preferences.cameras);
+if (preferences.cameraPolicyVersion !== 1) {
+  if (preferences.cameras?.forward && preferences.cameras.forward !== 'virtual') {
+    preferences.cameraManualChoice = {...preferences.cameraManualChoice, forward: true};
+  }
+  if (!preferences.cameras?.forward || preferences.cameras.forward === 'virtual') {
+    preferences.cameras = {...preferences.cameras, forward: 'auto'};
+  }
+  preferences.cameraPolicyVersion = 1;
+  try { localStorage.setItem('peaceofmine.operator.preferences', JSON.stringify(preferences)); } catch {}
+}
+preferences.cameras = Object.assign({forward: 'auto', auxiliary: 'off'}, preferences.cameras);
 for (const slot of ['forward', 'auxiliary']) {
   if (typeof preferences.cameras[slot] !== 'string' || !preferences.cameras[slot]) {
-    preferences.cameras[slot] = slot === 'forward' ? 'virtual' : 'off';
+    preferences.cameras[slot] = slot === 'forward' ? 'auto' : 'off';
   }
 }
 preferences.cameraRotation = Object.assign({forward: 0, auxiliary: 0}, preferences.cameraRotation);
@@ -307,6 +317,7 @@ function connect() {
     lastTelemetryAt = performance.now();
     if (!state.connected) setConnection(true, 'Raspberry Pi connected');
     Object.assign(state, message);
+    $('gnss-view')?.contentWindow?.postMessage({type: 'gnss', state: message.gnss}, location.origin);
     state.connected = true;
     window.operatorSettingsState?.(message.settings);
     recordDetectorAngle(lastTelemetryAt);
@@ -404,13 +415,13 @@ function updateHud() {
   $('sweep-toggle').disabled = !owner || !servoSafe;
   $('sweep-speed').disabled = !owner || !servoSafe;
 
-  $('speed').textContent = `${Math.abs(robot.speed_mps).toFixed(2)} m/s`;
+  $('speed').textContent = Number.isFinite(robot.speed_mps) ? `${Math.abs(robot.speed_mps).toFixed(2)} m/s` : 'Speed unavailable';
 
   const signalPercent = detector.signal_ratio * 100;
   $('signal').textContent = detector.fresh === false ? '--' : Math.round(signalPercent);
   const rawAdc = detector.sensor?.packet?.amplitude_adc;
   $('detector-raw').textContent = detector.fresh !== false && detector.sensor?.fresh === true && Number.isFinite(rawAdc)
-    ? `${rawAdc} ADC` : '-- ADC';
+    ? `${rawAdc} ${detector.sensor?.unit || 'ADC'}` : `-- ${detector.sensor?.unit || 'ADC'}`;
   $('meter-fill').style.width = `${detector.fresh === false ? 0 : signalPercent}%`;
   $('meter-fill').style.background = detectorColor(detector.signal_ratio);
   $('threshold').style.left = `${detector.threshold_ratio * 100}%`;
@@ -453,7 +464,7 @@ function updateHud() {
     : !owner ? 'Spectator mode' : safe ? 'RC permits ROS driving' : state.safety?.reason || 'Waiting for RC';
 
   const heading = ((robot.yaw * 180 / Math.PI % 360) + 360) % 360;
-  $('position').textContent = `X ${robot.x.toFixed(1)} · Y ${robot.y.toFixed(1)} · heading ${heading.toFixed(0)}°`;
+  $('position').textContent = robot.pose_available === false ? 'Position unavailable' : `X ${robot.x.toFixed(1)} · Y ${robot.y.toFixed(1)} · heading ${heading.toFixed(0)}°`;
 
   updateInputHint();
 }
@@ -1126,6 +1137,9 @@ function drawMap(pose = state.robot) {
     context.stroke();
   }
 
+  if (pose.pose_available === false) {
+    context.fillStyle = '#dff3df'; context.fillText('Position unavailable', 12, 22); return;
+  }
   const rover = toScreen(pose.x, pose.y);
   context.save();
   context.translate(rover.x, rover.y);
@@ -1341,7 +1355,45 @@ function stopCameraStream(slot) {
   networkImage.removeAttribute('src');
 }
 
+function resolvedCamera(slot) {
+  return preferences.cameras[slot] === 'auto' ? (cameraSources[slot] || 'virtual') : preferences.cameras[slot];
+}
+
+const autoCameraProbes = new Map();
+function resolveAutoCamera() {
+  if (preferences.cameras.forward !== 'auto') return;
+  const ready = Object.entries(state.cameras || {}).filter(([, c]) =>
+    Number.isFinite(c.frame_age_ms) && c.frame_age_ms < 500 && c.fps > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
+  for (const [id, probe] of autoCameraProbes) {
+    if (!ready.some(([candidate]) => candidate === id)) {
+      probe.ready = false; probe.pending = false; probe.image.removeAttribute('src');
+    }
+  }
+  for (const [id] of ready) {
+    let probe = autoCameraProbes.get(id);
+    if (!probe || (!probe.pending && !probe.ready && Date.now()-probe.at > 2000)) {
+      const image = new Image();
+      probe = {image, at: Date.now(), ready: false, pending: true};
+      autoCameraProbes.set(id, probe);
+      const timeout = setTimeout(() => { probe.pending = false; image.removeAttribute('src'); }, 2000);
+      image.onload = () => {
+        clearTimeout(timeout); probe.pending = false; probe.ready = true;
+        image.onload = image.onerror = null; image.removeAttribute('src'); resolveAutoCamera();
+      };
+      image.onerror = () => { clearTimeout(timeout); probe.pending = false; probe.ready = false; image.removeAttribute('src'); };
+      image.src = `/camera/${encodeURIComponent(id)}?auto_probe=${Date.now()}`;
+    }
+  }
+  const usable = ready.filter(([id]) => autoCameraProbes.get(id)?.ready);
+  const preferred = usable.find(([id, c]) => /front|forward/i.test(id + ' ' + c.topic));
+  const current = usable.find(([id]) => cameraSources.forward === `raspberry:${id}`);
+  const camera = preferred || current || usable[0];
+  startCamera('forward', camera ? `raspberry:${camera[0]}` : 'virtual');
+}
+
 async function startCamera(slot, source, force = false) {
+  if (source === 'auto') { resolveAutoCamera(); return; }
   if (!force && cameraSources[slot] === source) return;
   stopCameraStream(slot);
   cameraSources[slot] = source;
@@ -1355,6 +1407,13 @@ async function startCamera(slot, source, force = false) {
     networkImage.onerror = () => {
       if (!current()) return;
       cameraErrors[slot] = 'STREAM OFFLINE · retrying';
+      if (slot === 'forward' && preferences.cameras.forward === 'auto') {
+        const probe = autoCameraProbes.get(source.slice(10));
+        if (probe) { probe.ready = false; probe.at = Date.now(); }
+        resolveAutoCamera();
+        return;
+      }
+      updateCameraVisibility();
       $('camera-source-status').textContent = 'Camera stream unavailable. Retrying automatically…';
       updateCameraLatency();
       clearTimeout(cameraRetries[slot]);
@@ -1363,7 +1422,7 @@ async function startCamera(slot, source, force = false) {
     networkImage.onload = () => {
       if (!current()) return;
       cameraErrors[slot] = '';
-      updateCameraLatency();
+      updateCameraVisibility();
     };
     networkImage.src = `/camera/${encodeURIComponent(source.slice(10))}?t=${Date.now()}`;
     return;
@@ -1397,12 +1456,12 @@ async function startCamera(slot, source, force = false) {
 }
 
 function updateCameraVisibility() {
-  const forwardIsNetwork = preferences.cameras.forward.startsWith('raspberry:');
-  const forwardIsVirtual = preferences.cameras.forward === 'virtual';
+  const forwardIsNetwork = resolvedCamera('forward').startsWith('raspberry:') && !cameraErrors.forward && Boolean($('forward-network-camera').naturalWidth);
+  const forwardIsVirtual = resolvedCamera('forward') === 'virtual' || (preferences.cameras.forward === 'auto' && !forwardIsNetwork);
   forward.classList.toggle('hidden', !forwardIsVirtual);
-  $('forward-video').classList.toggle('hidden', forwardIsVirtual || forwardIsNetwork);
+  $('forward-video').classList.toggle('hidden', forwardIsVirtual || forwardIsNetwork || resolvedCamera('forward') === 'off');
   $('forward-network-camera').classList.toggle('hidden', !forwardIsNetwork);
-  $('forward-camera-label').textContent = forwardIsVirtual ? 'VIRTUAL FORWARD CAMERA' : forwardIsNetwork ? 'RASPBERRY PI CAMERA' : 'LOCAL CAMERA';
+  $('forward-camera-label').textContent = forwardIsVirtual ? 'VIRTUAL FORWARD CAMERA' : forwardIsNetwork ? 'RASPBERRY PI CAMERA' : resolvedCamera('forward') === 'off' ? 'CAMERA OFF' : 'LOCAL CAMERA';
   $('forward-camera-latency').classList.toggle('hidden', !forwardIsNetwork && !cameraErrors.forward);
   const auxiliaryIsNetwork = preferences.cameras.auxiliary.startsWith('raspberry:');
   const auxiliaryIsLocal = preferences.cameras.auxiliary !== 'off' && Boolean(cameraStreams.auxiliary);
@@ -1432,7 +1491,7 @@ function updateCameraLatency() {
     element.classList.toggle('stale', age > 500);
   };
   const selected = source => source.startsWith('raspberry:') ? state.cameras?.[source.slice(10)] : null;
-  render($('forward-camera-latency'), selected(preferences.cameras.forward), 'forward');
+  render($('forward-camera-latency'), selected(resolvedCamera('forward')), 'forward');
   render($('aux-camera-latency'), selected(preferences.cameras.auxiliary), 'auxiliary');
 }
 
@@ -1444,6 +1503,7 @@ function rebuildCameraOptions() {
     const select = $(id);
     const selected = preferences.cameras[slot];
     select.replaceChildren(new Option(label, fallback));
+    if (slot === 'forward') { select.add(new Option('Automatic · robot camera / virtual fallback', 'auto')); select.add(new Option('Off', 'off')); }
     Object.entries(state.cameras || {}).forEach(([id, camera]) =>
       select.add(new Option(`Raspberry Pi · ${camera.label}`, `raspberry:${id}`)));
     localCameras.filter(camera => camera.deviceId).forEach((camera, index) =>
@@ -1456,6 +1516,7 @@ function rebuildCameraOptions() {
 }
 
 function updateNetworkCameraOptions() {
+  resolveAutoCamera();
   const signature = JSON.stringify(Object.entries(state.cameras || {}).map(([id, camera]) => [id, camera.topic, camera.label]));
   if (signature === networkCameraSignature) return;
   networkCameraSignature = signature;
@@ -1486,7 +1547,7 @@ async function refreshCameraDevices(requestPermission = false) {
     rebuildCameraOptions();
     $('camera-source-status').textContent = `${Object.keys(state.cameras || {}).length} Raspberry Pi camera source(s) · ${localCameras.length} laptop camera(s).`;
     for (const slot of ['forward', 'auxiliary']) {
-      const source = preferences.cameras[slot];
+      const source = resolvedCamera(slot);
       if (localCameras.some(camera => camera.deviceId === source && camera.label)) await startCamera(slot, source);
     }
   } catch (error) {
@@ -1497,7 +1558,7 @@ async function refreshCameraDevices(requestPermission = false) {
 }
 
 function selectedCameraElement(slot) {
-  const source = preferences.cameras[slot];
+  const source = resolvedCamera(slot);
   if (source === 'off') return null;
   if (source === 'virtual') return forward;
   return $(slot === 'forward'
@@ -1521,7 +1582,7 @@ function applyCameraRotations() {
 }
 
 function cameraDetails(slot) {
-  const source = preferences.cameras[slot];
+  const source = resolvedCamera(slot);
   const element = selectedCameraElement(slot);
   const network = source.startsWith('raspberry:');
   const camera = network ? state.cameras?.[source.slice(10)] : null;
@@ -1614,7 +1675,12 @@ function updateMetalSettings() {
     ? (state.detector.fresh ? 'SIMULATED / NO RAW DATA' : 'NO DRIVER') : fresh ? 'LIVE' : 'STALE';
   $('metal-status').className = `badge ${fresh ? 'safe' : 'neutral'}`;
   const amplitudeAdc = fresh ? sensor.packet?.amplitude_adc : null;
-  $('metal-raw').textContent = amplitudeAdc == null ? '-- ADC' : `${amplitudeAdc} ADC`;
+  const unit = sensor.unit || 'ADC';
+  $('metal-voltage').previousElementSibling.textContent = unit === 'V' ? 'Measured A3 voltage' : 'Estimated peak voltage';
+  $('metal-baseline').parentNode.firstChild.textContent = `Zero level (${unit})`;
+  $('metal-full').parentNode.firstChild.textContent = `Mine trigger (${unit})`;
+  for (const id of ['metal-baseline', 'metal-full']) { $(id).min = unit === 'V' ? -6.144 : 0; $(id).max = unit === 'V' ? 6.144 : 255; $(id).step = unit === 'V' ? .001 : .01; }
+  $('metal-raw').textContent = amplitudeAdc == null ? '-- ADC' : `${amplitudeAdc} ${unit}`;
   $('metal-voltage').textContent = amplitudeAdc == null
     ? '-- V peak' : `${(amplitudeAdc * sensorReferenceVoltage / 255).toFixed(2)} V peak`;
   $('metal-response').textContent = fresh ? `${(state.detector.signal_ratio * 100).toFixed(1)} %` : '-- %';
@@ -1623,11 +1689,12 @@ function updateMetalSettings() {
   $('metal-port').textContent = sensor.port || '--';
   $('metal-counts').textContent = `${sensor.received ?? 0} / ${sensor.invalid_lines ?? 0}`;
   $('metal-sequence').textContent = sensor.packet ? `${sensor.packet.seq} / ${sensor.packet.uptime_ms} ms` : '--';
-  $('metal-error').textContent = !available ? 'Arduino driver unavailable' : sensor.error || (fresh ? 'Receiving valid packets' : 'Waiting for valid readings');
+  $('metal-error').textContent = !available ? 'Detector driver unavailable' : sensor.error || (fresh ? 'Receiving valid packets' : 'Waiting for valid readings');
+  const adcVoltage = sensor.unit === 'V';
   const reference = sensor.reference_voltage ?? 5;
-  const voltage = sensor.packet?.amplitude_adc * reference / 255;
+  const voltage = adcVoltage ? sensor.packet?.voltage_volts : sensor.packet?.amplitude_adc * reference / 255;
   $('metal-voltage').textContent = fresh ? `${voltage.toFixed(3)} V` : '-- V';
-  $('metal-voltage-note').textContent = fresh && voltage > reference / 2
+  $('metal-voltage-note').textContent = adcVoltage ? 'ADS1115 A3 measured voltage · physical detector sampling acceptance pending' : fresh && voltage > reference / 2
     ? 'Above the centered sine range: check clipping or waveform shape. Voltage is an amplitude estimate.'
     : `Sine-equivalent AC peak, excluding DC bias. Reference ${reference.toFixed(2)} V.`;
   const threshold = state.detector.threshold_ratio;
@@ -1645,12 +1712,12 @@ function updateMetalSettings() {
     metalFeedback = 'No acknowledgement from detector driver.';
     metalPending = null;
   }
-  const moving = Math.abs(state.robot.speed_mps) > 0.03;
+  const moving = !Number.isFinite(state.robot.speed_mps) || Math.abs(state.robot.speed_mps) > 0.03;
   const allowed = fresh && owner && !moving && !metalPending;
   for (const id of ['metal-zero', 'metal-apply', 'metal-reset']) $(id).disabled = !allowed;
   $('metal-control').hidden = owner;
   $('metal-control').disabled = !state.connected;
-  $('metal-feedback').textContent = !fresh ? 'Fresh Arduino readings required for calibration.'
+  $('metal-feedback').textContent = !fresh ? 'Fresh detector readings required for calibration.'
     : !owner ? 'Take control to calibrate.' : moving ? 'Stop the vehicle to calibrate.'
     : metalPending ? 'Applying calibration...' : metalFeedback || 'Ready';
   const packetKey = JSON.stringify(sensor.packet);
@@ -1717,6 +1784,7 @@ function drawDetectorHistory(now = performance.now(), animate = false) {
   for (const [index, value] of [[2, zero], [3, trigger]]) {
     detectorChart.data.datasets[index].data = Number.isFinite(value) ? [{x: -30, y: value}, {x: 0, y: value}] : [];
   }
+  detectorChart.data.datasets[0].label = sensor.unit === 'V' ? 'A3 voltage (V)' : 'ADC';
   window.operatorADCOverlay?.(detectorChart, 'detector', 4);
   detectorChart.$scrollPixels = 0;
   detectorChart.$renderedAt = now;
@@ -1734,10 +1802,11 @@ function drawMetalHistory(animate = false) {
   const baseline = state.detector.sensor?.baseline_adc;
   const trigger = baseline + (state.detector.sensor?.full_response_adc - baseline) * state.detector.threshold_ratio;
   const plotValues = [...values, baseline, trigger].filter(Number.isFinite);
-  let low = 0, high = 255;
+  const voltsMode = state.detector.sensor?.unit === 'V';
+  let low = voltsMode ? -6.144 : 0, high = voltsMode ? 6.144 : 255;
   if ($('metal-autoscale').checked && plotValues.length) {
-    low = Math.max(0, Math.floor(Math.min(...plotValues) - 3));
-    high = Math.min(255, Math.ceil(Math.max(...plotValues) + 3));
+    low = voltsMode ? Math.min(...plotValues)-.05 : Math.max(0, Math.floor(Math.min(...plotValues) - 3));
+    high = voltsMode ? Math.max(...plotValues)+.05 : Math.min(255, Math.ceil(Math.max(...plotValues) + 3));
   }
   if (!metalChart) {
     metalChart = new Chart(canvas, {
@@ -1770,6 +1839,7 @@ function drawMetalHistory(animate = false) {
     ? [{x: -seconds, y: baseline}, {x: 0, y: baseline}] : [];
   metalChart.data.datasets[2].data = Number.isFinite(trigger)
     ? [{x: -seconds, y: trigger}, {x: 0, y: trigger}] : [];
+  metalChart.data.datasets[0].label = voltsMode ? 'A3 voltage (V)' : 'Amplitude (ADC)';
   metalChart.options.scales.x.min = -seconds;
   metalChart.options.scales.y.min = low;
   metalChart.options.scales.y.max = high;
@@ -1779,7 +1849,7 @@ function drawMetalHistory(animate = false) {
   metalChart.update('none');
   canvas.setAttribute('aria-label', `Raw metal detector amplitude over the last ${seconds} seconds`);
   $('metal-range').textContent = values.length
-    ? `Min ${Math.min(...values)} · Max ${Math.max(...values)} · Peak-to-peak ${Math.max(...values) - Math.min(...values)} ADC`
+    ? `Min ${Math.min(...values)} · Max ${Math.max(...values)} · Peak-to-peak ${Math.max(...values) - Math.min(...values)} ${state.detector.sensor?.unit || 'ADC'}`
     : `No raw readings in the last ${seconds} seconds`;
 }
 
@@ -1796,9 +1866,9 @@ function initializeMetalSettings() {
       if (!$('metal-baseline').value || !$('metal-full').value) { metalFeedback = 'Enter a zero level and mine trigger.'; updateMetalSettings(); return; }
       payload.baseline_adc = Number($('metal-baseline').value);
       payload.full_response_adc = Number($('metal-full').value);
-      if (![payload.baseline_adc, payload.full_response_adc].every(v => Number.isFinite(v) && v >= 0 && v <= 255)
-          || Math.abs(payload.full_response_adc - payload.baseline_adc) < 1) {
-        metalFeedback = 'Zero level and mine trigger must be within 0..255 and at least one count apart.'; updateMetalSettings(); return;
+      if (![payload.baseline_adc, payload.full_response_adc].every(v => Number.isFinite(v) && (state.detector.sensor?.unit === 'V' ? Math.abs(v) <= 6.144 : v >= 0 && v <= 255))
+          || Math.abs(payload.full_response_adc - payload.baseline_adc) < (state.detector.sensor?.unit === 'V' ? .001 : 1)) {
+        metalFeedback = 'Enter distinct calibration endpoints within the displayed input range.'; updateMetalSettings(); return;
       }
     }
     metalPending = {id, at: performance.now()};
@@ -1811,7 +1881,7 @@ function initializeMetalSettings() {
   $('metal-autoscale').onchange = drawMetalHistory;
   $('metal-time-range').onchange = drawMetalHistory;
   $('metal-export').onclick = () => {
-    const rows = ['age_seconds,amplitude_adc', ...(state.detector.sensor?.history || []).map(s => `${s.age_s},${s.adc}`)];
+    const rows = [state.detector.sensor?.unit === 'V' ? 'age_seconds,voltage_volts' : 'age_seconds,amplitude_adc', ...(state.detector.sensor?.history || []).map(s => `${s.age_s},${s.adc}`)];
     const url = URL.createObjectURL(new Blob([rows.join('\n')], {type: 'text/csv'}));
     const link = document.createElement('a'); link.href = url; link.download = 'detector-readings.csv'; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -1877,11 +1947,13 @@ function initializeInputs() {
   $('refresh-cameras').onclick = () => refreshCameraDevices(true);
   $('forward-camera-source').onchange = async event => {
     stopInput();
+    preferences.cameraManualChoice = {...preferences.cameraManualChoice, forward: true};
     preferences.cameras.forward = event.target.value;
     savePreferences();
     await startCamera('forward', event.target.value);
   };
   $('aux-camera-source').onchange = async event => {
+    preferences.cameraManualChoice = {...preferences.cameraManualChoice, auxiliary: true};
     preferences.cameras.auxiliary = event.target.value;
     savePreferences();
     await startCamera('auxiliary', event.target.value);

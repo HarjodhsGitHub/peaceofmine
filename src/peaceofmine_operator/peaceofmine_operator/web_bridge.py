@@ -23,6 +23,8 @@ class OperatorWebBridge(Node):
         self._state_at = 0
         self._camera_frames = {}
         self._cameras_at = 0
+        self._gnss = {}
+        self._gnss_at = 0
         self._power = {}
         self._power_at = 0
         self._detector = {}
@@ -43,7 +45,7 @@ class OperatorWebBridge(Node):
                 ('arm/result', self._device_result), ('probe/result', self._device_result),
                 ('operator/state', self._control_state), ('operator/result', self._control_result),
                 ('adc/state', self._adc_state), ('adc/command_result', self._device_result),
-                ('cameras/state', self._camera_state), ('power/state', self._power_state),
+                ('gnss/state', self._gnss_state), ('cameras/state', self._camera_state), ('power/state', self._power_state),
                 ('operator/settings', self._settings_state), ('operator/settings/result', self._device_result)):
             self.create_subscription(String, topic, self._json_callback(callback), 10)
         self.create_timer(.1, self._heartbeat)
@@ -71,6 +73,9 @@ class OperatorWebBridge(Node):
 
     def _camera_state(self, value):
         self._camera_frames, self._cameras_at = value, time.monotonic()
+
+    def _gnss_state(self, value):
+        self._gnss, self._gnss_at = value, time.monotonic()
 
     def _power_state(self, value):
         self._power, self._power_at = value, time.monotonic()
@@ -194,6 +199,7 @@ class OperatorWebBridge(Node):
                     'reason': actuators['probe'].get('reason', 'Probe unavailable')}
 
             value['cameras'] = copy.deepcopy(self._camera_frames) if time.monotonic()-self._cameras_at < 1 else {}
+            value['gnss'] = copy.deepcopy(self._gnss) if time.monotonic()-self._gnss_at < 2 else {'connected': False, 'fresh': False, 'stale': True, 'latitude': None, 'longitude': None, 'fix_quality': 0, 'fix_label': 'UNAVAILABLE'}
             value['power'] = copy.deepcopy(self._power) if time.monotonic()-self._power_at < 1 else {}
             value['settings'] = copy.deepcopy(self._settings) if time.monotonic()-self._settings_at < 2 else None
             return value

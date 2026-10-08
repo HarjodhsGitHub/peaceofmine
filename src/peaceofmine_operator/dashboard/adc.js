@@ -25,7 +25,7 @@
       inputs[2].value = value.config.channels[i].offset;
       row.querySelector('select').value = value.routes[i];
     });
-    const trigger = value.probe_trigger || {enabled:false,mux:5,level:1,direction:'above'};
+    const trigger = value.probe_trigger || {enabled:false,mux:4,level:1,direction:'above'};
     el('trigger-enabled').checked = trigger.enabled;
     el('trigger-mux').value = trigger.mux;
     el('trigger-level').value = trigger.level;

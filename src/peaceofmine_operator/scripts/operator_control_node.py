@@ -9,7 +9,8 @@ from typing import Any
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TwistWithCovarianceStamped
+from rclpy.qos import qos_profile_sensor_data
 from mavros_msgs.msg import State, RCIn
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Joy
@@ -96,8 +97,11 @@ class OperatorControl(Node):
         self._detector_command_pub = self.create_publisher(String, 'detector/command', 10)
         self.create_subscription(String, 'detector/state', self._detector_state_cb, 10)
         self._probe_fault = False
+        self._pose_at = 0.
         self._pose = {'x': 0.0, 'y': 0.0, 'yaw': 0.0}
         self._speed = 0.0
+        self._speed_at = 0.
+        self._wheel_stamp = -1
 
         self._max_velocity = float(self.get_parameter('max_velocity_mps').value)
         self._max_yaw_rate = float(self.get_parameter('max_yaw_rate_rad_s').value)
@@ -108,6 +112,7 @@ class OperatorControl(Node):
         self._sweep_enabled_pub = self.create_publisher(ActuatorCommand, 'arm/command', 1)
         self._sweep_speed_pub = self.create_publisher(Float32, str(self.get_parameter('fixture_sweep_speed_topic').value), 10)
         self.create_subscription(Odometry, str(self.get_parameter('odometry_topic').value), self._odometry_cb, 10)
+        self.create_subscription(TwistWithCovarianceStamped, 'mavros/wheel_odometry/velocity', self._wheel_velocity_cb, qos_profile_sensor_data)
         self.create_subscription(Bool, str(self.get_parameter('probe_fault_topic').value), self._probe_fault_cb, 10)
         self.create_subscription(Joy, str(self.get_parameter('joy_topic').value), self._joy_cb, 10)
         self.create_timer(0.05, self._drive_watchdog)
@@ -181,8 +186,21 @@ class OperatorControl(Node):
         yaw = math.atan2(2.0 * (quaternion.w * quaternion.z + quaternion.x * quaternion.y),
                          1.0 - 2.0 * (quaternion.y ** 2 + quaternion.z ** 2))
         with self._lock:
+            if not all(math.isfinite(v) for v in (message.pose.pose.position.x, message.pose.pose.position.y, yaw)):
+                return
+            self._pose_at = time.monotonic()
             self._pose = {'x': message.pose.pose.position.x, 'y': message.pose.pose.position.y, 'yaw': yaw}
             self._speed = message.twist.twist.linear.x
+            self._speed_at = time.monotonic() if math.isfinite(self._speed) else 0.
+
+    def _wheel_velocity_cb(self, message):
+        stamp = message.header.stamp.sec*1000000000+message.header.stamp.nanosec
+        speed = message.twist.twist.linear.x
+        with self._lock:
+            if stamp <= self._wheel_stamp or not math.isfinite(speed):
+                return
+            self._wheel_stamp = stamp
+            self._speed, self._speed_at = speed, time.monotonic()
 
     def _detector_state_cb(self, message):
         try:
@@ -361,7 +379,7 @@ class OperatorControl(Node):
                     'max_velocity_mps': self._max_velocity,
                     'max_yaw_rate_rad_s': self._max_yaw_rate,
                 },
-                'robot': {**self._pose, 'speed_mps': self._speed},
+                'robot': {**(self._pose if time.monotonic()-self._pose_at < .5 else dict(x=None, y=None, yaw=None)), 'pose_available':time.monotonic()-self._pose_at < .5, 'speed_mps': self._speed if time.monotonic()-self._speed_at < .5 else None, 'velocity_fresh':time.monotonic()-self._speed_at < .5},
 
             }
 

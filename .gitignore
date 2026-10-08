@@ -23,3 +23,10 @@ DevTools/gnss_viewer/.env
 venv/
 site/
 .calibration.json.lock
+
+# Local secrets, ADC migrations and settings locks
+.env
+*.pre-lean-v1.bak
+.operator_config.json.lock
+
+.venv/

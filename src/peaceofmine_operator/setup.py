@@ -13,8 +13,10 @@ setup(
         ('share/ament_index/resource_index/packages', [f'resource/{package_name}']),
         (f'share/{package_name}', ['package.xml', 'operator_config.json']),
         (f'share/{package_name}/launch', glob('launch/*.py') + glob('launch/*.xml')),
-        (f'share/{package_name}/dashboard', glob('dashboard/*')),
+        (f'share/{package_name}/dashboard', [p for p in glob('dashboard/*') if __import__('os').path.isfile(p)]),
         (f'lib/{package_name}', glob('scripts/*.py')),
+        *[(f'share/{package_name}/' + str(path.parent), [str(path)])
+          for path in __import__('pathlib').Path('dashboard/gnss').rglob('*') if path.is_file()],
     ],
     install_requires=['setuptools'],
     tests_require=['pytest'],

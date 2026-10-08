@@ -7,12 +7,10 @@
 #
 # You can read more here: https://pip.pypa.io/en/stable/reference/requirements-file-format/#requirements-file-format
 
-numpy
+numpy>=1.26,<2 # Match Jazzy binary extensions
 matplotlib # For plotting the localization results and map
 pillow # for coloring the markers
 
-# This is for MPC
-casadi==3.6.7
 
 # These are for RTK-GPS
 pyserial
@@ -32,3 +30,6 @@ dynamixel-sdk==3.7.31
 
 # ADS1115 operator sensor acquisition
 smbus2>=0.4,<1
+
+# Integrated GNSS receiver parsing (NTRIP uses the standard library)
+pynmea2>=1.19,<2

@@ -30,11 +30,17 @@ def bringup(context):
         actions.append(IncludeLaunchDescription(AnyLaunchDescriptionSource(str(path)), launch_arguments={
             'name': name, 'serial_device': values['lli_serial_device'], 'baud_rate': values['lli_baud_rate'],
         }.items()))
+    if not IfCondition(LaunchConfiguration('use_localization')).evaluate(context):
+        for sensor, xyz in (('imu', (.10, -.047, .17)), ('gps', (.04, .103, .140))):
+            actions.append(Node(package='tf2_ros', executable='static_transform_publisher',
+                name=f'operator_{sensor}_frame', namespace=name,
+                arguments=['--x', str(xyz[0]), '--y', str(xyz[1]), '--z', str(xyz[2]),
+                           '--frame-id', f'{name}/base_link', '--child-frame-id', f'{name}/{sensor}']))
     if IfCondition(LaunchConfiguration('use_localization')).evaluate(context):
         keys = ('name', 'is_sim', 'is_indoor', 'use_lidar', 'use_rtk',
                 'initial_pose_x', 'initial_pose_y', 'initial_pose_a')
         actions.append(ExecuteProcess(cmd=['ros2', 'launch', 'svea_localization', 'localization.launch.py',
-                                           *(f'{key}:={values[key]}' for key in keys)], output='screen'))
+                                           'external_gnss:=true', *(f'{key}:={values[key]}' for key in keys)], output='screen'))
     return actions
 
 

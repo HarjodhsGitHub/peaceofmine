@@ -3,7 +3,7 @@ import copy
 import math
 
 DEFAULTS = {
-    'forward': {'source': 'virtual', 'rotation': 0},
+    'forward': {'source': 'auto', 'rotation': 0},
     'auxiliary': {'source': 'off', 'rotation': 0},
     'capture': {
         'forward': {'device': 'auto', 'width': 640, 'height': 480, 'framerate': 30.0, 'pixel_format': 'mjpeg2rgb'},
@@ -21,7 +21,7 @@ def validate(value):
             raise ValueError('Invalid camera view')
         source = view['source']
         if (not isinstance(source, str) or len(source) > 250
-                or (source not in ('off', 'virtual') and not source.startswith('raspberry:'))):
+                or (source not in ('auto', 'off', 'virtual') and not source.startswith('raspberry:'))):
             raise ValueError('Laptop camera IDs are local to the browser; choose a ROS camera, virtual or off')
         if type(view['rotation']) is not int or view['rotation'] not in (0, 90, 180, 270):
             raise ValueError('Camera rotation must be 0, 90, 180 or 270')

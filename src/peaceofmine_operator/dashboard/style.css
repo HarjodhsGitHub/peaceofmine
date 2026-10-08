@@ -142,7 +142,7 @@ header {
   height: calc(100% - 3.25rem);
   min-height: 34rem;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(285px, 340px);
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   grid-template-rows: minmax(0, 1fr) minmax(300px, .45fr);
   gap: .7rem;
 }
@@ -1134,3 +1134,6 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 #camera-capture-settings fieldset {border:1px solid #34504f;border-radius:.5rem;padding:1rem}
 #camera-capture-settings label {display:grid;grid-template-columns:90px minmax(0,1fr);gap:.5rem;align-items:center;margin:.5rem 0}
 #camera-capture-settings input {min-width:0;padding:.65rem;background:#07191e;color:#e8f1ed;border:1px solid #34504f;border-radius:.4rem}
+
+.gnss-panel { margin: .7rem; }
+.gnss-panel iframe { width: 100%; height: 850px; border: 0; }

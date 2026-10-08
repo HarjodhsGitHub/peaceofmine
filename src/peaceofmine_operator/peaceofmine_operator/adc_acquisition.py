@@ -146,16 +146,17 @@ class Acquisition:
 class OperatorADC:
     def __init__(self, path, demo=False):
         self.path = Path(path).expanduser()
-        self.probe_trigger = dict(enabled=False, mux=5, level=1.0, direction='above')
+        self.probe_trigger = dict(enabled=False, mux=4, level=1.0, direction='above')
         self.routes = ['none'] * 8
-        self.routes[4:6] = ['detector', 'probe']
+        self.routes[4], self.routes[7] = 'probe', 'detector'
         config = copy.deepcopy(DEFAULTS)
         for ch in config['channels']:
-            ch['enabled'] = ch['mux'] in (4, 5)
+            ch['enabled'] = ch['mux'] in (4, 7)
         self.section = 'adc_simulation' if demo else 'adc'
         self.load_error = None
         try:
-            saved = configuration.load(str(self.path))
+            from .lean_migration import migrated
+            saved = migrated(configuration.load(str(self.path)), demo)
             section = 'adc_simulation' if demo else 'adc'
             value = saved.get(section)
             if value is not None:
@@ -176,7 +177,7 @@ class OperatorADC:
         if not isinstance(routes, list) or len(routes) != 8 or any(
                 route not in ('none', 'detector', 'probe', 'both') for route in routes):
             raise ValueError('Each input needs a valid plot destination')
-        trigger = value.get('probe_trigger', dict(enabled=False, mux=5, level=1.0, direction='above'))
+        trigger = value.get('probe_trigger', dict(enabled=False, mux=4, level=1.0, direction='above'))
         if not isinstance(trigger, dict) or not {'enabled', 'mux', 'level', 'direction'} <= set(trigger) or set(trigger) - {'enabled','mux','level','direction','hysteresis','debounce_ms'}:
             raise ValueError('Invalid probe trigger settings')
         if (type(trigger['enabled']) is not bool or type(trigger['mux']) is not int

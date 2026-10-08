@@ -66,7 +66,7 @@ def main(
     slam_mode: str = "async",              # "async" or "sync"
     slam_params: str = "slam_sync.yaml",
     ## Tools
-    use_foxglove: bool = True,
+    use_foxglove: bool = False,
     foxglove_port: int = 8765,
 ):
     bl = BetterLaunch()

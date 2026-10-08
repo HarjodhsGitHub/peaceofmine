@@ -25,6 +25,7 @@ def main(
     lidar_ip: str = '192.168.0.10',
     # RTK-GPS Settings
     use_rtk: bool = True,
+    external_gnss: bool = False,
     rtk_device: str = '/dev/ttyACM1',
     rtk_baud: int = 115200,
     rtk_username: str = '',
@@ -42,6 +43,7 @@ def main(
     use_two_encoders = str(use_two_encoders).lower() == 'true'
     use_lidar = str(use_lidar).lower() == 'true'
     use_rtk = str(use_rtk).lower() == 'true'
+    external_gnss = str(external_gnss).lower() == 'true'
     use_datum = str(use_datum).lower() == 'true'
     initial_pose_x, initial_pose_y, initial_pose_a = map(float, (initial_pose_x, initial_pose_y, initial_pose_a))
     bl = BetterLaunch()
@@ -65,6 +67,7 @@ def main(
         bl.include("svea_localization", "transforms.launch.py",
                    name=name,
                    use_gps=True,
+                   publish_pose_placeholders=not external_gnss,
                    use_lidar=use_lidar,
                    map_frame=map_frame,
                    odom_frame=odom_frame,
@@ -138,7 +141,7 @@ def main(
 
         else:
 
-            if use_rtk:
+            if use_rtk and not external_gnss:
                 bl.include("svea_localization", "rtk.launch.py",
                            device=rtk_device,
                            baud=rtk_baud,
@@ -156,6 +159,7 @@ def main(
                                 zero_altitude=True,
                                 broadcast_cartesian_transform_as_parent_frame=True,
                                 broadcast_cartesian_transform=True),
+                    remaps={"gps/fix": f"/{name}/gnss/fix"} if external_gnss else {},
                     ## TODO
                     # remaps= {'imu/data': '/imu/data',
                     #         'gps/fix': '/gps/fix',

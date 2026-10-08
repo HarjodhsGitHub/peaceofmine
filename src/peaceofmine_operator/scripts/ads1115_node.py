@@ -13,6 +13,7 @@ from peaceofmine_operator.settings_client import SettingsClient
 
 from peaceofmine_operator.adc_acquisition import OperatorADC
 from peaceofmine_operator import configuration
+from peaceofmine_operator.lean_migration import migrate_file
 
 INPUT_TOPICS = ('a0_a1', 'a0_a3', 'a1_a3', 'a2_a3', 'a0', 'a1', 'a2', 'a3')
 
@@ -26,6 +27,7 @@ class ADS1115Node(Node):
         # Import the earlier standalone operator ADC file once, without deleting it.
         legacy = Path(path).expanduser() if path else Path('.operator') / ('ads1115-sim.json' if demo else 'ads1115.json')
         section = 'adc_simulation' if demo else 'adc'
+        migrate_file(config_file, demo)
         saved = configuration.load(config_file)
         legacy_value = None
         if section not in saved and legacy.exists():
@@ -51,6 +53,7 @@ class ADS1115Node(Node):
             self.create_publisher(Float64, f'adc/{name}/scaled', 10),
         ) for name in INPUT_TOPICS]
         self.create_subscription(String, 'adc/command', self.command, 10)
+        self.adc.acquisition.run(True)
         self.create_timer(.05, self.publish_state)
         self.create_timer(.5, self.reload_settings)
 

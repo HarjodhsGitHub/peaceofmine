@@ -13,5 +13,6 @@ for entry in operator.launch.xml operator_sim.launch.py; do
   result=$?
   set -e
   cat /tmp/pom-launch.log
-  if [ "$result" != 124 ] || grep -E 'Traceback|process has died|Caught exception' /tmp/pom-launch.log; then exit 1; fi
+  if [ "$result" != 124 ]; then exit 1; fi
+  python3 tools/check_launch_log.py /tmp/pom-launch.log
 done

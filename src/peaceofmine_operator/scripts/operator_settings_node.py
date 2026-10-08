@@ -34,7 +34,7 @@ class OperatorSettings(Node):
             if not isinstance(value,dict):
                 raise ValueError('Expected settings object')
             storage_section=request.section
-            simulation=storage_section in ('arm_simulation','probe_simulation','arm_motion_simulation','probe_motion_simulation')
+            simulation=storage_section in ('arm_simulation','probe_simulation','arm_motion_simulation','probe_motion_simulation','metal_detector_adc_simulation')
             section=storage_section.removesuffix('_simulation') if simulation else storage_section
             if section == 'cameras':
                 value = camera_settings.validate(value)
@@ -53,6 +53,9 @@ class OperatorSettings(Node):
                 if not all(type(v) in (int,float) and math.isfinite(v) for v in (speed,acceleration)) or not .684 <= speed <= 699.732 or not 8.583 <= acceleration <= 2180.082:
                     raise ValueError('Invalid motion limits')
                 value = dict(max_speed_deg_s=speed, acceleration_deg_s2=acceleration)
+            elif section == 'metal_detector_adc':
+                from peaceofmine_operator.adc_detector import validate_calibration
+                value = None if value == {'clear':True} else validate_calibration(value)
             elif section == 'metal_detector':
                 baseline, full, reference = (value.get(k) for k in ('baseline_adc','full_response_adc','reference_voltage'))
                 if not all(type(v) in (int,float) and math.isfinite(v) for v in (baseline,full,reference)) or not (0 <= baseline <= 255 and 0 <= full <= 255 and abs(full-baseline) >= 1) or not 0 < reference <= 5.5:
@@ -78,6 +81,8 @@ class OperatorSettings(Node):
             saved = configuration.load(self.path)
             self.document = saved
             self.saved = 'cameras' in saved
+            from peaceofmine_operator.lean_migration import migrated
+            saved = migrated(saved, True)
             self.cameras = camera_settings.validate(saved.get('cameras', camera_settings.DEFAULTS))
             self.error = None
         except (OSError, ValueError, TypeError) as exc:

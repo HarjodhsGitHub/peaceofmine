@@ -71,6 +71,8 @@ class ProbeController(ActuatorController):
             self.contact.received=0.
             self.reason=str(exc)
             return
+        from peaceofmine_operator.lean_migration import migrated
+        saved = migrated(saved, self.simulation)
         adc = saved.get('adc_simulation' if self.simulation else 'adc', {})
         config = adc.get('config', {})
         scan = sum(c['enabled'] for c in config.get('channels', []))/config.get('rate',128)

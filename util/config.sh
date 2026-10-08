@@ -41,14 +41,14 @@ main() {
         withdefault BUILD_PLATFORM  "linux/amd64"
         withdefault BUILD_CONTEXT   "$REPOSITORY_PATH"
         withdefault BUILD_FILE      "docker/Dockerfile"
-        withdefault BUILD_TAG       "ghcr.io/kth-sml/svea:latest"
+        withdefault BUILD_TAG       "ros:jazzy-ros-base"
         withdefault IMAGE_TAG       "$REPOSITORY_IMAGE_NAME"
         withdefault IMAGE_PUSH      "0"
     elif [ "$BUILD_CONFIG" = "arm64" ]; then
         withdefault BUILD_PLATFORM  "linux/arm64"
         withdefault BUILD_CONTEXT   "$REPOSITORY_PATH"
         withdefault BUILD_FILE      "docker/Dockerfile"
-        withdefault BUILD_TAG       "ghcr.io/kth-sml/svea:latest"
+        withdefault BUILD_TAG       "ros:jazzy-ros-base"
         withdefault IMAGE_TAG       "$REPOSITORY_IMAGE_NAME"
         withdefault IMAGE_PUSH      "0"
     elif [ "$BUILD_CONFIG" = "base-amd64" ]; then
@@ -57,7 +57,7 @@ main() {
         withdefault BUILD_CONTEXT   "$REPOSITORY_PATH"
         withdefault BUILD_FILE      "docker/Dockerfile.base"
         withdefault BUILD_TAG       "ros:$ROSDISTRO-ros-base"
-        withdefault IMAGE_TAG       "ghcr.io/kth-sml/svea:latest"
+        withdefault IMAGE_TAG       "ros:jazzy-ros-base"
         withdefault IMAGE_PUSH      "0"
     elif [ "$BUILD_CONFIG" = "base-arm64" ]; then
         # building for arm64/aarch64/jetson
@@ -65,7 +65,7 @@ main() {
         withdefault BUILD_CONTEXT   "$REPOSITORY_PATH"
         withdefault BUILD_FILE      "docker/Dockerfile.base"
         withdefault BUILD_TAG       "ros:$ROSDISTRO-ros-base"
-        withdefault IMAGE_TAG       "ghcr.io/kth-sml/svea:latest"
+        withdefault IMAGE_TAG       "ros:jazzy-ros-base"
         withdefault IMAGE_PUSH      "0"
     elif [ "$BUILD_CONFIG" = "ghcr" ]; then
         # building for both amd64 and arm64
@@ -73,7 +73,7 @@ main() {
         withdefault BUILD_CONTEXT   "$REPOSITORY_PATH"
         withdefault BUILD_FILE      "docker/Dockerfile.base"
         withdefault BUILD_TAG       "ros:$ROSDISTRO-ros-base"
-        withdefault IMAGE_TAG       "ghcr.io/kth-sml/svea:latest"
+        withdefault IMAGE_TAG       "ros:jazzy-ros-base"
         withdefault IMAGE_PUSH      "1"
     else
         echo "Error: Unknown BUILD_CONFIG \"$BUILD_CONFIG\""

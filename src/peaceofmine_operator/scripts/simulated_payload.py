@@ -18,6 +18,7 @@ from peaceofmine_operator.node_runner import run_node
 class SimulatedPayload(Node):
     def __init__(self) -> None:
         super().__init__('simulated_payload')
+        self.publish_detector = self.declare_parameter('publish_detector', True).value
         self.declare_parameter('odometry_topic', 'odometry/local')
         self.declare_parameter('detector_signal_topic', 'detector/signal_ratio')
         self.declare_parameter('probe_pressure_topic', 'simulation/probe_load_ratio')
@@ -74,7 +75,8 @@ class SimulatedPayload(Node):
         contact_pressure = max(0.0, self._depth - 38.0) / (self._max_depth - 38.0) * 0.66 if mine_distance < 0.55 else 0.0
         pressure_ratio = min(1.0, soil_pressure + contact_pressure)
 
-        self._signal_pub.publish(Float32(data=min(1.0, signal)))
+        if self.publish_detector:
+            self._signal_pub.publish(Float32(data=min(1.0, signal)))
         self._pressure_pub.publish(Float32(data=pressure_ratio))
         self._fault_pub.publish(Bool(data=False))
 
