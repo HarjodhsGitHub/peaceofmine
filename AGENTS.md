@@ -40,7 +40,8 @@ Keep ROS dependencies in each `package.xml`, shared Python dependencies in
 `requirements.txt`, and installed assets/scripts in `setup.py`. Use relative ROS
 topics. Preserve RC/manual override, leases, permission/arming gates, deadman,
 command timeout, zero-command shutdown, ArbotiX watchdog/homing/limits and probe
-stationary checks. Missing fresh wheel velocity must block probe motion.
+fault protection. Probe movement uses RC permission independently of wheel velocity;
+missing wheel telemetry must not block probe motion.
 
 One ADS1115 owner acquires probe A0 (MUX 4) and detector A3 (MUX 7). Do not open
 a second driver or assume physical sample feasibility. Back up settings before

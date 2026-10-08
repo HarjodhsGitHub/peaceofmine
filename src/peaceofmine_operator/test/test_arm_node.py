@@ -110,23 +110,33 @@ class ActuatorTest(unittest.TestCase):
         self.spin(.12)
         self.assertEqual(self.driver.runtime.bus.values[1][32],14)
 
-    def test_home_and_jog_reject_motion_and_fault(self):
-        for velocity,fault in ((1.,False),(0.,True)):
-            self.velocity,self.probe.fault=velocity,fault
-            self.spin(.1)
-            for command in (dict(action='home',held=True,hold_id=str(velocity),load_percent=20),
-                            dict(action='jog',held=True,direction=1)):
-                self.assertFalse(self.command(self.probe,**command)['success'])
-                self.assertIsNone(self.probe.operation)
+    def test_home_and_jog_reject_fault(self):
+        self.probe.fault = True
+        for command in (dict(action='home',held=True,hold_id='fault',load_percent=20),
+                        dict(action='jog',held=True,direction=1)):
+            self.assertFalse(self.command(self.probe,**command)['success'])
+            self.assertIsNone(self.probe.operation)
 
-    def test_stationary_loss_stops_homing(self):
+    def test_vehicle_motion_does_not_stop_homing(self):
         self.command(self.probe,action='home',held=True,hold_id='home',load_percent=20)
         self.spin(.1)
         self.assertIsNotNone(self.probe.operation,self.probe.reason)
         self.velocity=1.
         self.spin(.12)
+        self.assertIsNotNone(self.probe.operation,self.probe.reason)
+        self.allow=False
+        self.spin(.12)
         self.assertIsNone(self.probe.operation)
         self.assertIsNone(self.probe.home_position)
+
+    def test_jog_without_velocity_still_times_out(self):
+        self.publish_velocity=False
+        self.spin(.6)
+        self.assertTrue(self.command(self.probe,action='jog',held=True,direction=1)['success'])
+        self.spin(.1)
+        self.assertIsNotNone(self.driver.runtime.active)
+        self.spin(.45)
+        self.assertIsNone(self.driver.runtime.active)
 
     def test_expired_manual_hold_does_not_restart(self):
         self.command(self.arm,action='jog',held=True,direction=1)
@@ -151,12 +161,13 @@ class ActuatorTest(unittest.TestCase):
         self.spin(.1)
         self.assertIsNone(self.probe.home_position)
 
-    def test_stale_odometry_blocks_extension(self):
+    def test_stale_odometry_allows_extension(self):
         self.probe.home_position=0
         self.publish_velocity=False
         self.spin(.6)
-        self.assertFalse(self.command(self.probe,action='target',depth_mm=20)['success'])
-        self.assertIsNone(self.driver.runtime.active)
+        self.assertTrue(self.command(self.probe,action='target',depth_mm=20)['success'])
+        self.spin(.1)
+        self.assertIsNotNone(self.driver.runtime.active)
 
     def test_action_home_feedback_result_and_cancel(self):
         from rclpy.action import ActionClient

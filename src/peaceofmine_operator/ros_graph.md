@@ -32,7 +32,7 @@ flowchart TD
     Probe -->|probe/web_state and result| Web
     Clients[ROS action clients] <-->|arm/execute| Arm
     Clients <-->|probe/execute| Probe
-    Velocity[Odometry or wheel velocity] -->|stationary interlock| Probe
+    Velocity[Odometry or wheel velocity] -->|telemetry only| Probe
 ```
 
 | Interface | Type | Publisher/server | Subscribers/clients |

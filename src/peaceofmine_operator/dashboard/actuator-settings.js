@@ -257,8 +257,8 @@ function createServoSettings(role) {
       button.onblur = stopArmMove;
     }
     const jogOptions = () => ({speed_deg_s: Number($('arm-jog-speed').value)});
-    bindHold($('arm-jog-left'), 'jog', () => ({direction: -1, ...jogOptions()}));
-    bindHold($('arm-jog-right'), 'jog', () => ({direction: 1, ...jogOptions()}));
+    bindHold($('arm-jog-left'), 'jog', () => ({direction: role === 'probe' ? 1 : -1, ...jogOptions()}));
+    bindHold($('arm-jog-right'), 'jog', () => ({direction: role === 'probe' ? -1 : 1, ...jogOptions()}));
     if (role === 'probe') bindHold($('arm-home'), 'home', () => ({
       hold_id: `${Date.now()}-${++servoRequestSequence}`,
       load_percent: Number($('arm-home-load').value),

@@ -74,7 +74,14 @@ def check():
             assert 'simulated_payload' not in log_path.read_text(), log_path.read_text()
             async def check_dashboard():
                 async with aiohttp.ClientSession() as session:
-                    async with session.ws_connect('http://127.0.0.1:18090/ws') as ws:
+                    # PX4 discovery can finish before the dashboard starts.
+                    while True:
+                        try:
+                            ws = await session.ws_connect('http://127.0.0.1:18090/ws')
+                            break
+                        except aiohttp.ClientConnectorError:
+                            await asyncio.sleep(.1)
+                    async with ws:
                         async for message in ws:
                             if message.type == aiohttp.WSMsgType.TEXT:
                                 data = message.json()
@@ -82,10 +89,10 @@ def check():
                                     assert data['safety']['allowed'] is False
                                     return
                         raise AssertionError('Gateway closed before reporting PX4 disarm')
-            asyncio.run(asyncio.wait_for(check_dashboard(), 5))
+            asyncio.run(asyncio.wait_for(check_dashboard(), 20))
             print('Hardware XML: MAVROS connected; state/RC received; UI reports PX4 disarmed; simulation absent', flush=True)
         finally:
-            os.killpg(process.pid, signal.SIGINT)
+            process.send_signal(signal.SIGINT)
             try:
                 process.wait(timeout=8)
             finally:

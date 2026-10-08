@@ -18,7 +18,8 @@
 
         <!-- Low-Level Interface -->
 
-        <node pkg="mavros" exec="mavros_node" namespace="mavros" output="screen" ros_args="--log-level info">
+        <!-- MAVROS creates its own mavros namespace beneath the vehicle namespace. -->
+        <node pkg="mavros" exec="mavros_node" output="screen" ros_args="--log-level info">
             <!-- Parameters -->
             <param name="fcu_url" value="serial://$(var serial_device):$(var baud_rate)"/>
             <param name="gcs_url" value="tcp-l://0.0.0.0:5760"/>
@@ -27,22 +28,22 @@
             <param name="map_frame_id" value="$(var map_frame)"/>
             <param from="$(find-pkg-share svea_core)/params/mavros.yaml" allow_substs="true"/>
             <!-- Remappings -->
-            <remap from="imu/diff_pressure" to="_unused/imu/diff_pressure"/>
-            <remap from="imu/mag" to="_unused/imu/mag"/>
-            <remap from="imu/static_pressure" to="_unused/imu/static_pressure"/>
-            <remap from="imu/temperature_baro" to="_unused/imu/temperature_baro"/>
-            <remap from="imu/temperature_imu" to="_unused/imu/temperature_imu"/>
-            <remap from="manual_control/control" to="_unused/manual_control/control"/>
-            <remap from="rc/out" to="_unused/rc/out"/>
-            <remap from="rc/override" to="_unused/rc/override"/>
-            <remap from="statustext/recv" to="_unused/statustext/recv"/>
-            <remap from="statustext/send" to="_unused/statustext/send"/>
-            <remap from="status_event" to="_unused/status_event"/>
-            <remap from="sys_status" to="_unused/sys_status"/>
-            <remap from="extended_state" to="_unused/extended_state"/>
-            <remap from="estimator_status" to="_unused/estimator_status"/>
-            <remap from="time_reference" to="_unused/time_reference"/>
-            <remap from="timesync_status" to="_unused/timesync_status"/>
+            <remap from="mavros/imu/diff_pressure" to="mavros/_unused/imu/diff_pressure"/>
+            <remap from="mavros/imu/mag" to="mavros/_unused/imu/mag"/>
+            <remap from="mavros/imu/static_pressure" to="mavros/_unused/imu/static_pressure"/>
+            <remap from="mavros/imu/temperature_baro" to="mavros/_unused/imu/temperature_baro"/>
+            <remap from="mavros/imu/temperature_imu" to="mavros/_unused/imu/temperature_imu"/>
+            <remap from="mavros/manual_control/control" to="mavros/_unused/manual_control/control"/>
+            <remap from="mavros/rc/out" to="mavros/_unused/rc/out"/>
+            <remap from="mavros/rc/override" to="mavros/_unused/rc/override"/>
+            <remap from="mavros/statustext/recv" to="mavros/_unused/statustext/recv"/>
+            <remap from="mavros/statustext/send" to="mavros/_unused/statustext/send"/>
+            <remap from="mavros/status_event" to="mavros/_unused/status_event"/>
+            <remap from="mavros/sys_status" to="mavros/_unused/sys_status"/>
+            <remap from="mavros/extended_state" to="mavros/_unused/extended_state"/>
+            <remap from="mavros/estimator_status" to="mavros/_unused/estimator_status"/>
+            <remap from="mavros/time_reference" to="mavros/_unused/time_reference"/>
+            <remap from="mavros/timesync_status" to="mavros/_unused/timesync_status"/>
         </node>
 
         <node pkg="svea_core" exec="px4_uorb_tunnel.py" name="px4_uorb_tunnel">

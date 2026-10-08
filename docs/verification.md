@@ -25,8 +25,8 @@ site-generation or publishing workflow.
   focus forward camera, hold Shift.
 - Remote browser controller unavailable: use HTTPS; robot USB `/joy` works over
   HTTP. Browser mapping settings do not change the robot USB controller.
-- Probe blocked: home it and check fresh stationary wheel telemetry, RC permission,
-  limits and faults. Missing velocity deliberately blocks motion.
+- Probe blocked: check RC permission, limits and faults; home it before depth
+  commands. Wheel velocity is not a probe movement requirement.
 - GNSS degraded: check UART wiring/ownership, fix age and correction diagnostics;
   credentials stay outside GUI telemetry.
 - ADC failure: check bus/address, I²C device permissions and measured shared scan

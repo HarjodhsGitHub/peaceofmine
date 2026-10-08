@@ -58,5 +58,6 @@ operator passes `external_gnss:=true` so the legacy RTK manager never opens a
 second serial connection. Outdoor localization consumes `/<name>/gnss/fix`.
 GNSS coordinates/course alone are not a fused vehicle pose. Missing fresh pose
 shows position unavailable and suppresses new positioned detector hits. Probe
-stationary protection uses fresh wheel velocity without localization and blocks
-when telemetry is absent/stale.
+movement uses RC permission independently of wheel telemetry. Missing, stale or
+nonzero wheel velocity does not block probe motion; fault, timeout, homing and
+servo limits remain enforced.

@@ -15,7 +15,7 @@ See [the ROS graph](ros_graph.md) for interfaces and publisher/subscriber diagra
 | `servo_driver_node.py` | One serial connection, discovery, telemetry, independent RC/permission gate and command watchdog |
 | `servo_runtime.py`, `servo_motor.py`, `servo_transport.py` | Serialized hardware transactions, bounded motion primitives, protective load stop and firmware protocol |
 | `arm_controller_node.py` | Calibration, positions, sweeps and arm action lifecycle |
-| `probe_controller_node.py` | Homing, calibrated depth/holding, stationary/fault interlocks and contact interpretation |
+| `probe_controller_node.py` | Homing, calibrated depth/holding, permission/fault interlocks and contact interpretation |
 | `actuator_controller.py` | Nonblocking common lifecycle, typed commands/status, action execution and settings client |
 | `actuator_protocol.py` | Browser optional-field conversion to typed actuator messages |
 | `ads1115_node.py`, `adc_acquisition.py`, `ads1115.py` | Acquisition and configuration application; timestamped typed ADC samples and scalar measurements |
@@ -64,11 +64,10 @@ controller interlocks, permission freshness and driver/firmware watchdogs remain
 
 ## Behaviors
 
-Probe homing, jogging and target movement all enforce permission, fresh stationary
-velocity and no probe fault, continuously. Simulation/localization uses the selected
-odometry topic. Without localization, hardware defaults to the enabled MAVROS
-`wheel_odometry/velocity` output (`TwistWithCovarianceStamped`). Missing velocity
-blocks probe motion; no fake stationary sample or pose is fabricated.
+Probe homing, jogging and target movement continuously enforce RC permission,
+fresh driver telemetry and no probe fault. Wheel velocity is not a movement gate:
+missing, stale or nonzero velocity does not block probe commands. Homing, servo
+limits, command timeouts and driver/firmware watchdogs remain enforced.
 
 `arm/execute` supports `sweep` and `position`; `probe/execute` supports `home` and
 `target`. Actions expose feedback, cancellation and final success/failure. Homing

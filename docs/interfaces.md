@@ -6,7 +6,7 @@ The dashboard uses the existing `/ws` endpoint on the HTTP/TLS server at 8080.
 | Topic | Message | Purpose |
 |---|---|---|
 | `cmd_vel` | `geometry_msgs/Twist` | Lease/permission/deadman-gated drive commands |
-| `mavros/wheel_odometry/velocity` | `geometry_msgs/TwistWithCovarianceStamped` | Hardware probe stationary interlock |
+| `mavros/wheel_odometry/velocity` | `geometry_msgs/TwistWithCovarianceStamped` | Wheel velocity telemetry (not a probe interlock) |
 | `adc/samples` | `peaceofmine_interfaces/AdcSamples` | Timestamped samples, acquisition validity and session/revision |
 | `adc/state` | `std_msgs/String` JSON | Acquisition, routing, configuration and diagnostics |
 | `adc/a0/volts`, `adc/a3/volts` | `std_msgs/Float64` | Latest analog voltages |

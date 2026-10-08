@@ -281,6 +281,14 @@ state.drive.armed = true; state.drive.calibrating = true;
 state.arm_servo = {...savedServo, active_role: 'probe', home_position: 2100, position: 2000};
 updateArmSettings();
 assert(!$('probe-servo-home').disabled, 'probe home requires calibration permission');
+$('probe-servo-jog-left').onkeydown({key: ' ', repeat: false, preventDefault() {}});
+assert(sent.at(-1).action === 'jog' && sent.at(-1).role === 'probe' && sent.at(-1).direction === 1, 'probe extend increases shaft position');
+$('probe-servo-jog-left').onkeyup({key: ' '});
+assert(sent.at(-1).action === 'stop', 'probe extend release stops');
+$('probe-servo-jog-right').onkeydown({key: ' ', repeat: false, preventDefault() {}});
+assert(sent.at(-1).action === 'jog' && sent.at(-1).role === 'probe' && sent.at(-1).direction === -1, 'probe retract decreases shaft position');
+$('probe-servo-jog-right').onkeyup({key: ' '});
+
 $('probe-servo-home').onkeydown({key: ' ', repeat: false, preventDefault() {}});
 assert(sent.at(-1).action === 'home' && sent.at(-1).role === 'probe' && sent.at(-1).held
   && sent.at(-1).hold_id && sent.at(-1).load_percent === 30, 'home sends load threshold and unique deadman hold');

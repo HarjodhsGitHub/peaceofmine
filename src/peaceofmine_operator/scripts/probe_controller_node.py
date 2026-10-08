@@ -110,7 +110,7 @@ class ProbeController(ActuatorController):
         return time.monotonic()-self.odometry_at < .5 and self.speed <= self.speed_limit
 
     def interlock(self):
-        return super().interlock() and self.stationary() and not self.fault
+        return super().interlock() and not self.fault
 
     def calibration(self):
         return None
@@ -155,7 +155,7 @@ class ProbeController(ActuatorController):
     def special_command(self, action, command):
         if action == 'home':
             if command.get('held') is not True or not self.interlock():
-                raise ValueError('Homing requires held command, stationary odometry and no fault')
+                raise ValueError('Homing requires held command, RC permission and no fault')
             hold = command.get('hold_id')
             if not isinstance(hold,str) or not hold:
                 raise ValueError('Home requires a unique hold identifier')
@@ -171,7 +171,7 @@ class ProbeController(ActuatorController):
             return True
         elif action == 'zero_contact':
             if not self.interlock():
-                raise ValueError('Contact zero requires permission and stationary odometry')
+                raise ValueError('Contact zero requires RC permission and no fault')
             self.load_contact.zero(time.monotonic())
             self.reason = 'Motor contact baseline zeroed for this session'
         elif action == 'configure_motion':

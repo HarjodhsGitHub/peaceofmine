@@ -26,5 +26,5 @@ shared settings. Browser preferences contain controller mapping and local device
 IDs; portable robot defaults travel through the settings service.
 
 Take control before changing calibration. Respect the dashboard's motion and
-RC gates. Firmware homing, limits, torque/load protection and stationary checks
+RC gates. Firmware homing, limits, torque/load protection and RC permission checks
 remain active.
