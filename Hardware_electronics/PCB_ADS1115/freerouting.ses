@@ -1,0 +1,650 @@
+(session freerouting
+  (base_design freerouting)
+  (placement
+    (resolution um 10)
+    (component "JLCPCB_lib:HDR-TH_2P-P2.54-V-M"
+      (place H5 1655000 -910000 front 270)
+      (place H2 1527300 -815000 front 0)
+      (place H4 1407300 -1315000 front 0)
+      (place H7 1507300 -1315000 front 180)
+      (place H1 1655000 -847700 front 270)
+      (place H3 1655000 -1190000 front 270)
+    )
+    (component "JLCPCB_lib:C0805"
+      (place C2 1420000 -965000 front 90)
+    )
+    (component "JLCPCB_lib:HDR-TH_10P-P2.54-V-F-S2.54"
+      (place U2 1385000 -986500 front 270)
+    )
+    (component "JLCPCB_lib:CONV_BOB-12009"
+      (place U3 1504200 -933500 front 180)
+    )
+    (component "JLCPCB_lib:R1206"
+      (place R1 1400000 -1175000 front 270)
+    )
+    (component "JLCPCB_lib:CAP-TH_BD13.0-P5.00-D0.6-FD"
+      (place C1 1320000 -1180000 front 270)
+    )
+    (component "Connector_PinSocket_2.54mm:PinSocket_1x03_P2.54mm_Vertical"
+      (place J1 1385000 -820000 front 270)
+    )
+    (component "JLCPCB_lib:MCP622-breakout"
+      (place U1 1509830 -1131480 front 180)
+    )
+    (component "JLCPCB_lib:HDR-TH_40PIN-V-ROW2-COL20-FEMALE-PITCH2.54"
+      (place P1 1608940 -1073050 front 270)
+    )
+  )
+  (was_is
+  )
+  (routes 
+    (resolution um 10)
+    (parser
+      (host_cad "KiCad's Pcbnew")
+      (host_version "10.0.7")
+    )
+    (library_out 
+      (padstack "Via[0-1]_1000:700_um"
+        (shape
+          (circle "Top Layer" 10000 0 0)
+        )
+        (shape
+          (circle "Bottom Layer" 10000 0 0)
+        )
+        (attach off)
+      )
+    )
+    (network_out 
+      (net GND
+        (wire
+          (path "Top Layer" 5000
+            1420000 -975000
+            1407730 -975000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1385000 -973800
+            1406530 -973800
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1406530 -973800
+            1407730 -975000
+          )
+          (type protect)
+        )
+      )
+      (net "UART0 TX"
+        (wire
+          (path "Top Layer" 5000
+            1437700 -1077700
+            1528360 -987043
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1528360 -987043
+            1528360 -865996
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1528360 -865996
+            1576120 -818233
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1576120 -818233
+            1666120 -818233
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1666120 -818233
+            1670640 -822744
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1670640 -822744
+            1670640 -867065
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1670640 -867065
+            1660960 -876740
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1660960 -876740
+            1645240 -876740
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1645240 -876740
+            1639480 -882497
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1639480 -882497
+            1639480 -890107
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1639480 -890107
+            1621640 -907950
+          )
+          (type protect)
+        )
+      )
+      (net "UART0 RX"
+        (wire
+          (path "Bottom Layer" 5000
+            1621640 -933350
+            1644350 -933350
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1644350 -933350
+            1655000 -922700
+          )
+          (type protect)
+        )
+      )
+      (net +5V
+        (wire
+          (path "Top Layer" 5000
+            1420000 -955000
+            1407730 -955000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1407730 -955000
+            1401650 -961085
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1401650 -961085
+            1379680 -961085
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1379680 -961085
+            1371830 -953232
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1371830 -953232
+            1371830 -885374
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1371830 -885374
+            1385000 -872200
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1385000 -820000
+            1385000 -872200
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1432270 -955000
+            1432270 -1020480
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1432270 -1020480
+            1390040 -1062700
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1390040 -1062700
+            1379340 -1062700
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1379340 -1062700
+            1341870 -1100170
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1341870 -1100170
+            1341870 -1212840
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1341870 -1212840
+            1363380 -1234350
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1385000 -820000
+            1399020 -820000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1621640 -831750
+            1589370 -799483
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1589370 -799483
+            1419530 -799483
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1419530 -799483
+            1399020 -820000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1655000 -860400
+            1655000 -835000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1621640 -857150
+            1621640 -831750
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1621640 -835000
+            1639480 -835000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1655000 -835000
+            1639480 -835000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1420000 -955000
+            1432270 -955000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1453400 -946200
+            1441070 -946200
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1441070 -946200
+            1432270 -955000
+          )
+          (type protect)
+        )
+      )
+      (net "Pressure Sensor Signal"
+        (wire
+          (path "Top Layer" 5000
+            1359600 -820000
+            1359600 -999200
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1359600 -999200
+            1385000 -1024600
+          )
+          (type protect)
+        )
+      )
+      (net "LW_IMP_SIG_2"
+        (wire
+          (path "Bottom Layer" 5000
+            1483160 -1208950
+            1397900 -1123690
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1397900 -1123690
+            1397900 -1062900
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1397900 -1062900
+            1385000 -1050000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1483160 -1208950
+            1483160 -1234350
+          )
+          (type protect)
+        )
+      )
+      (net "LW_IMP_MET_DET"
+        (wire
+          (path "Top Layer" 5000
+            1363380 -1183550
+            1349890 -1170060
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1349890 -1170060
+            1349890 -1110510
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1349890 -1110510
+            1385000 -1075400
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1363380 -1208950
+            1363380 -1183550
+          )
+          (type protect)
+        )
+      )
+      (net "Net-(U2-SDA)"
+        (wire
+          (path "Top Layer" 5000
+            1453400 -870000
+            1397900 -925502
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1397900 -925502
+            1397900 -935502
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1397900 -935502
+            1385000 -948400
+          )
+          (type protect)
+        )
+      )
+      (net "Net-(U2-SCL)"
+        (wire
+          (path "Bottom Layer" 5000
+            1453400 -895400
+            1425800 -923000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1425800 -923000
+            1385000 -923000
+          )
+          (type protect)
+        )
+      )
+      (net "RPi 3.3v"
+        (wire
+          (path "Bottom Layer" 5000
+            1540000 -815000
+            1514600 -815000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1555000 -946200
+            1541430 -932631
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1541430 -932631
+            1541430 -864599
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1541430 -864599
+            1574280 -831750
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1574280 -831750
+            1596240 -831750
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1596240 -831750
+            1556750 -831750
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1556750 -831750
+            1540000 -815000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1596240 -1034950
+            1569490 -1034950
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1569490 -1034950
+            1541420 -1006880
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1541420 -1006880
+            1541420 -959777
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1541420 -959777
+            1555000 -946200
+          )
+          (type protect)
+        )
+      )
+      (net SCL
+        (wire
+          (path "Bottom Layer" 5000
+            1596240 -882550
+            1567850 -882550
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1567850 -882550
+            1555000 -895400
+          )
+          (type protect)
+        )
+      )
+      (net SDA
+        (wire
+          (path "Bottom Layer" 5000
+            1596240 -857150
+            1567850 -857150
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1567850 -857150
+            1555000 -870000
+          )
+          (type protect)
+        )
+      )
+      (net "Sensor Signal"
+        (wire
+          (path "Top Layer" 5000
+            1394600 -1315000
+            1394600 -1299480
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1400000 -1189790
+            1400000 -1294080
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1400000 -1294080
+            1394600 -1299480
+          )
+          (type protect)
+        )
+      )
+      (net "Net-(U1-VINB+)"
+        (wire
+          (path "Bottom Layer" 5000
+            1363380 -1158150
+            1323150 -1158150
+          )
+          (type protect)
+        )
+        (wire
+          (path "Bottom Layer" 5000
+            1323150 -1158150
+            1320000 -1155000
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1400000 -1160210
+            1385980 -1160210
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1363380 -1158150
+            1383920 -1158150
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1383920 -1158150
+            1385980 -1160210
+          )
+          (type protect)
+        )
+      )
+      (net "LW_IMP_SIG_2_PREAMP"
+        (wire
+          (path "Top Layer" 5000
+            1483160 -1183550
+            1520000 -1220390
+          )
+          (type protect)
+        )
+        (wire
+          (path "Top Layer" 5000
+            1520000 -1220390
+            1520000 -1315000
+          )
+          (type protect)
+        )
+      )
+    )
+  )
+)
