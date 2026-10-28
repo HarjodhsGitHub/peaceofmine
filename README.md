@@ -98,16 +98,16 @@ core library. See and read the source code in
 [svea_examples/scripts](src/svea_examples/scripts).
 
 Start by entering into the installed Docker image by going to the root of `svea`
-and running
+and running the development/simulation container:
 
 ```bash
-util/run-dev
+DEV=1 util/run
 ```
 
 Then, for a simulated, pure pursuit example, call:
 
 ```bash
-ros2 launch svea_examples floor2.launch
+ros2 launch svea_examples floor2.launch.py
 ```
 
 Then, open Foxglove Studio natively or in the browser, and on the first prompt
@@ -127,30 +127,37 @@ Now you are ready to read through the tutorials! You can find them
 
 ### Adding the low-level interface
 
-To your roslaunch file, add
+The low-level interface uses MAVROS to communicate with the PX4 autopilot.
+In a custom Better Launch function, with `bl = BetterLaunch()`, include:
 
-```xml
-<!--open serial connection for controlling SVEA-->
-<executable cmd="$(find-pkg-share svea_core)/util/start_micro_ros.sh" output="screen"/>
+```python
+bl.include("svea_core", "lli.xml", name="self")
 ```
+
+Set `serial_device` and `baud_rate` to match your PX4 connection. The main
+`svea_core/launch/svea.launch.py` already includes this interface in hardware
+mode (`is_sim=False`), so do not start a second copy.
 
 ### Running localization on the real SVEA
 
-Running the localization amounts to adding `localize.launch` to your project launch:
+In a custom Better Launch function, include the current localization launch
+file with simulation disabled:
 
-```xml
-<include file="$(find svea_localization)/launch/localize.launch"/>
+```python
+bl.include("svea_localization", "localization.launch.py", name="self", is_sim=False)
 ```
+
+The main `svea.launch.py` also includes localization by default. Use the same
+vehicle name for the low-level interface and localization.
 
 ### MoCap Localization (Qualisys)
 
 If you are using a motion capture system (like Qualisys) for localization, please refer to the [MoCap Localization Guide](docs/mocap_localization.md).
 
-### Using priviliged run script
+### Running with hardware access
 
-Instead of using `util/run-dev`, which is intended for development environments
-and simulation, to access all hardware on the real SVEA you must start
-a container with the priviliged run script:
+On the real SVEA, run the same script without `DEV=1` to enable privileged
+device access and host networking:
 
 ```bash
 util/run
