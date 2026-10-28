@@ -23,3 +23,4 @@ DevTools/gnss_viewer/.env
 venv/
 site/
 .calibration.json.lock
+/Hardware_electronics/PCB_ADS1115/.history/
