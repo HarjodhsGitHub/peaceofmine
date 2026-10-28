@@ -70,11 +70,12 @@ class RcSafetyTest(unittest.TestCase):
         self.safety.update_state(state(4000000, connected=False))
         self.assertFalse(self.safety.snapshot()['allowed'])
 
-    def test_servo_uses_only_fresh_connected_status_four(self):
+    def test_servo_requires_fresh_rc_and_connected_status_four(self):
         for status in range(9):
             with self.subTest(status=status):
                 self.safety.samples.clear()
                 self.safety.update_state(state(system_status=status, armed=False))
+                self.safety.update_rc(rc())
                 self.assertEqual(self.safety.servo_snapshot()['allowed'], status == 4)
         self.safety.samples.clear()
         self.safety.update_state(state(system_status=4, armed=False))
@@ -85,4 +86,14 @@ class RcSafetyTest(unittest.TestCase):
         self.assertFalse(self.safety.servo_snapshot()['allowed'])
         self.safety.update_state(state(2000000, system_status=4))
         self.safety.update_state(state(2000000, connected=False))
+        self.assertFalse(self.safety.servo_snapshot()['allowed'])
+
+    def test_servo_rc_kill_and_loss_without_heartbeat_change(self):
+        healthy(self.safety)
+        self.safety.update_rc(rc(2000000, pwm=1500))
+        self.assertTrue(self.safety.servo_snapshot()['allowed'])
+        self.safety.update_rc(rc(3000000, pwm=2000))
+        self.assertFalse(self.safety.servo_snapshot()['allowed'])
+        self.safety.update_rc(rc(4000000, pwm=1500))
+        self.now += .41
         self.assertFalse(self.safety.servo_snapshot()['allowed'])

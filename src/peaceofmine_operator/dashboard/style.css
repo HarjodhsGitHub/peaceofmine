@@ -1,3 +1,27 @@
+.metal-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.metal-metrics dt, .metal-diagnostics dt { color: #a4b5bb; font-size: .75rem; }
+.metal-metrics dd { margin: 6px 0 0; font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.metal-chart-heading, .metal-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.metal-chart-heading { font-size: .8rem; margin: 16px 0 8px; }
+.metal-chart-container { position: relative; width: 100%; min-width: 0; height: 250px; background: #0b171d; border: 1px solid #35434b; border-radius: 4px; }
+#metal-range, #metal-feedback { min-height: 1.4em; margin: 10px 0 16px; font-size: .8rem; color: #b8c9ce; }
+.metal-calibration { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 12px; }
+.metal-calibration input { width: 100%; min-width: 0; }
+.metal-actions { justify-content: flex-start; }
+.metal-actions label, .metal-chart-heading label { display: flex; align-items: center; gap: 6px; margin: 0; }
+.metal-actions input[type="checkbox"], .metal-chart-heading input[type="checkbox"] { width: auto; }
+.metal-debug { border-top: 1px solid #35434b; padding: 14px 0; }
+.metal-debug summary { cursor: pointer; }
+.metal-debug textarea { width: 100%; margin-top: 12px; font-family: monospace; font-size: .75rem; resize: vertical; }
+.metal-diagnostics { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 3fr); gap: 8px; font-size: .8rem; }
+.metal-diagnostics dd { margin: 0; overflow-wrap: anywhere; }
+.settings-tabs { flex-wrap: wrap; }
+@media (max-width: 550px) {
+  .metal-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metal-diagnostics { grid-template-columns: 1fr; }
+  .metal-calibration { gap: 8px; }
+}
+
 /* ---------------------------------------------------------------- Base --- */
 
 :root {
@@ -425,7 +449,7 @@ button:disabled {
 .pad-visual {
   display: block;
   width: 100%;
-  max-height: 7.4rem;
+  max-height: 4.5rem;
   margin: 0 0 .3rem;
 }
 
@@ -508,8 +532,13 @@ input[type=range] {
   flex-direction: column;
 }
 
+.detector-panel .panel-heading { flex-wrap: wrap; gap: .35rem; align-items: baseline; }
+#sweep-status { flex: 1 1 6rem; min-width: 0; margin: 0; font-size: .65rem; overflow-wrap: anywhere; }
+.detector-chart { position: relative; height: 160px; min-height: 160px; width: 100%; margin-top: .6rem; }
+
 .signal-value {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: .16rem;
   margin: .35rem 0 .12rem;
@@ -523,6 +552,11 @@ input[type=range] {
 .signal-value span {
   font-size: .94rem;
   color: #92aca4;
+}
+
+#detector-raw {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .meter {
@@ -611,10 +645,11 @@ input[type=range] {
   left: 50%;
   top: .3rem;
   width: .32rem;
-  height: 0;
+  height: 2.4rem;
   max-height: 2.4rem;
   background: #c9d6ce;
-  transition: height .15s;
+  transform: scaleY(0);
+  transform-origin: top;
 }
 
 .probe-numbers {
@@ -1015,7 +1050,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .arm-calibration-points { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0; }
 .arm-calibration-points > div { display: grid; gap: .7rem; padding: .8rem; border: 1px solid #34504f; border-radius: .6rem; }
 .arm-calibration-points h4 { margin: 0; }
-#arm-launch-xml { width: 100%; padding: .8rem; color: #c7e4d9; background: #071316; border: 1px solid #34504f; font: .8rem monospace; }
+#arm-launch-xml, #probe-servo-launch-xml { width: 100%; padding: .8rem; color: #c7e4d9; background: #071316; border: 1px solid #34504f; font: .8rem monospace; }
 #rc-safety.blocked { color: #ffd1c8; border-color: #d36458; }
 #rc-safety.ready { color: #72d6b4; }
 @media (max-width: 700px) { .arm-calibration-points { grid-template-columns: 1fr; } }
@@ -1027,7 +1062,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .arm-feedback[data-kind=success] { border-color: #72d6b4; color: #72d6b4; }
 .arm-feedback[data-kind=error] { border-color: #f08b7c; color: #f08b7c; }
 
-#settings-arm button:active:not(:disabled) { transform: translateY(2px); filter: brightness(1.2); }
+:is(#settings-arm, #settings-probe) button:active:not(:disabled) { transform: translateY(2px); filter: brightness(1.2); }
 
 .arm-workbench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.4rem; align-items: start; margin: 1rem 0; }
 .arm-control-panel, .arm-telemetry-panel { min-width: 0; }
@@ -1048,7 +1083,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .arm-help summary { cursor: pointer; }
 .arm-jog-status { padding: .7rem; border: 1px solid #d8b064; border-radius: .5rem; color: #e2b56a; }
 .arm-jog-status[data-ready=true] { border-color: #72d6b4; color: #72d6b4; }
-#settings-arm .dialog-help { margin: .6rem 0; font-size: .8rem; line-height: 1.5; }
+:is(#settings-arm, #settings-probe) .dialog-help { margin: .6rem 0; font-size: .8rem; line-height: 1.5; }
 @media (max-width: 720px) { .arm-workbench { grid-template-columns: 1fr; } .arm-table th, .arm-table td { padding: .5rem .3rem; } .arm-points-table button { padding: .5rem .3rem; font-size: .75rem; } }
 
 /* Map and measured power share the bottom row. */
@@ -1070,3 +1105,32 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .power-note { color: #8fa8a1; font-size: .62rem; line-height: 1.45; margin-top: .55rem; }
 @media (max-width: 1100px) { .lower-panels { grid-template-columns: 1fr; overflow: auto; } .lower-panels .map-panel { min-height: 12rem; } .power-panel { min-height: 17rem; overflow: visible; } }
 @media (max-width: 900px) { .lower-panels { grid-column: auto; grid-row: auto; overflow: visible; } }
+
+#metal-history { display: block; }
+#metal-time-range { width: auto; }
+
+.servo-load-chart{position:relative;height:220px;min-width:0;width:100%}
+
+.probe-load-chart { position: relative; height: 110px; min-width: 0; }
+
+.probe-contact-readings { display: grid; gap: .3rem; font-size: .75rem; }
+
+#settings-adc .fields {display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:16px}
+#settings-adc label {display:flex; flex-direction:column; gap:6px}
+#settings-adc small {display:block; color:#a9c3bb; font-size:12px}
+#settings-adc fieldset {margin:16px 0; padding:16px; border:1px solid #334750; border-radius:8px}
+#settings-adc .table-wrap {overflow-x:auto}
+#settings-adc table {width:100%; text-align:left; border-collapse:collapse}
+#settings-adc td, #settings-adc th {padding:8px}
+#settings-adc td input[type=number] {width:100px}
+.adc-actions {display:flex; align-items:end; flex-wrap:wrap; gap:10px; margin:14px 0}
+.adc-chart {height:260px; position:relative}
+#adc-error {color:#ff9b89}
+#settings-adc pre {white-space:pre-wrap}
+#settings-adc input[type=number] {min-width:0; padding:.65rem; border:1px solid #34504f; border-radius:.4rem; background:#07191e; color:#e8f1ed; font:inherit}
+#settings-adc input[type=checkbox] {width:auto; align-self:flex-start; accent-color:#72d6b4}
+#settings-adc .electrical, #settings-adc .formula {font-size:.8rem; color:#a9c3bb; margin-top:12px}
+#camera-capture-settings {display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin:1rem 0}
+#camera-capture-settings fieldset {border:1px solid #34504f;border-radius:.5rem;padding:1rem}
+#camera-capture-settings label {display:grid;grid-template-columns:90px minmax(0,1fr);gap:.5rem;align-items:center;margin:.5rem 0}
+#camera-capture-settings input {min-width:0;padding:.65rem;background:#07191e;color:#e8f1ed;border:1px solid #34504f;border-radius:.4rem}

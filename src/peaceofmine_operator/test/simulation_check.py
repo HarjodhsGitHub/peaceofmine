@@ -57,11 +57,10 @@ async def check():
                 await wait(1.0)
                 start = positions[-1]
                 await ws.send_json({'type': 'take_control'})
-                await ws.send_json({'type': 'arm'})
                 controls.clear()
                 for _ in range(30):
                     await ws.send_json(dict(type='drive', linear_x=.4,
-                                            angular_z=0., deadman=True))
+                                            angular_z=0.))
                     await wait(.05)
                 assert any(v > .3 for v in commands), ('No forward cmd_vel', commands[-5:])
                 assert any(z < 490 for z in controls), controls[-5:]
@@ -73,7 +72,7 @@ async def check():
                 controls.clear()
                 for _ in range(10):
                     await ws.send_json(dict(type='drive', linear_x=-.4,
-                                            angular_z=0., deadman=True))
+                                            angular_z=0.))
                     await wait(.05)
                 assert any(z > 510 for z in controls), controls[-5:]
                 await ws.send_json({'type': 'disarm'})

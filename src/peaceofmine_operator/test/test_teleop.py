@@ -3,13 +3,16 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import json
 from unittest.mock import patch
 
 import rclpy
 from sensor_msgs.msg import CameraInfo, Joy
+from std_msgs.msg import Float32, String
+from peaceofmine_operator.actuator_protocol import command_dict
 
 spec = importlib.util.spec_from_file_location(
-    'operator_gateway', Path(__file__).parents[1] / 'scripts/operator_gateway.py')
+    'operator_control', Path(__file__).parents[1] / 'scripts/operator_control_node.py')
 gateway_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gateway_module)
 
@@ -24,7 +27,7 @@ class TeleopTest(unittest.TestCase):
         rclpy.shutdown()
 
     def setUp(self):
-        self.node = gateway_module.OperatorGateway()
+        self.node = gateway_module.OperatorControl()
         self.node._rc_safety.simulation = True
         self.owner = object()
         self.clock = patch.object(gateway_module.time, 'monotonic', return_value=100.0)
@@ -42,6 +45,15 @@ class TeleopTest(unittest.TestCase):
         self.command('take_control')
         self.command('arm')
 
+    def test_detector_calibration_requires_control_and_fresh_sensor(self):
+        command = dict(action='apply', request_id='trigger', baseline_adc=20, full_response_adc=150)
+        self.assertIsNotNone(self.command('detector_calibrate', **command))
+        self.command('take_control')
+        with patch.object(self.node._detector_telemetry, 'snapshot', return_value={'fresh': True}), \
+                patch.object(self.node._detector_command_pub, 'publish') as publish:
+            self.assertIsNone(self.command('detector_calibrate', **command))
+            self.assertEqual(json.loads(publish.call_args.args[0].data), command)
+
     def test_shutdown_stops_outputs_and_rejects_new_control(self):
         self.arm()
         self.command('drive', linear_x=.4, deadman=True)
@@ -50,7 +62,7 @@ class TeleopTest(unittest.TestCase):
             self.node.begin_shutdown()
             self.output.assert_called_with(0.0, 0.0)
             self.assertFalse(permission.call_args.args[0].data)
-            self.assertEqual(servo.call_args.args[0].data, '{"action":"stop"}')
+            self.assertEqual(command_dict(servo.call_args.args[0]), {'action':'stop'})
             self.assertIsNotNone(self.command('take_control'))
             self.assertIsNotNone(self.command('arm'))
             self.node._drive_watchdog()
@@ -58,11 +70,14 @@ class TeleopTest(unittest.TestCase):
             self.assertFalse(self.node._armed)
 
     def test_servo_commands_work_in_rc_override_while_drive_is_blocked(self):
-        from mavros_msgs.msg import State
+        from mavros_msgs.msg import State, RCIn
         self.node._rc_safety.simulation = False
         message = State(connected=True, armed=False, system_status=4)
         message.header.stamp.sec = 100
-        self.node._state_cb(message)  # No RC channel stream required for servos.
+        self.node._state_cb(message)
+        remote = RCIn(channels=[1700, 1800, 1500, 1500, 1500], rssi=100)
+        remote.header.stamp.sec = 100
+        self.node._rc_cb(remote)
         self.arm()
         self.assertTrue(self.node._armed)
         with patch.object(self.node._arm_command_pub, 'publish') as servo, \
@@ -79,15 +94,26 @@ class TeleopTest(unittest.TestCase):
             self.assertFalse(permission.call_args.args[0].data)
             self.assertIsNotNone(self.command('arm'))
 
-    def test_camera_dimensions_survive_controller_merge(self):
-        self.node._camera_frames['front'] = dict(topic='/front/camera_info',
-            label='Front', last_frame=0.0, window_started=99.0, window_frames=0, fps=0.0)
-        self.node._camera_frame_cb('front', CameraInfo(width=1280, height=720))
-        camera = self.node.snapshot()['cameras']['front']
-        self.assertEqual((camera['width'], camera['height']), (1280, 720))
-        self.assertEqual(camera['frame_age_ms'], 0)
+    def test_only_lease_owner_can_actuate_or_calibrate(self):
+        self.command('take_control')
+        spectator = object()
+        self.node._detector_telemetry.update(dict(fresh=True))
+        with patch.object(self.node._sweep_enabled_pub, 'publish') as sweep, \
+                patch.object(self.node._detector_command_pub, 'publish') as detector:
+            for payload in (dict(type='sweep_enabled', enabled=True), dict(type='sweep_enabled', enabled=False),
+                            dict(type='detector_calibrate', action='zero'), dict(type='probe_target', depth_mm=20),
+                            dict(type='arm_servo', action='stop'), dict(type='drive', linear_x=.4)):
+                self.assertIn('Spectator', self.node.handle_command(spectator, payload)['message'])
+            sweep.assert_not_called()
+            detector.assert_not_called()
+            self.node.handle_command(spectator, dict(type='take_control'))
+            self.assertFalse(sweep.call_args.args[0].enabled)
+            self.assertIs(self.node._lease, spectator)
+            self.assertIn('Spectator', self.command('sweep_enabled', enabled=True)['message'])
+            self.assertIsNone(self.node.handle_command(spectator, dict(type='detector_calibrate', action='zero', request_id='new-owner')))
+            detector.assert_called_once()
 
-    def test_px4_safety_disarms_all_outputs_and_blocks_rearming(self):
+    def test_rc_loss_stops_motion_and_recovery_requires_fresh_commands(self):
         try:
             from test_rc_safety import healthy
         except ImportError:
@@ -97,18 +123,20 @@ class TeleopTest(unittest.TestCase):
         self.arm()
         self.command('drive', linear_x=.4, deadman=True)
         self.assertTrue(self.node._armed)
-        with patch.object(self.node._probe_pub, 'publish') as probe, patch.object(self.node._sweep_enabled_pub, 'publish') as sweep:
+        with patch.object(self.node._probe_command_pub, 'publish') as probe, patch.object(self.node._sweep_enabled_pub, 'publish') as sweep:
             self.node._rc_safety.samples['state'][1].system_status = 8
             self.node._drive_watchdog()
             self.assertFalse(self.node._armed)
             self.output.assert_called_with(0.0, 0.0)
-            self.assertFalse(sweep.call_args.args[0].data)
+            self.assertFalse(sweep.call_args.args[0].enabled)
             for kind in ('arm', 'drive', 'probe_target', 'sweep_enabled', 'sweep_speed'):
                 self.assertIsNotNone(self.command(kind))
-            probe.assert_not_called()
+            self.assertTrue(all(command_dict(call.args[0])['action'] == 'stop' for call in probe.call_args_list))
             self.node._rc_safety.samples['state'][1].system_status = 4
             self.node._drive_watchdog()
-            self.assertFalse(self.node._armed)
+            self.assertTrue(self.node._armed)
+            self.assertFalse(self.node._deadman)
+            self.assertEqual(self.node._command, (0.0, 0.0))
 
     def test_calibration_blocks_browser_and_ros_vehicle_input(self):
         self.command('take_control')
@@ -123,16 +151,70 @@ class TeleopTest(unittest.TestCase):
         self.command('disarm')
         self.assertFalse(self.node._calibrating)
 
-    def test_browser_requires_lease_arm_and_deadman(self):
-        drive = dict(linear_x=0.4, angular_z=-0.2, deadman=True)
+    def test_browser_requires_lease_rc_permission_and_deadman(self):
+        drive = dict(linear_x=0.4, angular_z=-0.2)
         self.assertIsNotNone(self.command('drive', **drive))
         self.command('take_control')
-        self.command('drive', **drive)
-        self.output.assert_not_called()
-        self.command('arm')
+        self.assertTrue(self.node._armed)
+        self.assertIsNone(self.command('drive', **drive))
+        self.assertFalse(self.node.snapshot()['drive']['publishing'])
+        self.command('drive', **dict(drive,deadman=True))
         self.output.assert_called_with(0.4, -0.2)
         self.command('drive', **dict(drive, deadman=False))
         self.output.assert_called_with(0.0, 0.0)
+
+    def test_estop_releases_control_and_cannot_auto_resume(self):
+        self.command('take_control')
+        self.command('drive', linear_x=.4, deadman=True)
+        self.command('estop')
+        self.node._drive_watchdog()
+        self.assertIsNone(self.node._lease)
+        self.assertFalse(self.node._armed)
+        self.assertIsNotNone(self.command('drive', linear_x=.4, deadman=True))
+        self.command('take_control')
+        self.assertTrue(self.node._armed)
+        self.assertFalse(self.node._deadman)
+
+    def test_manual_servo_enters_calibration_without_arm_command(self):
+        self.command('take_control')
+        self.command('drive', linear_x=.4, deadman=True)
+        with patch.object(self.node._arm_command_pub, 'publish') as servo:
+            self.assertIsNone(self.command('arm_servo', action='jog', direction=1, held=True))
+            self.assertEqual(command_dict(servo.call_args.args[0])['action'], 'jog')
+        self.assertTrue(self.node._calibrating)
+        self.assertFalse(self.node._deadman)
+        self.output.assert_called_with(0.0, 0.0)
+        self.assertIsNotNone(self.command('drive', linear_x=.4, deadman=True))
+        self.command('calibration_end')
+        self.assertFalse(self.node._calibrating)
+        self.assertTrue(self.node._armed)
+        self.assertFalse(self.node._deadman)
+
+    def test_sweep_with_rc_override_needs_no_ui_arm(self):
+        from mavros_msgs.msg import RCIn
+        from test_rc_safety import healthy
+        self.node._rc_safety.simulation = False
+        healthy(self.node._rc_safety)
+        remote = RCIn(channels=[1750, 1250, 1500, 1500, 1500], rssi=100)
+        remote.header.stamp.sec = 2000000
+        self.node._rc_cb(remote)
+        self.command('take_control')
+        self.node._arm_state = dict(connected=True, calibration=dict(minimum=1000, center=2000, maximum=3000))
+        self.node._arm_state_at = 100.0
+        with patch.object(self.node._sweep_enabled_pub, 'publish') as sweep, patch.object(self.node._permission_pub, 'publish') as permission:
+            self.assertIsNone(self.command('sweep_enabled', enabled=True))
+            self.assertTrue(sweep.call_args.args[0].enabled)
+            self.node._drive_watchdog()
+            self.assertTrue(permission.call_args.args[0].data)
+            self.assertIsNotNone(self.command('drive', linear_x=.4))
+            controls = self.node.snapshot()['drive']['rc']
+            self.assertEqual((controls['steering'], controls['throttle']), (.5, -.5))
+            remote.header.stamp.sec += 1
+            remote.channels[4] = 2000
+            self.node._rc_cb(remote)
+            self.assertFalse(permission.call_args.args[0].data)
+            self.assertFalse(sweep.call_args.args[0].enabled)
+            self.assertIsNotNone(self.command('sweep_enabled', enabled=True))
 
     def test_browser_timeout_disarm_and_disconnect_stop(self):
         for stop in ('timeout', 'disarm', 'disconnect'):

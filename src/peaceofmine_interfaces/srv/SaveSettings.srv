@@ -1,0 +1,8 @@
+# Configuration document boundary only; motion never uses JSON.
+string section
+string value_json
+uint64 expected_revision
+---
+bool success
+uint64 revision
+string message

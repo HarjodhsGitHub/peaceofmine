@@ -1,111 +1,132 @@
-"""Small, testable I²C transport for a single-ended ADS1115 channel.
+"""ADS1115 register interface, TI SBAS444E sections 7 and 8."""
+import copy
+import math
+import time
 
-The ROS node owns sampling and calibration.  This module does only the
-ADS1115 register protocol so it can be tested without an RPi or I²C hardware.
-"""
+RATES = (8, 16, 32, 64, 128, 250, 475, 860)
+RANGES = (6.144, 4.096, 2.048, 1.024, 0.512, 0.256)
+INPUTS = ('AIN0 - AIN1', 'AIN0 - AIN3', 'AIN1 - AIN3', 'AIN2 - AIN3',
+          'AIN0', 'AIN1', 'AIN2', 'AIN3')
+DEFAULTS = dict(bus=1, address=0x48, rate=128, pga=1, mode='single',
+                alert='disabled', polarity=0, latch=False, queue=1,
+                low=-1000, high=1000, interval_ms=0,
+                channels=[dict(mux=i, enabled=i >= 4, multiplier=1.0,
+                               offset=0.0) for i in range(8)])
 
-from __future__ import annotations
+
+def validate(value):
+    if not isinstance(value, dict) or set(value) != set(DEFAULTS):
+        raise ValueError('Settings must contain exactly the supported fields')
+    c = copy.deepcopy(value)
+    for key, allowed in [('bus', range(256)), ('address', range(0x48, 0x4c)),
+                         ('rate', RATES), ('pga', range(6)), ('polarity', (0, 1)),
+                         ('queue', (1, 2, 4)), ('low', range(-32768, 32768)),
+                         ('high', range(-32768, 32768)), ('interval_ms', range(60001))]:
+        if type(c[key]) is not int or c[key] not in allowed:
+            raise ValueError(f'Invalid {key}')
+    if c['mode'] not in ('single', 'continuous'):
+        raise ValueError('Invalid conversion mode')
+    if c['alert'] not in ('disabled', 'traditional', 'window', 'ready'):
+        raise ValueError('Invalid ALERT function')
+    if type(c['latch']) is not bool:
+        raise ValueError('Invalid latch value')
+    if not isinstance(c['channels'], list) or len(c['channels']) != 8:
+        raise ValueError('Eight input configurations are required')
+    for i, ch in enumerate(c['channels']):
+        if not isinstance(ch, dict) or set(ch) != {'mux', 'enabled', 'multiplier', 'offset'}:
+            raise ValueError('Invalid channel configuration')
+        if type(ch['mux']) is not int or ch['mux'] != i or type(ch['enabled']) is not bool:
+            raise ValueError('Invalid channel selection')
+        for key in ('multiplier', 'offset'):
+            if type(ch[key]) not in (int, float) or not math.isfinite(ch[key]) or abs(ch[key]) > 1e9:
+                raise ValueError(f'Invalid channel {key}')
+    enabled = sum(ch['enabled'] for ch in c['channels'])
+    if c['mode'] == 'continuous' and enabled != 1:
+        raise ValueError('Continuous mode requires exactly one enabled input')
+    if c['alert'] in ('traditional', 'window'):
+        if enabled != 1:
+            raise ValueError('Comparator testing requires exactly one enabled input')
+        if c['low'] >= c['high']:
+            raise ValueError('Low threshold must be less than high threshold')
+    return c
 
 
-class Ads1115:
-    """Read a continuously converted, single-ended ADS1115 input in volts."""
+def config_word(c, mux, start=False, idle=False):
+    queue = 3 if c['alert'] == 'disabled' else {1: 0, 2: 1, 4: 2}[c['queue']]
+    return ((int(start) << 15) | (mux << 12) | (c['pga'] << 9)
+            | (int(idle or c['mode'] == 'single') << 8) | (RATES.index(c['rate']) << 5)
+            | (int(c['alert'] == 'window') << 4) | (c['polarity'] << 3)
+            | (int(c['latch'] and c['alert'] != 'ready') << 2) | queue)
 
-    CONVERSION_REGISTER = 0x00
-    CONFIG_REGISTER = 0x01
 
-    # Config-register bit fields from the ADS1115 data sheet.
-    _CHANNEL_BITS = {0: 0x4000, 1: 0x5000, 2: 0x6000, 3: 0x7000}
-    _FULL_SCALE_BITS = {
-        6.144: 0x0000,
-        4.096: 0x0200,
-        2.048: 0x0400,
-        1.024: 0x0600,
-        0.512: 0x0800,
-        0.256: 0x0A00,
-    }
-    _DATA_RATE_BITS = {
-        8: 0x0000,
-        16: 0x0020,
-        32: 0x0040,
-        64: 0x0060,
-        128: 0x0080,
-        250: 0x00A0,
-        475: 0x00C0,
-        860: 0x00E0,
-    }
+def signed(word):
+    return word - 65536 if word & 0x8000 else word
 
-    def __init__(self, bus_number=1, address=0x48, channel=0,
-                 full_scale_voltage=4.096, data_rate_sps=128, bus_factory=None):
-        if isinstance(bus_number, bool) or not isinstance(bus_number, int) or bus_number < 0:
-            raise ValueError('I²C bus number must be a non-negative integer')
-        if isinstance(address, bool) or not isinstance(address, int) or not 0x03 <= address <= 0x77:
-            raise ValueError('I²C address must be between 0x03 and 0x77')
-        if channel not in self._CHANNEL_BITS:
-            raise ValueError('ADS1115 channel must be 0, 1, 2, or 3')
-        if full_scale_voltage not in self._FULL_SCALE_BITS:
-            choices = ', '.join(str(value) for value in self._FULL_SCALE_BITS)
-            raise ValueError(f'full_scale_voltage must be one of: {choices}')
-        if data_rate_sps not in self._DATA_RATE_BITS:
-            choices = ', '.join(str(value) for value in self._DATA_RATE_BITS)
-            raise ValueError(f'data_rate_sps must be one of: {choices}')
 
-        self.bus_number = bus_number
-        self.address = address
-        self.channel = channel
-        self.full_scale_voltage = full_scale_voltage
-        self.data_rate_sps = data_rate_sps
-        self._bus_factory = bus_factory or self._default_bus_factory
-        self._bus = None
-
-    @staticmethod
-    def _default_bus_factory(bus_number):
-        try:
+class ADS1115:
+    def __init__(self, bus, address, transport=None):
+        if transport is None:
             from smbus2 import SMBus
-        except ImportError as exc:
-            raise RuntimeError(
-                'The ADS1115 node needs smbus2. Install it with: python3 -m pip install smbus2') from exc
-        return SMBus(bus_number)
+            transport = SMBus(bus)
+        self.bus = transport
+        self.address = address
+        self.last_config = None
 
-    @property
-    def connected(self):
-        return self._bus is not None
+    def read(self, register):
+        data = self.bus.read_i2c_block_data(self.address, register, 2)
+        return (data[0] << 8) | data[1]
 
-    @property
-    def device_name(self):
-        return f'/dev/i2c-{self.bus_number} at 0x{self.address:02x}'
+    def write(self, register, value):
+        self.bus.write_i2c_block_data(self.address, register, [(value >> 8) & 255, value & 255])
+
+    def idle(self):
+        # Complete the current conversion before changing MUX/PGA or thresholds.
+        current = self.read(1)
+        self.write(1, (current & 0x7fff) | 0x0103)
+        deadline = time.monotonic() + 0.3
+        while not self.read(1) & 0x8000:
+            if time.monotonic() > deadline:
+                raise TimeoutError('ADC did not enter power-down')
+            time.sleep(0.001)
+        self.last_config = None
+
+    def configure(self, c):
+        self.idle()
+        lo, hi = (0, 0x8000) if c['alert'] == 'ready' else (c['low'], c['high'])
+        self.write(2, lo)
+        self.write(3, hi)
+        mux = next((ch['mux'] for ch in c['channels'] if ch['enabled']), 4)
+        self.write(1, config_word(c, mux, idle=True))
+        registers = self.registers()
+        if registers['low'] != lo & 0xffff or registers['high'] != hi & 0xffff:
+            raise IOError('ADC threshold readback mismatch')
+        if registers['config'] & 0x7fff != config_word(c, mux, idle=True):
+            raise IOError('ADC configuration readback mismatch')
+        return registers
+
+    def sample(self, c, mux):
+        word = config_word(c, mux, start=c['mode'] == 'single')
+        if c['mode'] == 'single':
+            self.write(1, word)
+            deadline = time.monotonic() + 2 / c['rate'] + 0.05
+            time.sleep(0.8 / c['rate'])
+            while not self.read(1) & 0x8000:
+                if time.monotonic() > deadline:
+                    raise TimeoutError('ADC conversion timed out')
+                time.sleep(min(0.001, 0.1 / c['rate']))
+        else:
+            if self.last_config != word:
+                self.write(1, word)
+                self.last_config = word
+                # No RDY GPIO is required. Account for the specified -10% rate.
+            time.sleep(1 / (c['rate'] * 0.9) + 0.00005)
+        return signed(self.read(0))
+
+    def registers(self):
+        return dict(zip(('config', 'low', 'high'), (self.read(i) for i in (1, 2, 3))))
 
     def close(self):
-        if self._bus is not None:
-            self._bus.close()
-        self._bus = None
-
-    def _config_word(self):
-        # OS starts continuous conversion. MODE=0 selects continuous mode, and
-        # COMP_QUE=11 disables the comparator/ALERT pin.
-        return (0x8000 | self._CHANNEL_BITS[self.channel]
-                | self._FULL_SCALE_BITS[self.full_scale_voltage]
-                | self._DATA_RATE_BITS[self.data_rate_sps] | 0x0003)
-
-    def open(self):
-        if self._bus is not None:
-            return
-        bus = self._bus_factory(self.bus_number)
         try:
-            config = self._config_word()
-            bus.write_i2c_block_data(self.address, self.CONFIG_REGISTER,
-                                     [(config >> 8) & 0xff, config & 0xff])
-        except Exception:
-            bus.close()
-            raise
-        self._bus = bus
-
-    def read(self):
-        """Return ``(signed_counts, voltage)`` from the configured input."""
-        self.open()
-        data = self._bus.read_i2c_block_data(self.address, self.CONVERSION_REGISTER, 2)
-        if len(data) != 2:
-            raise OSError(f'ADS1115 returned {len(data)} conversion bytes, expected 2')
-        counts = (data[0] << 8) | data[1]
-        if counts & 0x8000:
-            counts -= 0x10000
-        return counts, counts * self.full_scale_voltage / 32768.0
+            self.idle()
+        finally:
+            self.bus.close()

@@ -7,7 +7,7 @@
 #
 # You can read more here: https://pip.pypa.io/en/stable/reference/requirements-file-format/#requirements-file-format
 
-numpy
+numpy<2
 matplotlib # For plotting the localization results and map
 pillow # for coloring the markers
 
@@ -29,3 +29,6 @@ aiodns>=3.2,<5
 
 # ArbotiX / MX-64 arm transport (Protocol 1.0)
 dynamixel-sdk==3.7.31
+
+# ADS1115 operator sensor acquisition
+smbus2>=0.4,<1

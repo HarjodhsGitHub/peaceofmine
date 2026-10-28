@@ -46,3 +46,6 @@ dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local physical calibration traces and generated plots
+results/

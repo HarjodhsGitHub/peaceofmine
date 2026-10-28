@@ -1,0 +1,174 @@
+(footprint "CAP-TH_BD13.0-P5.00-D0.6-FD"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(property "Reference" "REF**"
+		(at 0 0 0)
+		(layer "F.SilkS")
+		(uuid "3084d9e8-6ecf-422d-a1b5-a980c021fcd4")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "999b69d8-401c-46e1-84b1-1da2d8a56b35")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "c8cfac0b-01bb-493b-a57b-bcc90f3643bd")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "e8c317b3-b308-41a1-9345-428331850440")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "JLC_3DModel_Q" "7c9983bf978a4fc5a02c9caad056438d|0819f05c4eef4c71ace90d822a990e87"
+		(at 0 0 0)
+		(layer "Cmts.User")
+		(hide yes)
+		(uuid "b54587a1-b9ec-4087-89f0-8c661f30c016")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "JLC_3D_Size" "12.51 12.4975"
+		(at 0 0 0)
+		(layer "Cmts.User")
+		(hide yes)
+		(uuid "0485beb3-4ae5-4148-90da-879e4a32ec16")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(fp_rect
+		(start -6.805433 -1.15)
+		(end 3.65 6.805433)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "a9b6531e-c814-44a8-859e-8a11b44fe618")
+	)
+	(fp_poly
+		(pts
+			(xy -6.444567 6.477039) (xy -6.477039 6.444567) (xy -6.522961 6.444567) (xy -6.555433 6.477039) (xy -6.555433 6.522961)
+			(xy -6.522961 6.555433) (xy -6.477039 6.555433) (xy -6.444567 6.522961)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(fill yes)
+		(layer "F.Fab")
+		(uuid "9791217e-3ecb-4d01-ba31-b454955422db")
+	)
+	(fp_poly
+		(pts
+			(xy -2.202567 -0.039158) (xy -2.222836 -0.114805) (xy -2.261994 -0.182628) (xy -2.317372 -0.238006)
+			(xy -2.385195 -0.277164) (xy -2.460842 -0.297433) (xy -2.539158 -0.297433) (xy -2.614805 -0.277164)
+			(xy -2.682628 -0.238006) (xy -2.738006 -0.182628) (xy -2.777164 -0.114805) (xy -2.797433 -0.039158)
+			(xy -2.797433 0.039158) (xy -2.777164 0.114805) (xy -2.738006 0.182628) (xy -2.682628 0.238006) (xy -2.614805 0.277164)
+			(xy -2.539158 0.297433) (xy -2.460842 0.297433) (xy -2.385195 0.277164) (xy -2.317372 0.238006) (xy -2.261994 0.182628)
+			(xy -2.222836 0.114805) (xy -2.202567 0.039158)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(fill yes)
+		(layer "User.1")
+		(uuid "399fa633-afd0-4512-89b9-21319cab8f61")
+	)
+	(fp_poly
+		(pts
+			(xy 2.797433 -0.039158) (xy 2.777164 -0.114805) (xy 2.738006 -0.182628) (xy 2.682628 -0.238006) (xy 2.614805 -0.277164)
+			(xy 2.539158 -0.297433) (xy 2.460842 -0.297433) (xy 2.385195 -0.277164) (xy 2.317372 -0.238006) (xy 2.261994 -0.182628)
+			(xy 2.222836 -0.114805) (xy 2.202567 -0.039158) (xy 2.202567 0.039158) (xy 2.222836 0.114805) (xy 2.261994 0.182628)
+			(xy 2.317372 0.238006) (xy 2.385195 0.277164) (xy 2.460842 0.297433) (xy 2.539158 0.297433) (xy 2.614805 0.277164)
+			(xy 2.682628 0.238006) (xy 2.738006 0.182628) (xy 2.777164 0.114805) (xy 2.797433 0.039158)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(fill yes)
+		(layer "User.1")
+		(uuid "7cf70732-761d-4b5d-b404-f7dae2a525a5")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "7afa93df-ab0f-4d77-8d13-5c9bab9b771c")
+		(effects
+			(font
+				(size 0.5 0.5)
+				(thickness 0.1)
+			)
+		)
+	)
+	(pad "1" thru_hole circle
+		(at -2.5 0)
+		(size 1.8 1.8)
+		(drill 1.1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(thermal_bridge_angle 90)
+		(uuid "7c0a6eec-49b4-4726-9b79-5226993e09f3")
+	)
+	(pad "2" thru_hole circle
+		(at 2.5 0)
+		(size 1.8 1.8)
+		(drill 1.1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(thermal_bridge_angle 90)
+		(uuid "ba69dbb1-6f87-483b-87fd-a3dee5c6d5c5")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/EASYEDA_MODELS/CAP-TH_BD13.0-P5.00-D1.2-FD.step"
+		(offset
+			(xyz 0 0 -3.5)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz -0 -0 -0)
+		)
+	)
+)

@@ -4,6 +4,11 @@ There are two standalone demos for MX-64 servos connected through the ArbotiX
 FTDI USB adapter. Neither requires ROS or a firmware change to run against the
 existing ArbotiX ROS firmware.
 
+The ROS operator now uses [safe_arm firmware](firmware/safe_arm/README.md)
+instead. These legacy demos do not implement its permission watchdog protocol
+and cannot enable motion on it. Keep the archived firmware for historical
+comparison; do not downgrade merely to bypass a safety rejection.
+
 | Demo | Requirements | Where to run |
 | --- | --- | --- |
 | Python desktop (`mx64_slider.py`) | Python virtual environment and `requirements.txt` | Desktop session on the computer connected to the FTDI USB adapter |

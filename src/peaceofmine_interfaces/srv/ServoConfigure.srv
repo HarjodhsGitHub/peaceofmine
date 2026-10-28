@@ -1,0 +1,8 @@
+string session
+uint16 servo_id
+uint8 MULTITURN=1
+uint8 RECONNECT=2
+uint8 operation
+---
+bool success
+string message

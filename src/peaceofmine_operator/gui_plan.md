@@ -39,7 +39,7 @@ GUI computer) and ROS `/joy` (pad on the SVEA USB, `joy_node` in
 fight. Auto mapping covers the browser `standard` layout and Linux xpad
 trigger axes; the Drive panel shows a live pad graphic and whether
 `/<ns>/cmd_vel` is actually publishing. Hardware launch is
-`launch/operator.launch.py` (`is_sim:=false`, MAVROS → PX4). Operator
+`launch/operator.launch.xml` (`is_sim:=false`, MAVROS → PX4). Operator
 usage is in [`gui.md`](gui.md). Do not regress the localhost-only
 Gamepad API caveat (LAN `http://` needs TLS **or** the SVEA `/joy` path).
 

@@ -18,7 +18,7 @@
 
         <!-- Low-Level Interface -->
 
-        <node pkg="mavros" exec="mavros_node" namespace="mavros" output="screen" ros_args="--log-level info">
+        <node pkg="mavros" exec="mavros_node" output="screen" ros_args="--log-level info">
             <!-- Parameters -->
             <param name="fcu_url" value="serial://$(var serial_device):$(var baud_rate)"/>
             <param name="gcs_url" value="tcp-l://0.0.0.0:5760"/>

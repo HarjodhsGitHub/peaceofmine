@@ -1,187 +1,191 @@
-"""Exercise the actual ROS driver with an in-memory serial bus (no hardware)."""
+"""Production controllers exercised with the production driver and a fake bus."""
 import importlib.util
-from pathlib import Path
-import unittest
-from unittest.mock import patch
-from concurrent.futures import Future
 import json
-
+from pathlib import Path
+import tempfile
+import time
+import unittest
 import rclpy
+from rclpy.parameter import Parameter
+from rclpy.executors import SingleThreadedExecutor
 from std_msgs.msg import Bool, String
-from peaceofmine_operator.rc_safety import RcSafety
-from peaceofmine_operator.arm_servo import ArmServo
-try:
-    from test_arm_servo import Bus
-    from test_rc_safety import healthy, state, rc
-except ImportError:
-    from .test_arm_servo import Bus
-    from .test_rc_safety import healthy, state, rc
-
-spec = importlib.util.spec_from_file_location('arm_node', Path(__file__).parents[1] / 'scripts/arm_servo_node.py')
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+from nav_msgs.msg import Odometry
+from peaceofmine_operator import configuration
 
 
-class ArmNodeTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        rclpy.init()
+def module(name):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parents[1]/'scripts'/f'{name}.py')
+    result = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(result)
+    return result
 
-    @classmethod
-    def tearDownClass(cls):
-        rclpy.shutdown()
 
+class ActuatorTest(unittest.TestCase):
     def setUp(self):
-        self.now = 100.0
-        self.clock = patch.object(module.time, 'monotonic', side_effect=lambda: self.now)
-        self.clock.start()
-        self.node = module.ArmServoNode()
-        self.node.safety = RcSafety(clock=lambda: self.now)
-        healthy(self.node.safety)
-        self.bus = Bus()
-        self.node.bus = self.bus
-        self.node.discovered_servos = [1, 2]
-        self.node.servo = ArmServo(self.bus, 1, dict(minimum=1500, center=2000, maximum=2500))
-        self.node.permission_cb(Bool(data=True))
+        rclpy.init()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tmp.name)/'operator_config.json')
+        configuration.save_section(self.path,'arm',dict(servo_id=1,minimum=920,center=1533,maximum=2224))
+        configuration.save_section(self.path,'probe',dict(servo_id=2,max_extension_mm=120.,travel_ticks=5430))
+        params = [Parameter('config_file',value=self.path), Parameter('simulation',value=True)]
+        self.driver = module('servo_driver_node').ServoDriver(parameter_overrides=params)
+        self.arm = module('arm_controller_node').ArmController(parameter_overrides=params)
+        self.probe = module('probe_controller_node').ProbeController(parameter_overrides=params)
+        self.settings = module('operator_settings_node').OperatorSettings(parameter_overrides=params)
+        self.observer = rclpy.create_node('test_vehicle')
+        self.permission = self.observer.create_publisher(Bool,'operator/actuation_enabled',1)
+        self.odom = self.observer.create_publisher(Odometry,'odometry/local',1)
+        self.allow = True
+        self.publish_velocity = True
+        self.velocity = 0.
+        self.observer.create_timer(.04,self.inputs)
+        self.nodes = (self.driver,self.arm,self.probe,self.settings,self.observer)
+        self.executor = SingleThreadedExecutor()
+        for node in self.nodes:
+            self.executor.add_node(node)
+        self.spin(.6)
+        self.assertTrue(self.arm.connected(),self.driver.reason)
+
+    def inputs(self):
+        if getattr(self, 'send_permission', True):
+            self.permission.publish(Bool(data=self.allow))
+        if self.publish_velocity:
+            msg = Odometry()
+            msg.header.stamp = self.observer.get_clock().now().to_msg()
+            msg.twist.twist.linear.x = self.velocity
+            self.odom.publish(msg)
+
+    def spin(self, seconds):
+        end = time.monotonic()+seconds
+        while time.monotonic()<end:
+            self.executor.spin_once(timeout_sec=.005)
+
+    def command(self, node, **value):
+        node.command_cb(String(data=json.dumps(dict(request_id='test',**value))))
+        return node.last_command
 
     def tearDown(self):
-        self.node.destroy_node()
-        self.clock.stop()
+        for node in (self.arm,self.probe):
+            node.stop()
+        self.spin(.1)
+        self.executor.shutdown()
+        for node in self.nodes:
+            node.destroy_node()
+        rclpy.shutdown()
+        self.tmp.cleanup()
 
-    def move(self):
-        self.node.command_cb(String(data=json.dumps(dict(action='move', held=True, point='maximum'))))
-        self.node.tick()
-        self.assertTrue(self.node.servo.torque)
+    def test_configured_speed_limit_survives_typed_status(self):
+        from peaceofmine_interfaces.msg import ActuatorStatus
+        from peaceofmine_operator.actuator_protocol import status_dict
+        received=[]
+        sub=self.observer.create_subscription(ActuatorStatus,'arm/state',received.append,1)
+        self.arm.motion_speed=116
+        self.spin(.15)
+        self.assertTrue(received)
+        value=status_dict(received[-1])
+        self.assertEqual(value['motion_speed_limit'],116)
+        self.assertAlmostEqual(value['motion_speed_limit']*.684,79.344)
+        self.observer.destroy_subscription(sub)
 
-    def test_scan_is_read_only_and_finds_both_servos_at_fixed_baud(self):
-        def read(ident, address, size=2):
-            if ident in (1, 2):
-                return 310
-            raise RuntimeError('No reply')
-        with patch.object(module, 'ArbotiX', return_value=self.bus) as factory, \
-                patch.object(self.bus, 'read', side_effect=read):
-            before = list(self.bus.writes)
-            bus, device, ids = self.node.discover('/dev/fake')
-        self.assertIs(bus, self.bus)
-        self.assertEqual(ids, [1, 2])
-        self.assertEqual(self.bus.writes, before)
-        factory.assert_called_once_with('/dev/fake', 1000000)
+    def test_idle_permission_updates_preserve_stop_reason(self):
+        self.arm.stop('Servo overload; inspect the mechanism')
+        self.arm.permission_cb(Bool(data=False))
+        self.arm.permission_cb(Bool(data=False))
+        self.assertEqual(self.arm.reason, 'Servo overload; inspect the mechanism')
+        self.assertIsNone(self.arm.operation)
 
-    def test_pending_scan_does_not_block_tick_or_select_a_servo(self):
-        self.node.bus = self.node.servo = None
-        self.node.discovery = Future()
-        self.node.tick()
-        self.assertIsNone(self.node.servo)
-        self.assertFalse(self.node.discovery.done())
-        self.node.discovery.set_result((self.bus, '/dev/fake', [1, 2]))
-        self.node.tick()
-        self.assertEqual(self.node.discovered_servos, [1, 2])
-        self.assertIsNone(self.node.servo)
-        self.assertNotIn((24, 1), self.bus.writes)
+    def test_slider_and_jog_obey_saved_speed(self):
+        self.command(self.arm,action='configure_motion',max_speed_deg_s=10.,acceleration_deg_s2=34.332)
+        self.spin(1.1)
+        saved=configuration.load(self.path)
+        self.assertNotIn('arm_motion',saved)
+        self.assertEqual(saved['arm_motion_simulation']['max_speed_deg_s'],10.)
+        self.command(self.arm,action='position',position=2100,held=True)
+        self.spin(.12)
+        self.assertIsNotNone(self.driver.runtime.active,self.arm.reason)
+        self.assertEqual(self.driver.runtime.bus.values[1][32],14)
+        self.command(self.arm,action='stop')
+        self.spin(.1)
+        self.command(self.arm,action='jog',direction=1,speed_deg_s=100.,held=True)
+        self.spin(.12)
+        self.assertEqual(self.driver.runtime.bus.values[1][32],14)
 
-    def test_scan_cancellation_closes_port_without_motion(self):
-        with patch.object(module, 'ArbotiX', return_value=self.bus), \
-                patch.object(self.bus, 'read', side_effect=lambda *args: self.node.discovery_stop.set() or 310), \
-                patch.object(self.bus, 'close') as close:
-            self.assertIsNone(self.node.discover('/dev/fake'))
-            close.assert_called_once()
-        self.assertNotIn((24, 1), self.bus.writes)
+    def test_home_and_jog_reject_motion_and_fault(self):
+        for velocity,fault in ((1.,False),(0.,True)):
+            self.velocity,self.probe.fault=velocity,fault
+            self.spin(.1)
+            for command in (dict(action='home',held=True,hold_id=str(velocity),load_percent=20),
+                            dict(action='jog',held=True,direction=1)):
+                self.assertFalse(self.command(self.probe,**command)['success'])
+                self.assertIsNone(self.probe.operation)
 
-    def test_failed_startup_scan_is_not_retried(self):
-        self.node.bus = self.node.servo = None
-        future = Future()
-        future.set_exception(RuntimeError('No adapter'))
-        with patch.object(self.node.discovery_pool, 'submit', return_value=future) as submit:
-            self.node.tick()  # Schedule once without blocking the ROS callback.
-            self.node.tick()  # Report failure.
-            for _ in range(5):
-                self.now += 10
-                self.node.tick()
-            submit.assert_called_once_with(self.node.discover, 'auto')
-        self.assertEqual(self.node.reason, 'No adapter')
+    def test_stationary_loss_stops_homing(self):
+        self.command(self.probe,action='home',held=True,hold_id='home',load_percent=20)
+        self.spin(.1)
+        self.assertIsNotNone(self.probe.operation,self.probe.reason)
+        self.velocity=1.
+        self.spin(.12)
+        self.assertIsNone(self.probe.operation)
+        self.assertIsNone(self.probe.home_position)
 
-    def test_stop_does_not_hide_discovery_failure(self):
-        self.node.fail(RuntimeError('Adapter did not answer'))
-        self.node.command_cb(String(data=json.dumps(dict(action='stop'))))
-        self.assertEqual(self.node.reason, 'Adapter did not answer')
-        self.assertEqual(self.node.connection_error, 'Adapter did not answer')
+    def test_expired_manual_hold_does_not_restart(self):
+        self.command(self.arm,action='jog',held=True,direction=1)
+        self.spin(.45)
+        self.assertIsNone(self.driver.runtime.active)
+        self.command(self.arm,action='jog',held=True,direction=1)
+        self.spin(.1)
+        self.assertIsNone(self.driver.runtime.active)
+        self.command(self.arm,action='stop')
+        self.command(self.arm,action='jog',held=True,direction=1)
+        self.spin(.1)
+        self.assertIsNotNone(self.driver.runtime.active)
 
-    def test_disconnect_after_scan_does_not_restart_discovery(self):
-        self.node.bus = self.node.servo = None
-        self.node.discovery = Future()
-        self.node.discovery.set_result((self.bus, '/dev/fake', [1, 2]))
-        self.node.tick()
-        self.node.fail(RuntimeError('Disconnected'))
-        with patch.object(self.node.discovery_pool, 'submit') as submit:
-            self.now += 10
-            self.node.tick()
-            submit.assert_not_called()
+    def test_homing_contact_and_reconnect_invalidates_zero(self):
+        deadline=time.monotonic()+3
+        while self.probe.home_position is None and time.monotonic()<deadline:
+            self.command(self.probe,action='home',held=True,hold_id='home',load_percent=20)
+            self.spin(.08)
+        self.assertIsNotNone(self.probe.home_position,self.probe.reason)
+        self.assertFalse(self.driver.runtime.bus.values[2][24])
+        self.driver.disconnect('test unplug')
+        self.spin(.1)
+        self.assertIsNone(self.probe.home_position)
 
-    def test_jog_without_limits_and_command_feedback(self):
-        self.node.servo.calibration = None
-        self.node.command_cb(String(data=json.dumps(dict(action='jog', direction=1, held=True, request_id='jog1'))))
-        self.node.tick()
-        self.assertTrue(self.node.servo.torque)
-        self.assertTrue(self.node.last_command['success'])
-        self.now += .26
-        self.node.tick()
-        self.assertFalse(self.node.servo.torque)
+    def test_stale_odometry_blocks_extension(self):
+        self.probe.home_position=0
+        self.publish_velocity=False
+        self.spin(.6)
+        self.assertFalse(self.command(self.probe,action='target',depth_mm=20)['success'])
+        self.assertIsNone(self.driver.runtime.active)
 
-    def test_slider_command_full_speed_and_timeout(self):
-        self.node.command_cb(String(data=json.dumps(dict(action='position', position=2030,
-            held=True))))
-        self.node.tick()
-        self.assertEqual(self.bus.values[30], 2030)
-        self.assertEqual(self.bus.values[32], 0)
-        self.now += .26
-        self.node.tick()
-        self.assertFalse(self.node.servo.torque)
-        self.node.command_cb(String(data=json.dumps(dict(action='capture', point='center', request_id='record1'))))
-        self.assertTrue(self.node.last_command['success'])
-        self.assertIn('Recorded center', self.node.last_command['message'])
-        self.now += .1
-        self.node.command_cb(String(data=json.dumps(dict(action='jog', direction=1, held=True, request_id='stale'))))
-        self.assertFalse(self.node.last_command['success'])
-        self.assertFalse(self.node.servo.torque)
-
-    def test_px4_disarm_immediately_drops_torque(self):
-        self.move()
-        self.node.state_cb(state(2000000, armed=False, system_status=3))
-        self.assertFalse(self.node.servo.torque)
-        self.assertEqual(self.bus.writes[-1], (24, 0))
-        healthy(self.node.safety, 3000000)
-        self.node.tick()
-        self.assertFalse(self.node.servo.torque)
-
-    def test_command_timeout_and_lease_loss(self):
-        self.move()
-        self.now += .26
-        self.node.tick()
-        self.assertFalse(self.node.servo.torque)
-
-        self.node.permission_cb(Bool(data=True))
-        self.move()
-        self.node.permission_cb(Bool(data=False))
-        self.assertFalse(self.node.servo.torque)
-
-    def test_destroy_disables_torque_before_serial_close(self):
-        self.move()
-        with patch.object(self.bus, 'close', side_effect=lambda: self.assertEqual(self.bus.writes[-1], (24, 0))):
-            self.node.destroy_node()
-        self.assertFalse(self.node.servo.torque)
-        self.assertIsNone(self.node.servo.target)
-
-    def test_sweep_ignores_rc_override_but_kill_clears_target(self):
-        self.node.sweep_cb(Bool(data=True))
-        self.node.tick()
-        self.assertTrue(self.node.servo.torque)
-        self.node.safety.update_rc(rc(2000000, pwm=1500))
-        self.node.tick()
-        self.assertTrue(self.node.sweeping)
-        self.assertTrue(self.node.servo.torque)
-        self.node.state_cb(state(2000000, system_status=8))
-        self.assertFalse(self.node.sweeping)
-        self.assertFalse(self.node.servo.torque)
-        healthy(self.node.safety, 3000000)
-        self.node.tick()
-        self.assertFalse(self.node.servo.torque)
+    def test_action_home_feedback_result_and_cancel(self):
+        from rclpy.action import ActionClient
+        from peaceofmine_interfaces.action import ActuatorOperation
+        client=ActionClient(self.observer,ActuatorOperation,'probe/execute')
+        feedback=[]
+        self.spin(.2)
+        goal=client.send_goal_async(ActuatorOperation.Goal(operation='home',load_percent=20.),feedback_callback=feedback.append)
+        deadline=time.monotonic()+4
+        while not goal.done() and time.monotonic()<deadline:self.spin(.02)
+        self.assertTrue(goal.done())
+        handle=goal.result()
+        self.assertTrue(handle.accepted)
+        result=handle.get_result_async()
+        while not result.done() and time.monotonic()<deadline:self.spin(.02)
+        self.assertTrue(result.done(),self.probe.reason)
+        self.assertTrue(result.result().result.success,result.result().result.message)
+        self.assertTrue(feedback)
+        goal=client.send_goal_async(ActuatorOperation.Goal(operation='target',target=100.))
+        while not goal.done():self.spin(.02)
+        handle=goal.result()
+        self.assertTrue(handle.accepted)
+        self.spin(.1)
+        cancel=handle.cancel_goal_async()
+        result=handle.get_result_async()
+        deadline=time.monotonic()+2
+        while not result.done() and time.monotonic()<deadline:self.spin(.02)
+        self.assertTrue(result.done())
+        self.assertFalse(result.result().result.success)
+        self.spin(.1)
+        self.assertIsNone(self.driver.runtime.active)
+        client.destroy()

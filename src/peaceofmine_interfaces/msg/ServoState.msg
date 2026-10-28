@@ -1,0 +1,9 @@
+std_msgs/Header header
+string session
+uint64 challenge
+bool connected
+string device
+string error
+string active_owner
+peaceofmine_interfaces/ServoTelemetry[] servos
+uint64 config_revision

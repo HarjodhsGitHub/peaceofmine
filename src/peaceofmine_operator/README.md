@@ -1,42 +1,39 @@
-# PeaceOfMine operator simulator
+# PeaceOfMine operator
 
-A browser operator surface for the SVEA stack, split into two nodes:
+ROS 2 operator controls for the vehicle, arm, probe, detector, ADS1115 and cameras.
+A dedicated web node serves the dashboard. Separate control, behavior, hardware and
+settings nodes communicate through ROS topics, services and actions. Simulation
+runs the same arm/probe controllers against a simulated device bus.
 
-- `operator_gateway.py` serves the dashboard and translates a small WebSocket
-  protocol to and from ROS. It publishes `cmd_vel` and nothing else.
-- `simulated_payload.py` stands in for the detector and probe hardware. It is
-  the only source of simulated payload data.
-
-The gateway and the dashboard never compute detector, pressure, depth, or
-fixture values; they only display what arrives on ROS topics. Swapping in real
-drivers means replacing `simulated_payload.py` alone.
+See [architecture](architecture.md), [ROS graph](ros_graph.md), and the
+[operator guide](gui.md) for ownership, interfaces, configuration and setup.
 
 ## Run the simulator
 
 Build the workspace in the SVEA container, source the overlay, then run:
 
 ```bash
-ros2 launch peaceofmine_operator operator.launch.xml
+ros2 launch peaceofmine_operator operator.launch.xml is_sim:=true
 ```
 
 Open the dashboard on port `8080`. The XML file is the editable development
 configuration: its arguments and defaults select simulation or hardware
-without requiring a long command. The default profile is fully simulated.
+without requiring a long command. Set `is_sim:=true` for simulation; the default
+profile is hardware.
 The launch starts without TLS for local
 debugging; remote operation must supply both `tls_cert` and `tls_key`, because
 the browser Gamepad API requires a secure context on non-localhost origins.
 
 For a persistent local setup, edit the defaults near the top of
 `launch/operator.launch.xml`. The main switches are `is_sim`,
-`simulate_payload`, and `use_camera`. A real vehicle should use
+`simulate_payload`, and `use_cameras`. A real vehicle should use
 `is_sim="false"`; this starts the SVEA low-level interface, so verify the serial
 device and keep the vehicle safe before launching it. A USB camera can be used
-with either vehicle mode by setting `use_camera="true"`; it requires the
-`usb_cam` ROS package and container access to `camera_device`. It publishes ROS
+with either vehicle mode by setting `use_cameras="true"`; it requires the
+`usb_cam` ROS package and container access to `front_camera_device`. It publishes ROS
 images for onboard integration work.
 
-The Settings dialog is split into **Controls**, **Cameras**, and **Connection**
-tabs. The Cameras tab independently assigns either Raspberry Pi ROS camera to
+Settings provides controls, ADC, independent arm/probe panels, cameras and connection options. The Cameras tab independently assigns either Raspberry Pi ROS camera to
 the main preview or optional inset preview. It can also use cameras connected
 to the computer running the browser; click **Allow laptop cameras** to grant
 access and populate those device names. Browser camera access and Gamepad input
@@ -71,6 +68,18 @@ camera session before starting the ROS stack.
 `fixture_angle_offset_deg` sets the centre angle of the forward fixture, for
 example `fixture_angle_offset_deg:=10.0`.
 
+## Arduino detector launch
+
+The operator XML includes the standalone `sensor_serial.launch.xml` by default
+in hardware mode. Set `use_sensor_serial:=false` to disable it.
+`sensor_serial_port` defaults to the configured Uno's
+full `/dev/serial/by-id/...` path; override it for another board. Optional settings are
+`sensor_baud_rate` (115200), `sensor_baseline_adc` (0.0), and
+`sensor_full_response_adc` (255.0). The endpoints require detector calibration.
+The real sensor is excluded in vehicle or payload simulation. Its topics share
+the operator namespace, for example `/self/detector/amplitude_adc`.
+See [sensor setup](../../DevTools/sensorArduinoFast/README.md) for bench testing.
+
 ## Coordinate convention
 
 The search lane runs along world **+X**, matching the ROS convention that a
@@ -83,8 +92,9 @@ rover's left. The forward camera, the field map, and the two buried targets at
 Every connected browser receives the same telemetry. The header shows the
 viewer count and whether this browser holds the control lease. Any viewer can
 take or steal control at any time; ownership transfers immediately, the
-previous owner becomes a spectator, and the gateway disarms so the new owner
-must arm before sending motion.
+previous owner becomes a spectator, and the gateway stops active motion.
+Only the owner can drive, sweep, move the probe, or change calibration.
+Take control, then click **Arm controls**. The physical RC still determines drive authority; motion requires the configured held input/deadman. **Disarm** stops outputs.
 
 Plug the Xbox 360 (or another gamepad) into the computer that is showing this
 dashboard, then press any button if the Drive panel still says no controller
@@ -92,12 +102,12 @@ is connected. Chrome often ignores a pad until that first press.
 
 The default **Auto** mapping uses the browser `standard` layout when the pad
 reports it: left stick steers, right trigger drives forward, left trigger
-reverses, and a trigger or bumper is the deadman. An Xbox 360 on Linux often
+reverses. An Xbox 360 on Linux often
 reports an empty mapping and puts the triggers on axes; Auto then uses that
 Xbox 360 layout. Settings → **Controller mapping** can force Standard or
 Xbox 360 (Linux) if the steer/throttle meters do not follow the pad. For
 keyboard driving, choose **WASD keyboard** in Settings, click the forward
-camera to focus it, then hold Shift while using WASD. Gamepad sticks map linearly (0.12 deadzone, no extra smoothing). WASD
+camera to focus it, then use WASD without Shift. Gamepad sticks map linearly (0.12 deadzone, no extra smoothing). WASD
 throttle and steering ramp progressively. Both send changed commands promptly,
 plus a 20 Hz keepalive while moving.
 
@@ -106,8 +116,8 @@ Browser gamepad input on a non-localhost URL requires HTTPS (`tls_cert` and
 `use_joy:=true`: ROS joystick input works over plain HTTP and takes priority
 over browser drive commands while the joystick is live.
 
-The gateway publishes `cmd_vel` only while a lease is held, armed, and the
-deadman is down. It publishes zeros for 0.5 s after that stops and then goes
+The gateway publishes `cmd_vel` only while a lease is held, RC permits ROS
+driving, and input is newer than 0.25 s. It publishes zeros for 0.5 s after input stops and then goes
 silent, so `twist_consumer`'s own command timeout stays an independent safety
 layer and an idle dashboard does not compete with other `cmd_vel` publishers.
 
@@ -157,19 +167,17 @@ Choose one of three schemes:
 - **Xbox / standard gamepad**: the dashboard selects an active browser pad
   automatically; Settings can select a specific device and override the
   automatically detected `standard` or Xbox 360 mapping.
-  Left stick steers, RT drives forward, LT reverses, and either trigger or
-  bumper acts as the deadman. A arms when you own control.
+  Left stick steers, RT drives forward, LT reverses. RC controls drive authority.
 - **WASD keyboard**: focus the test button to preview keys, or close Settings
-  and focus the forward camera to drive while holding Shift.
+  and focus the forward camera to drive with WASD.
 - **Steering wheel**: select the wheel, inspect raw axes and buttons, then set
-  steering, forward pedal, reverse pedal, and deadman indices. Invert axes as
+  steering, forward pedal, and reverse pedal indices. Invert axes as
   needed. Defaults are starting points, not a verified G27 mapping. Pedals
   must use distinct axes spanning -1 to +1; combined pedal axes are rejected.
   The reverse pedal commands reverse motion, not a separate vehicle brake.
 
-Before arming, verify released pedals produce zero speed, steering is centered,
-full pedal travel reaches the expected signed speed, and only the chosen
-button activates the deadman. Preferences are stored locally in this browser;
+Before driving, verify released pedals produce zero speed, steering is centered,
+and full pedal travel reaches the expected signed speed. Preferences are stored locally in this browser;
 device selection is deliberately required again after a page reload.
 
 Connect the wheel to the Chrome client computer. Use HTTPS when accessing a
@@ -209,23 +217,27 @@ target for the virtual camera. Unavailable metadata is shown as a dash.
 Rotate changes the local view by 90° and saves the orientation independently for
 each slot; it does not modify the camera sensor or steering directions.
 
-WASD uses bundled Keydrown 1.3.0 for held-key input. While Shift is held,
+WASD uses bundled Keydrown 1.3.0 for held-key input. While drive keys are held,
 throttle reaches full scale in about 0.63 seconds and steering in about 0.31
 seconds. Releasing WASD ramps throttle down and recenters steering. Releasing
-Shift, losing focus, disconnecting, or opening Settings bypasses the ramp and
+the drive keys, losing focus, disconnecting, or opening Settings bypasses the ramp and
 stops immediately. The Settings keyboard test previews the same ramp without
 sending motion. Xbox and wheel mappings are unchanged. Connection status and
 retry remain in the main dashboard; the redundant Connection settings tab is removed.
 
 ### Arm servo and RC authority
 
-Servo motion requires fresh connected PX4 `system_status == 4`; RC override does
-not block servos. Vehicle drive additionally requires RC ROS authority and arming.
+Servo motion requires fresh connected PX4 `system_status == 4` and fresh RC input
+with kill clear; RC override does not block servos. Vehicle drive additionally
+requires RC ROS authority and PX4 arming, with no separate browser arming.
 The header distinguishes ROS mode, RC override, kill, disarmed, and unknown/lost
 status. Settings → Arm calibration records safe limits and exports launch XML.
 See [the safety audit and setup](../../docs/development/arm-servo-safety.md) before
 enabling the hardware driver. Safety uses existing `mavros/state` and `mavros/rc/in`;
-no firmware changes are required. Missing or stale MAVROS state leaves actuation locked.
+no PX4 firmware changes are required. The ArbotiX requires
+[safe_arm firmware v1](../../DevTools/servodemo/firmware/safe_arm/README.md) for
+the permission watchdog and locally eased sweep. Legacy ArbotiX firmware is
+rejected before motion. Missing or stale MAVROS state leaves actuation locked.
 The XML defaults to hardware mode with the verified FTDI adapter and servo ID 1 enabled.
 Use `is_sim:=true` for simulation; this excludes the hardware arm driver.
 Servo limits remain unset until calibration.

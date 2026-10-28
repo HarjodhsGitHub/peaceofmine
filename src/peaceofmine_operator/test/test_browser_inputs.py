@@ -63,10 +63,18 @@ selectedPadIndex = 0; selectedPadId = pad.id; preferences.input = 'wheel';
 state.safety = {allowed: true, servo_allowed: true, mode: 'simulation'};
 state.connected = true; state.drive.armed = true; state.drive.you_control_owner = true;
 $('settings').click();
-assert(sent.some(m => m.type === 'estop'), 'settings disarms');
+assert(sent.some(m => m.type === 'calibration_begin'), 'settings stops motion and blocks driving');
 lastDriveSent = -1000; inputLoop();
 assert(latestDrive().deadman === false && latestDrive().linear_x === 0, 'settings blocks drive');
-$('settings-dialog').close();
+const beforeSettingsClose = sent.length;
+$('settings-dialog').querySelector('button[value="close"]').click();
+const closeMessages = sent.slice(beforeSettingsClose);
+assert(closeMessages.some(m => m.type === 'arm_servo' && m.action === 'stop'), 'closing settings releases arm');
+assert(closeMessages.some(m => m.type === 'calibration_end'), 'closing settings exits calibration');
+assert(!closeMessages.some(m => ['calibration_begin', 'estop'].includes(m.type)), 'closing settings preserves control and leaves calibration');
+const beforeBlur = sent.length;
+window.dispatchEvent(new Event('blur'));
+assert(sent.slice(beforeBlur).some(m => m.type === 'estop'), 'focus loss still revokes control');
 preferences.input = 'controller'; lastDriveSent = -1000; inputLoop();
 assert(!latestDrive().deadman, 'unmapped wheel has no trigger drive');
 preferences.input = 'wheel';
@@ -181,8 +189,8 @@ assert($('auxiliary-preview-state').textContent === 'Off' && $('auxiliary-dimens
 $('settings-dialog').close();
 preferences.input = 'keyboard'; cameraFocused = true;
 const keyEvent = (type, code, keyCode) => document.dispatchEvent(new KeyboardEvent(type, {code, keyCode, bubbles: true}));
-keyEvent('keydown', 'KeyW', 87); keyEvent('keydown', 'KeyA', 65); keyEvent('keydown', 'ShiftLeft', 16);
-assert(keys.has('KeyW') && keys.has('KeyA') && keys.has('ShiftLeft'), 'Keydrown acquires held WASD keys');
+keyEvent('keydown', 'KeyW', 87); keyEvent('keydown', 'KeyA', 65);
+assert(keys.has('KeyW') && keys.has('KeyA') && !keys.has('ShiftLeft'), 'WASD works without Shift');
 resetKeyboardRamp(0);
 let ramped = readKeyboard(); rampKeyboard(ramped, 16);
 assert(ramped.linear > 0 && ramped.linear < .1 && ramped.angular > 0 && ramped.angular < .2, 'WASD starts gradually with correct yaw');
@@ -191,15 +199,13 @@ const at30 = runRamp(30), at60 = runRamp(60);
 assert(Math.abs(at30.linear - at60.linear) < .00001 && Math.abs(at30.angular - at60.angular) < .00001, 'ramp independent of frame rate');
 keyEvent('keyup', 'KeyW', 87); keyEvent('keyup', 'KeyA', 65);
 ramped = readKeyboard(); rampKeyboard(ramped, 516);
-assert(ramped.linear > 0 && ramped.linear < at60.linear && ramped.angular > 0 && ramped.angular < at60.angular, 'throttle coasts down and steering recenters');
-keyEvent('keyup', 'ShiftLeft', 16);
-assert(keyboardRamp.throttle === 0 && keyboardRamp.steer === 0 && !latestDrive().deadman, 'deadman release bypasses ramp');
+assert(ramped.linear === 0 && ramped.angular === 0, 'releasing WASD stops without a separate deadman');
 
 state.safety = {allowed: false, mode: 'kill', reason: 'PX4 kill'};
 state.connected = true; state.drive.you_control_owner = true; state.drive.armed = false;
 updateHud();
 assert($('rc-safety').textContent === 'RC KILL', 'physical safety indicator');
-assert($('arm').disabled && $('probe-slider').disabled && $('sweep-toggle').disabled && $('sweep-speed').disabled, 'all website actuation gated');
+assert(!$('arm') && !$('estop') && $('probe-slider').disabled && $('sweep-toggle').disabled && $('sweep-speed').disabled, 'RC kill gates actuation without UI arm buttons');
 state.arm_servo = {connected: true, servo_id: 2, discovered_servos: [1, 2], serial_port: '/dev/serial/by-id/arm', position: 2000, torque: false,
   calibration: {minimum: 1500, center: 2000, maximum: 2500}};
 updateArmSettings();
@@ -213,22 +219,77 @@ assert($('arm-calibration-access').textContent.includes('Take control'), 'disabl
 state.drive.you_control_owner = true;
 updateArmSettings();
 assert(!$('arm-select-id').disabled && $('arm-take-control').hidden, 'selection enabled for disarmed owner');
-state.drive.armed = true;
+state.arm_servo.torque = true;
 updateArmSettings();
-assert($('arm-select-id').disabled && $('arm-calibration-access').textContent.includes('Disarm'), 'armed selection has explicit explanation');
-state.drive.armed = false;
+assert($('arm-select-id').disabled && $('arm-calibration-access').textContent.includes('Stop'), 'moving servo cannot change ID');
+state.arm_servo.torque = false;
+state.arm_servo.calibration = {minimum: 1000, center: 1500, maximum: 2000};
+state.arm_servo.eeprom_minimum = 0;
+state.arm_servo.eeprom_maximum = 4095;
+state.arm_servo.motion_speed_limit = 292;
+state.arm_servo.sweep_acceleration_deg_s2 = 94.413;
+updateArmSettings();
+assert($('arm-position-slider').min === '0' && $('arm-position-slider').max === '4095', 'calibration ignores saved sweep range');
+$('arm-max-speed').value = '200';
+$('arm-acceleration').value = '100';
+$('arm-apply-motion').click();
+assert(sent.at(-1).action === 'configure_motion' && sent.at(-1).max_speed_deg_s === 200, 'motion settings reach driver');
+state.drive.armed = true;
 state.drive.calibrating = false;
 state.safety = {allowed: false, servo_allowed: true, mode: 'override'};
 state.arm_servo.calibration = null;
 updateArmSettings();
-assert(!$('arm-calibration-enable').disabled, 'jog setup available before limits exist');
+assert(!document.getElementById('enable-controls') && !document.getElementById('disable-controls'), 'no dashboard arming buttons');
+assert(!document.getElementById('arm-calibration-enable'), 'no extra jogging enable step');
+assert(!$('arm-jog-left').disabled && !$('arm-position-slider').disabled, 'RC permits jogging without calibration enable');
 $('arm-select-id').click();
 const selection = sent.at(-1);
 assert(selection.request_id && $('arm-feedback').textContent.includes('Selecting'), 'selection gives immediate pending feedback');
 state.arm_servo.last_command = {request_id: selection.request_id, success: true, message: 'Servo 2 selected'};
 updateArmSettings();
 assert($('arm-feedback').textContent === 'Servo 2 selected', 'driver acknowledgement shown');
+const savedServo = state.arm_servo;
+state.arm_servo = {active_role: 'probe', role_ids: {arm: 1, probe: 2}, discovered_servos: [1],
+  serial_connected: true, connected: false, reason: 'Probe servo ID 2 is not connected'};
+updateArmSettings();
+assert(!$('arm-servo-role'), 'actuator dropdown replaced by separate panels');
+assert($('probe-servo-servo-status').textContent.includes('not connected'), 'probe connection status stays in probe panel');
+assert($('probe-servo-jog-left').disabled && $('probe-servo-position-slider').disabled, 'unplugged probe cannot move');
+assert($('arm-jog-left').disabled, 'inactive arm cannot move another actuator');
+assert(!$('arm-reconnect').disabled, 'owner can reconnect while stopped');
+$('arm-reconnect').click();
+assert(sent.at(-1).action === 'reconnect', 'explicit reconnect request');
+state.drive.you_control_owner = false;
+updateArmSettings();
+assert($('arm-reconnect').disabled, 'spectator cannot reconnect');
+state.drive.you_control_owner = true;
+state.arm_servo.discovered_servos = [1, 2];
+updateArmSettings();
+const probeOption = $('probe-servo-servo-id').options[2];
+$('probe-servo-servo-id').focus();
+for (let i = 0; i < 20; i++) { state.arm_servo.scanning = i % 2 === 0; updateArmSettings(); }
+assert($('probe-servo-servo-id').options[2] === probeOption, 'telemetry does not recreate dropdown options');
+assert($('probe-servo-servo-id').value === '2', 'probe defaults to assigned ID 2');
+$('probe-servo-select-id').click();
+assert(sent.at(-1).action === 'select' && sent.at(-1).role === 'probe' && sent.at(-1).servo_id === 2, 'probe selection explicitly targets probe');
+$('arm-servo-id').value = '1';
+$('arm-select-id').click();
+assert(sent.at(-1).action === 'select' && sent.at(-1).role === 'arm', 'arm selection explicitly targets arm');
+state.arm_servo = savedServo;
 state.drive.armed = true; state.drive.calibrating = true;
+state.arm_servo = {...savedServo, active_role: 'probe', home_position: 2100, position: 2000};
+updateArmSettings();
+assert(!$('probe-servo-home').disabled, 'probe home requires calibration permission');
+$('probe-servo-home').onkeydown({key: ' ', repeat: false, preventDefault() {}});
+assert(sent.at(-1).action === 'home' && sent.at(-1).role === 'probe' && sent.at(-1).held
+  && sent.at(-1).hold_id && sent.at(-1).load_percent === 30, 'home sends load threshold and unique deadman hold');
+$('probe-servo-home').onkeyup({key: ' '});
+assert(sent.at(-1).action === 'stop', 'home release sends stop');
+assert($('probe-servo-home-travel').textContent.includes('8.8°'), 'probe travel uses top reference');
+state.safety.servo_allowed = false; updateArmSettings();
+assert($('probe-servo-home').disabled, 'RC kill blocks homing');
+state.safety.servo_allowed = true;
+state.arm_servo = savedServo;
 updateArmSettings();
 assert(!$('arm-jog-left').disabled && !$('arm-jog-right').disabled, 'uncalibrated jog enabled in RC override');
 $('arm-jog-left').onkeydown({key: ' ', repeat: false, preventDefault() {}});
@@ -248,14 +309,14 @@ $('arm-position-slider').value = '2040'; $('arm-position-slider').oninput();
 state.arm_servo.position = 2010; updateArmSettings();
 assert(Number($('arm-position-slider').value) === 2040, 'telemetry does not fight pointer drag');
 $('arm-position-slider').onpointerup();
-assert(Number($('arm-position-slider').value) === 2010 && armSliderTarget === 2040, 'release follows measurement without losing target');
+assert(Number($('arm-position-slider').value) === 2010 && sent.at(-1).position === 2040, 'release follows measurement without losing target');
 state.arm_servo.position = 2040; state.arm_servo.goal_position = 2040; state.arm_servo.torque = true;
 updateArmSettings();
-assert(sent.at(-1).action === 'stop' && !armSliderMoving, 'slider stops on arrival');
+assert(sent.at(-1).action === 'stop', 'slider stops on arrival');
 state.arm_servo.torque = false;
 $('arm-position-slider').value = '2040'; $('arm-position-slider').oninput();
 state.safety.servo_allowed = false; updateArmSettings();
-assert(sent.at(-1).action === 'stop' && !armSliderMoving, 'permission loss cancels slider movement');
+assert(sent.at(-1).action === 'stop', 'permission loss cancels slider movement');
 state.safety.servo_allowed = true;
 assert($('arm-servo-position').textContent.includes('°'), 'position shown as degrees');
 state.arm_servo.load_percent = 12.5; state.arm_servo.torque_limit_percent = 50;
@@ -267,19 +328,219 @@ $('settings-dialog').showModal();
 const beforeCalibrationLoop = sent.length;
 inputLoop();
 assert(!sent.slice(beforeCalibrationLoop).some(m => m.type === 'drive'), 'calibration does not send background drive commands');
+state.drive.calibrating = false;
+state.drive.you_control_owner = true;
+state.safety = {allowed: false, servo_allowed: true, mode: 'override'};
+state.drive.rc = {fresh: true, steering: .5, throttle: -.7, channels: [1750, 1150, 1500, 1500, 1500], steering_channel: 1, throttle_channel: 2};
+updateHud();
+assert(!$('sweep-toggle').disabled, 'RC override permits sweep without website arming');
+assert($('controller').textContent === 'Physical RC transmitter' && $('pad-raw').textContent.includes('1750'), 'RC inputs visualized');
+for (const [minimum, maximum] of [[-20, 80], [-120, 220], [-1, 2]]) {
+  state.detector.beam_min_angle_deg = minimum;
+  state.detector.beam_max_angle_deg = maximum;
+  state.detector.fixture_angle_deg = 0;
+  state.detector.beam = Array(101).fill(.5);
+  drawRadar();
+  const canvas = $('radar-view');
+  const geometry = radarGeometry(canvas.clientWidth, canvas.clientHeight, minimum, maximum);
+  for (let angle = minimum; angle <= maximum; angle += .5) {
+    const x = geometry.cx + Math.cos(beamScreenAngle(angle)) * geometry.radius;
+    const y = geometry.cy + Math.sin(beamScreenAngle(angle)) * geometry.radius;
+    assert(x >= 9 && x <= canvas.clientWidth - 9 && y >= 9 && y <= canvas.clientHeight - 9, 'calibrated sector fits canvas');
+  }
+  const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  assert(pixels.some((value, index) => index % 4 === 3 && value > 0), 'radar renders nonblank');
+}
+assert(Math.abs(Math.cos(beamScreenAngle(0))) < 1e-10 && Math.sin(beamScreenAngle(0)) === -1, 'calibrated center points straight ahead');
+state.detector.sensor = {available: true, fresh: true, packet: {v: 1, seq: 2, uptime_ms: 100, amplitude_adc: 20},
+  baseline_adc: 20, full_response_adc: 150, reference_voltage: 5, rate_hz: 20, age_ms: 10,
+  history: [{age_s: 1, adc: 20}, {age_s: .05, adc: 150}]};
+state.robot.speed_mps = 0;
+updateHud();
+assert($('detector-raw').textContent === '20 ADC', 'main detector panel shows raw ADC');
+state.detector.sensor.fresh = false;
+updateHud();
+assert($('detector-raw').textContent === '-- ADC', 'main detector panel hides stale ADC');
+state.detector.sensor.fresh = true;
+document.querySelector('[data-settings-tab="detector"]').click();
+updateMetalSettings();
+assert($('metal-voltage').textContent === '0.392 V', 'ADC peak converted to volts');
+assert(!$('metal-zero').disabled && !$('settings-detector').hidden, 'detector tab and zero available');
+assert($('metal-full').value === '150.00', 'mine trigger shown as raw ADC');
+state.arm_servo = {...state.arm_servo, connected: true, active_role: 'arm'};
+state.detector.fixture_angle_deg = -15;
+recordDetectorAngle(1000);
+state.detector.fixture_angle_deg = 25;
+recordDetectorAngle(1200);
+drawDetectorHistory(1200);
+assert(detectorChart.data.datasets[0].data.length === 2, 'panel charts raw readings');
+assert(detectorChart.data.datasets[1].data.at(-1).y === 25, 'panel charts actual arm angle');
+assert(detectorChart.data.datasets[1].yAxisID === 'angle', 'angle has independent axis');
+assert(detectorChart.data.datasets[2].data[0].y === 20 && detectorChart.data.datasets[3].data[0].y === 150, 'panel includes calibration lines');
+assert($('sweep-status').parentElement.classList.contains('panel-heading'), 'sweep status moved to title');
+const panelPixels = $('detector-history').getContext('2d').getImageData(0, 0, $('detector-history').width, $('detector-history').height).data;
+assert(panelPixels.some((v, i) => i % 4 === 3 && v > 0), 'panel chart renders nonblank');
+state.arm_servo.connected = false;
+state.safety.simulated = false;
+recordDetectorAngle(1400);
+assert(detectorAngles.at(-1).angle === null, 'missing servo leaves gap');
+drawDetectorHistory(32000);
+assert(detectorAngles.length === 0, 'angle history expires after 30 seconds');
+assert(!$('metal-reference'), 'ADC reference is not a dashboard input');
+assert(detectorColor(0) === 'hsl(120 78% 55%)', 'zero is green');
+assert(detectorColor(state.detector.threshold_ratio / 2) === 'hsl(60 78% 55%)', 'halfway to trigger is yellow');
+assert(detectorColor(state.detector.threshold_ratio) === 'hsl(0 78% 55%)', 'trigger is red');
+assert(detectorColor(2) === 'hsl(0 78% 55%)', 'above trigger stays red');
+assert(metalChart.data.datasets[1].data[0].y === 20, 'zero line shown');
+assert(metalChart.data.datasets[2].data[0].y === 150, 'trigger line shown');
+assert(metalChart.scales.y.max >= 150, 'autoscale includes trigger');
+assert($('metal-launch').value.includes('detector_threshold_ratio'), 'threshold included in launch export');
+assert(metalChart.scales.x.min === -30 && metalChart.scales.x.max === 0, 'default full 30 second axis');
+state.detector.sensor.history = [{age_s: 119, adc: 10}, {age_s: 29.9, adc: 0}, {age_s: .1, adc: 255}];
+drawMetalHistory();
+assert(metalChart.data.datasets[0].data.length === 2, 'default filters older history');
+$('metal-time-range').value = '120';
+$('metal-time-range').dispatchEvent(new Event('change'));
+assert(metalChart.scales.x.min === -120 && metalChart.scales.x.max === 0, 'expanded full axis');
+assert(metalChart.data.datasets[0].data.length === 3, 'expanded range includes retained history');
+assert(metalChart.scales.y.min === 0 && metalChart.scales.y.max === 255, 'ADC endpoints visible');
+const area = metalChart.chartArea;
+assert(area.left > 0 && area.right < metalChart.width && area.bottom < metalChart.height, 'axes fit inside canvas');
+assert(metalChart.scales.x.getPixelForValue(-120) === area.left, 'oldest time uses left plot edge');
+assert(metalChart.scales.x.getPixelForValue(0) === area.right, 'now uses right plot edge');
+const chartContainer = $('metal-history').parentElement;
+chartContainer.style.width = '280px'; drawMetalHistory();
+assert(metalChart.width <= 280 && metalChart.chartArea.right < metalChart.width, 'narrow chart fits container');
+chartContainer.style.width = ''; drawMetalHistory();
+state.detector.sensor.history = [{age_s: .1, adc: 42}]; drawMetalHistory();
+assert(metalChart.scales.y.min < 42 && metalChart.scales.y.max > 42, 'flat signal has vertical padding');
+state.detector.sensor.history = []; drawMetalHistory();
+assert($('metal-range').textContent.includes('120 seconds'), 'empty state follows selected range');
+$('metal-autoscale').checked = false; drawMetalHistory();
+assert(metalChart.scales.y.min === 0 && metalChart.scales.y.max === 255, 'manual ADC scale');
+$('metal-zero').click();
+assert(sent.at(-1).type === 'detector_calibrate' && sent.at(-1).action === 'zero', 'zero reaches gateway');
+metalPending = null;
+state.drive.you_control_owner = false; updateMetalSettings();
+assert($('metal-zero').disabled && $('metal-apply').disabled, 'spectator cannot calibrate');
+state.detector.sensor.fresh = false; updateMetalSettings();
+assert($('metal-voltage').textContent === '-- V', 'stale voltage hidden');
+state.connected = true;
+state.drive.you_control_owner = true;
+state.drive.calibrating = true;
+state.safety.servo_allowed = true;
+state.arm_servo = {connected: true, serial_connected: true, active_role: 'probe', servo_id: 2,
+  discovered_servos: [1, 2], role_ids: {arm: 1, probe: 2}, position: -4200,
+  position_mode: 'multi-turn', position_minimum: -28672, position_maximum: 28672,
+  load_percent: -35, sample_time: 1};
+document.querySelector('[data-settings-tab="probe"]').click();
+updateArmSettings();
+assert(Number($('probe-servo-position-slider').min) === -28672 && Number($('probe-servo-position-slider').max) === 28672,
+  'probe slider supports signed multi-turn travel');
+assert(Number($('probe-servo-position-slider').value) === -4200, 'negative multi-turn position remains visible');
+assert($('probe-servo-enable-multiturn').disabled, 'already configured servo cannot rewrite EEPROM');
+const probeLoadChart = Chart.getChart($('probe-servo-load-history'));
+assert(probeLoadChart && probeLoadChart.data.datasets[0].data.at(-1).y === -35, 'Chart.js plots signed probe load');
+const sampleCount = probeLoadChart.data.datasets[0].data.length;
+updateArmSettings();
+assert(probeLoadChart.data.datasets[0].data.length === sampleCount, 'repeated telemetry does not invent load samples');
+state.arm_servo.sample_time = 2; state.arm_servo.load_percent = 42; updateArmSettings();
+assert(probeLoadChart.data.datasets[0].data.at(-1).y === 42, 'fresh load appends to history');
+assert(probeLoadChart.scales.y.min === -100 && probeLoadChart.scales.y.max === 100, 'load axis shows full signed percent range');
+$('probe-servo-home-load').value = '20';
+$('probe-servo-home-load').oninput();
+assert(probeLoadChart.data.datasets[1].data[0].y === 20 && probeLoadChart.data.datasets[2].data[0].y === -20,
+  'contact threshold markers cover both load directions');
+const loadPixels = $('probe-servo-load-history').getContext('2d').getImageData(0, 0, probeLoadChart.width, probeLoadChart.height).data;
+assert(loadPixels.some((v, i) => i % 4 === 3 && v > 0), 'load plot renders pixels');
+state.arm_servo.servo_id = 3; state.arm_servo.sample_time = 3; updateArmSettings();
+assert(probeLoadChart.data.datasets[0].data.length === 1, 'changing servo clears previous load history');
+state.arm_servo.home_position = -3200;
+state.arm_servo.probe = {calibrated: true, max_depth_mm: 100};
+updateArmSettings();
+assert(!$('probe-servo-capture-center') && !$('probe-servo-apply-limits'), 'probe has one extension calibration instead of three presets');
+$('probe-servo-max-extension').value = '90';
+$('probe-servo-save-extension').click();
+assert(sent.at(-1).action === 'save_probe_extension' && sent.at(-1).max_extension_mm === 90, 'save maximum extension reaches driver');
+state.drive.calibrating = false;
+state.probe.ready = false; state.probe.reason = 'Home probe first'; updateHud();
+assert($('probe-slider').disabled && $('probe-status').textContent === 'Home probe first', 'main probe requires home');
+state.probe.ready = true; state.probe.depth_mm = 25; state.probe.max_depth_mm = 90; state.probe.target_mm = 50; updateHud();
+assert(!$('probe-slider').disabled && Number($('probe-slider').max) === 90, 'main probe uses saved extension limit');
+assert($('probe-depth').textContent === '25 mm', 'main probe shows actual calibrated travel');
+$('probe-slider').value = '50'; $('probe-slider').onchange({target: $('probe-slider')});
+assert(sent.at(-1).type === 'probe_target' && sent.at(-1).depth_mm === 50, 'main probe sends measured target');
+$('probe-stop').click();
+assert(sent.at(-1).action === 'stop', 'main probe stop reaches driver');
+state.connected = false; updateArmSettings();
+assert(probeLoadChart.data.datasets[0].data.length === 0, 'disconnect clears live history');
+state.probe.pressure_ratio = .45;
+state.probe.pressure_samples = [{x: -1, y: 45}, {x: -.8, y: 32}];
+updateHud(); drawPressureHistory();
+assert($('probe-pressure').textContent === '45.0%', 'main contact indicator uses load');
+const contactChart = Chart.getChart($('pressure-history'));
+assert(contactChart && contactChart.data.datasets[0].data[0].y === 45, 'main load chart uses Chart.js');
+state.probe.pressure_ratio = null; updateHud();
+assert($('probe-pressure').textContent === '—', 'stale load does not claim zero contact');
+state.probe.contact_samples = [{x: -.1, load: 2, current: 30}];
+state.probe.contact_peak_percent = 2; state.probe.current_peak_ma = 30;
+contactAxes.load.max = 10; drawPressureHistory();
+assert(contactChart.options.scales.y.max === 10, 'small contact changes use 0-10 percent scale');
+state.probe.contact_samples = [{x: -.1, load: 48, current: 200}];
+drawPressureHistory();
+assert(contactChart.options.scales.y.max >= 48, 'load axis expands immediately without changing values');
+assert(contactChart.data.datasets[1].data[0].y === 200, 'current trace retains milliamps');
+state.connected = true; state.drive.you_control_owner = true; state.safety.servo_allowed = true;
+state.probe.contact_can_zero = true; updateHud(); $('probe-zero-contact').click();
+assert(sent.at(-1).type === 'probe_zero_contact', 'zero contact requests session reference');
+state.probe.contact_can_zero = false; updateHud();
+assert($('probe-zero-contact').disabled, 'zero disabled without fresh held readings');
+const originalRobot=state.robot, originalProbe=state.probe, originalConnected=state.connected;
+state.connected=true;
+state.robot={x:0,y:0,yaw:179*Math.PI/180,speed_mps:0}; state.probe={...state.probe,depth_mm:0};
+recordMotionFrame(1000);
+state.robot={x:2,y:4,yaw:-179*Math.PI/180,speed_mps:1}; state.probe={...state.probe,depth_mm:100};
+recordMotionFrame(1050);
+const midMotion=displayMotion(1075);
+assert(midMotion.robot.x===1 && midMotion.robot.y===2 && midMotion.depth===50,'drive and probe interpolate between telemetry frames');
+assert(Math.abs(Math.abs(midMotion.robot.yaw)-Math.PI)<.001,'heading takes short arc');
+assert(state.robot.x===2 && state.probe.depth_mm===100,'display interpolation leaves real telemetry untouched');
+assert(displayMotion(1400).robot===state.robot,'display never extrapolates stale vehicle pose');
+state.connected=false;
+assert(displayMotion(1075).robot===state.robot,'disconnect immediately bypasses interpolation');
+motionFrames.length=0; state.robot=originalRobot; state.probe=originalProbe; state.connected=originalConnected;
+const savedAngles = detectorAngles.splice(0);
+detectorAngles.push({at:1000,angle:0}, {at:1050,angle:10});
+assert(displayDetectorAngle(1075) === 5, 'radar interpolates measured angle at display refresh');
+assert(displayDetectorAngle(1200) === state.detector.fixture_angle_deg, 'radar never extrapolates stale motion');
+detectorAngles.splice(0, detectorAngles.length, ...savedAngles);
+// Display frames between telemetry updates reuse layout and scroll measured
+// data without adding fabricated samples or sending motion commands.
+const oldDraw = detectorChart.draw.bind(detectorChart);
+let frameDraws = 0;
+detectorChart.draw = () => { frameDraws++; oldDraw(); };
+const measuredCount = detectorChart.data.datasets[1].data.length;
+const commandCount = sent.length;
+assert(scrollTimeChart(detectorChart, 1000) === false, 'new telemetry layout bucket');
+assert(scrollTimeChart(detectorChart, 1016) === true, 'first 60 Hz frame renders');
+assert(scrollTimeChart(detectorChart, 1033) === true, 'second 60 Hz frame renders');
+assert(frameDraws === 2 && detectorChart.$scrollPixels > 0, 'chart scrolls between measurements');
+assert(detectorChart.data.datasets[1].data.length === measuredCount, 'rendering does not invent angle samples');
+assert(sent.length === commandCount, 'rendering never renews motion permission');
+detectorChart.draw = oldDraw;
 document.body.textContent = 'BROWSER TESTS PASSED';
 '''
         import json
-        source = (DASHBOARD / 'app.js').read_text()
+        source = (DASHBOARD / 'actuator-settings.js').read_text() + '\n' + (DASHBOARD / 'app.js').read_text()
         gamepad_checks = (DASHBOARD.parent / 'test/test_gamepad.cjs').read_text().split("if (typeof require")[0]
-        script = setup + (DASHBOARD / 'keydrown-1.3.0.js').read_text() + source + gamepad_checks + '\nconst dashboardSource = ' + json.dumps(source) + ';\n'
+        script = setup + (DASHBOARD / 'chart-4.4.8.umd.js').read_text() + (DASHBOARD / 'keydrown-1.3.0.js').read_text() + source + gamepad_checks + '\nconst dashboardSource = ' + json.dumps(source) + ';\n'
         html += '<script>(async () => {try {' + script + checks + "} catch(e) {document.body.textContent = 'TEST FAILED: ' + e.stack;}})();</script>"
         with tempfile.TemporaryDirectory() as tmp:
             page = pathlib.Path(tmp) / 'test.html'
             page.write_text(html)
             result = subprocess.run(['chromium', '--headless', '--no-sandbox', '--disable-gpu',
                                      '--user-data-dir=' + tmp + '/profile', '--dump-dom', page.as_uri()],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, timeout=60)
         self.assertIn('BROWSER TESTS PASSED</body>', result.stdout, result.stdout + result.stderr[-2000:])
 
 

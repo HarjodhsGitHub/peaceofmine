@@ -1,0 +1,22 @@
+builtin_interfaces/Time stamp
+# Tagged command for manual control and calibration. Actions own long operations.
+string[] fields
+string action
+string role
+string request_id
+string hold_id
+string point
+bool held
+int32 servo_id
+int32 direction
+int32 position
+int32 minimum
+int32 center
+int32 maximum
+float64 speed_deg_s
+float64 load_percent
+float64 depth_mm
+float64 max_speed_deg_s
+float64 acceleration_deg_s2
+float64 max_extension_mm
+bool enabled

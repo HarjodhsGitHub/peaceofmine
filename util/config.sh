@@ -84,7 +84,9 @@ main() {
         withdefault USER_CREDENTIALS "root:SVEA-Pass!" # TODO: Setup regular user instead of root
     fi
 
-    withdefault CONTAINER_NAME "$REPOSITORY_IMAGE_NAME"
+    # Keep each host user's container separate, including when invoked via sudo.
+    CONTAINER_USER="$(printf '%s' "${SUDO_USER:-$(id -un)}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_.-' '-')"
+    withdefault CONTAINER_NAME "$REPOSITORY_IMAGE_NAME-$CONTAINER_USER"
     withdefault SHARED_VOLUME  "$BUILD_CONTEXT/src:$WORKSPACE/src"
     
     if istrue DEBUG; then
