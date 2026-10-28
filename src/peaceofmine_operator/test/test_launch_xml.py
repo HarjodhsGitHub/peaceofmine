@@ -6,6 +6,16 @@ import xml.etree.ElementTree as ET
 
 
 class LaunchXmlTest(unittest.TestCase):
+    def test_mavros_uses_only_the_vehicle_launch_namespace(self):
+        path = Path(__file__).parents[2] / 'svea_core/launch/lli.xml'
+        root = ET.parse(path).getroot()
+        group = root.find('group')
+        self.assertEqual(group.find('push_ros_namespace').attrib['namespace'], '$(var name)')
+        mavros = group.find("node[@pkg='mavros']")
+        self.assertNotIn('namespace', mavros.attrib)
+        self.assertEqual(mavros.attrib['output'], 'screen')
+        self.assertEqual(mavros.attrib['ros_args'], '--log-level info')
+
     def test_operator_variables_are_declared(self):
         path = Path(__file__).parents[1] / 'launch/operator.launch.xml'
         root = ET.parse(path).getroot()
