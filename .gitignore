@@ -14,13 +14,21 @@ Desktop.ini
 
 # Python
 __pycache__/
-*.pyc
-**/__pycache__/
-**/*.pyc
+*.py[cod]
+.venv
+.pytest_cache/
+*.egg-info/
 DevTools/gnss_viewer/.env
 
 # mkdocs
 venv/
 site/
 .calibration.json.lock
-/Hardware_electronics/PCB_ADS1115/.history/
+
+# ROS workspace output
+/build/
+/install/
+/log/
+
+# Operator runtime locks
+.operator_config.json.lock
