@@ -199,9 +199,13 @@ class OperatorControlProbeTest(unittest.TestCase):
         self.ctrl._probe_fault = False
         self.ctrl._probe_state = {'probe': {'ready': True, 'max_depth_mm': 120.0, 'cycle_active': False}}
         self.ctrl._probe_state_at = time.monotonic()
-        self.ctrl._arm_state = {'sweeping': False}
+        self.ctrl._arm_state = {'sweeping': False, 'connected': True, 'calibration': {'minimum': 1024, 'center': 2048, 'maximum': 3072}}
+        self.ctrl._arm_state_at = time.monotonic()
         self.ctrl._probe_command_pub = MagicMock()
+        self.ctrl._arm_command_pub = MagicMock()
+        self.ctrl._permission_pub = MagicMock()
         self.ctrl._rc_safety = MagicMock()
+        self.ctrl._rc_safety.simulation = True
         self.ctrl._rc_safety.snapshot.return_value = {'allowed': True, 'servo_allowed': True}
         self.ctrl._rc_safety.servo_snapshot.return_value = {'allowed': True, 'servo_allowed': True}
         self.ctrl._enforce_safety_locked = lambda: {'allowed': True, 'servo_allowed': True}
@@ -226,6 +230,124 @@ class OperatorControlProbeTest(unittest.TestCase):
         self.assertIsNotNone(res)
         self.assertIn('probe cycle is active', res['message'])
         self.ctrl._apply_drive_locked.assert_not_called()
+
+    def test_align_probe_dispatches_when_stowed(self):
+        res = self.ctrl.handle_command('client1', {'type': 'align_probe', 'angle_deg': -15.0, 'request_id': 'req_align'})
+        self.assertIsNone(res)
+        self.ctrl._permission_pub.publish.assert_called_once()
+        self.ctrl._arm_command_pub.publish.assert_called_once()
+
+    def test_align_probe_blocked_when_probe_deployed(self):
+        # Case 1: cycle_active is True
+        self.ctrl._probe_state['probe']['cycle_active'] = True
+        res = self.ctrl.handle_command('client1', {'type': 'align_probe', 'angle_deg': -15.0})
+        self.assertIsNotNone(res)
+        self.assertIn('deployed', res['message'])
+
+        # Case 2: depth > 2 mm
+        self.ctrl._probe_state['probe']['cycle_active'] = False
+        self.ctrl._probe_state['probe']['depth_mm'] = 20.0
+        res = self.ctrl.handle_command('client1', {'type': 'align_probe', 'angle_deg': -15.0})
+        self.assertIsNotNone(res)
+        self.assertIn('deployed', res['message'])
+
+
+spec_arm = importlib.util.spec_from_file_location(
+    'arm_controller_node', Path(__file__).parents[1] / 'scripts/arm_controller_node.py')
+arm_mod = importlib.util.module_from_spec(spec_arm)
+spec_arm.loader.exec_module(arm_mod)
+ArmController = arm_mod.ArmController
+
+
+class ArmControllerAngleTest(unittest.TestCase):
+    def setUp(self):
+        self.arm = ArmController.__new__(ArmController)
+        self.arm.offset = 0.0
+        self.arm.sweep_speed = 60.0
+        self.arm.sweeping = False
+        self.arm.auto_position = False
+        self.arm.started = 0.0
+        self.arm.lifecycle = 'IDLE'
+        self.arm.reason = 'Idle'
+        self.arm.operation = None
+        self.arm.telemetry = MagicMock()
+        self.arm.telemetry.operation_id = 'op_angle'
+        self.arm.calibration = lambda: {'minimum': 1024, 'center': 2048, 'maximum': 3072}
+        self.arm.reply = MagicMock()
+        self.arm.start = MagicMock(side_effect=self._mock_start)
+        self.arm.stop = MagicMock(side_effect=self._mock_stop)
+
+    def _mock_start(self, target, low, high, speed=None):
+        self.arm.operation = MagicMock()
+        self.arm.operation.target = target
+        self.arm.operation.operation_id = 'op_angle'
+        self.arm.lifecycle = 'MOVING'
+
+    def _mock_stop(self, reason='Stopped', success=False):
+        self.arm.sweeping = self.arm.auto_position = False
+        self.arm.operation = None
+        self.arm.lifecycle = 'IDLE'
+
+    def test_special_command_angle_converts_degrees_to_ticks(self):
+        # 0° -> center (2048)
+        self.arm.special_command('angle', {'action': 'angle', 'angle_deg': 0.0})
+        self.assertTrue(self.arm.auto_position)
+        self.arm.start.assert_called_with(2048, 1024, 3072, speed=round(60.0 / 0.684))
+
+        # +45° -> 2048 + 45*4096/360 = 2048 + 512 = 2560
+        self.arm.special_command('angle', {'action': 'angle', 'angle_deg': 45.0})
+        self.assertEqual(self.arm.operation.target, 2560)
+
+        # -45° -> 2048 - 45*4096/360 = 2048 - 512 = 1536
+        self.arm.special_command('angle', {'action': 'angle', 'angle_deg': -45.0})
+        self.assertEqual(self.arm.operation.target, 1536)
+
+    def test_special_command_angle_rejects_out_of_bounds(self):
+        # Limit is 1024 to 3072 (±90°). +100° would be 2048 + 1138 = 3186 > 3072
+        with self.assertRaises(ValueError):
+            self.arm.special_command('angle', {'action': 'angle', 'angle_deg': 100.0})
+
+        with self.assertRaises(ValueError):
+            self.arm.special_command('angle', {'action': 'angle', 'angle_deg': -100.0})
+
+    def test_update_behavior_holds_position_when_angle_target_reached(self):
+        self.arm.special_command('angle', {'action': 'angle', 'angle_deg': -15.0})
+        target_tick = self.arm.operation.target
+        self.arm.telemetry.position = target_tick
+        self.arm.telemetry.operation_id = self.arm.operation.operation_id
+
+        self.arm.update_behavior()
+        self.assertFalse(self.arm.auto_position)
+        self.assertEqual(self.arm.lifecycle, 'HOLDING')
+        self.assertIn('holding position', self.arm.reason)
+
+
+class KinematicAlignmentTest(unittest.TestCase):
+    def test_probe_alignment_math_and_reachability(self):
+        # Detector is 45° to the right of the probe.
+        # Pivot formula: theta_pivot = theta_peak - 45°
+        # With arm travel limits [-45°, +45°]:
+        # Minimum reachable peak = -45° + 45° = 0°
+        # 1. Target detected at +30° (left):
+        peak_angle = 30.0
+        pivot_angle = peak_angle - 45.0 # -15.0°
+        self.assertEqual(pivot_angle, -15.0)
+        self.assertTrue(-45.0 <= pivot_angle <= 45.0)
+
+        # 2. Target detected at 0° (ahead):
+        peak_angle = 0.0
+        pivot_angle = peak_angle - 45.0 # -45.0°
+        self.assertEqual(pivot_angle, -45.0)
+        self.assertTrue(-45.0 <= pivot_angle <= 45.0)
+
+        # 3. Target detected at -20° (right, dead zone):
+        peak_angle = -20.0
+        pivot_angle = peak_angle - 45.0 # -65.0°
+        self.assertEqual(pivot_angle, -65.0)
+        self.assertFalse(-45.0 <= pivot_angle <= 45.0)
+        # Deficit to reach:
+        deficit = -45.0 - pivot_angle
+        self.assertEqual(deficit, 20.0) # Rover must steer 20° right to reach target
 
 
 if __name__ == '__main__':

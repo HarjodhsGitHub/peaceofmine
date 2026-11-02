@@ -513,6 +513,19 @@ class OperatorControl(Node):
                 minimum = .684 if self._arm_state.get('connected') else SWEEP_SPEED_MIN_DEG_S
                 speed = max(minimum, min(maximum, float(payload.get('deg_s', 60.0))))
                 self._sweep_speed_pub.publish(Float32(data=speed))
+            elif message_type == 'align_probe':
+                if not self._rc_safety.simulation:
+                    if time.monotonic() - self._arm_state_at >= 1 or not self._arm_state.get('connected'):
+                        return {'type': 'error', 'message': 'Select a connected arm servo in Settings first.'}
+                    if not self._arm_state.get('calibration'):
+                        return {'type': 'error', 'message': 'Record and apply arm limits in Settings before positioning arm.'}
+                angle = float(payload.get('angle_deg', 0.0))
+                if not math.isfinite(angle):
+                    return {'type': 'error', 'message': 'Target angle must be finite'}
+                if self._probe_state.get('probe', {}).get('cycle_active') or (self._probe_state.get('probe', {}).get('depth_mm') or 0) > 2.0:
+                    return {'type': 'error', 'message': 'Cannot align arm while probe is deployed'}
+                self._permission_pub.publish(Bool(data=True))
+                self._arm_command_pub.publish(command_message(dict(action='angle', angle_deg=angle, request_id=payload.get('request_id'))))
             else:
                 error = {'type': 'error', 'message': 'Unsupported operator command.'}
         if flush_drive:

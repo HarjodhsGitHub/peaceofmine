@@ -147,7 +147,7 @@ class OperatorWebBridge(Node):
                 return dict(type='error', message='Operator control ROS node unavailable.')
             payload = dict(payload)
             kind = payload.get('type')
-            if kind in ('probe_target', 'probe_zero_contact', 'start_probe_cycle', 'probe_cycle'):
+            if kind in ('probe_target', 'probe_zero_contact', 'start_probe_cycle', 'probe_cycle', 'align_probe'):
                 kind = 'actuator'
             if kind in ('adc', 'settings', 'actuator'):
                 if len(self._requests) >= 8:

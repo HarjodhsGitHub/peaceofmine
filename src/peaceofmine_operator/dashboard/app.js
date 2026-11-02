@@ -576,6 +576,106 @@ function checkProbeCycleState() {
   }
 }
 
+function getProbeAlignment() {
+  const detector = state.detector || {};
+  const half = detector.beam_half_angle_deg ?? 45;
+  const minAngle = detector.beam_min_angle_deg ?? -half;
+  const maxAngle = detector.beam_max_angle_deg ?? half;
+
+  let peakAngle = null;
+  let peakSignal = 0;
+
+  if (detector.latest_peak && Number.isFinite(detector.latest_peak.angle_deg)) {
+    peakAngle = detector.latest_peak.angle_deg;
+    peakSignal = detector.latest_peak.signal || 0;
+  } else if (Array.isArray(state.detections) && state.detections.length > 0) {
+    const lastHit = state.detections[state.detections.length - 1];
+    if (Number.isFinite(lastHit.fixture_angle_deg)) {
+      peakAngle = lastHit.fixture_angle_deg;
+      peakSignal = lastHit.signal || 0;
+    }
+  } else if (Array.isArray(detector.beam) && detector.beam.length > 1) {
+    let maxSig = 0;
+    let maxIdx = -1;
+    for (let i = 0; i < detector.beam.length; i++) {
+      if (detector.beam[i] > maxSig) {
+        maxSig = detector.beam[i];
+        maxIdx = i;
+      }
+    }
+    const threshold = detector.threshold_ratio || 0.65;
+    if (maxSig >= threshold && maxIdx >= 0) {
+      peakAngle = Math.round((minAngle + (maxIdx / (detector.beam.length - 1)) * (maxAngle - minAngle)) * 10) / 10;
+      peakSignal = maxSig;
+    }
+  }
+
+  if (peakAngle === null) {
+    return {
+      hasPeak: false,
+      peakAngle: null,
+      peakSignal: 0,
+      pivotAngle: null,
+      reachable: false,
+      deficitDeg: 0,
+      reason: 'No detection peak recorded'
+    };
+  }
+
+  // Detector sits 45° to the right of the probe on the same servo.
+  // Probe bearing = servo_angle + 45°
+  // To place probe over peak: pivotAngle = peakAngle - 45°
+  const FIXED_OFFSET_DEG = 45.0;
+  const pivotAngle = Math.round((peakAngle - FIXED_OFFSET_DEG) * 10) / 10;
+
+  const isReachable = (pivotAngle >= minAngle - 0.5) && (pivotAngle <= maxAngle + 0.5);
+  const deficitDeg = pivotAngle < minAngle ? Math.round((minAngle - pivotAngle) * 10) / 10 : 0;
+
+  let reason = '';
+  if (!isReachable) {
+    if (pivotAngle < minAngle) {
+      reason = `Target at ${peakAngle.toFixed(0)}° is in dead zone (too far right). Steer rover ${deficitDeg.toFixed(0)}° right to align.`;
+    } else {
+      reason = `Target angle outside arm limits (${pivotAngle}° vs max ${maxAngle.toFixed(0)}°).`;
+    }
+  } else {
+    reason = `Pivot arm to ${pivotAngle.toFixed(0)}° to align probe with target peak at ${peakAngle.toFixed(0)}°.`;
+  }
+
+  return {
+    hasPeak: true,
+    peakAngle,
+    peakSignal,
+    pivotAngle,
+    reachable: isReachable,
+    deficitDeg,
+    reason
+  };
+}
+
+function alignProbeToPeak() {
+  const align = getProbeAlignment();
+  if (!align.hasPeak) {
+    showNotice('No metal detection peak recorded to align with.');
+    return;
+  }
+  if (!align.reachable) {
+    showNotice(align.reason);
+    return;
+  }
+  if (!state.drive?.you_control_owner) {
+    showNotice('Take control of the rover to align probe.');
+    return;
+  }
+  const probe = state.probe || {};
+  if (probe.cycle_active || (probe.depth_mm || 0) > 2.0) {
+    showNotice('Cannot align arm while probe is deployed.');
+    return;
+  }
+  showNotice(`Aligning probe: pivoting arm to ${align.pivotAngle}° (over target at ${align.peakAngle.toFixed(0)}°)...`);
+  send({ type: 'align_probe', angle_deg: align.pivotAngle });
+}
+
 function updateHud() {
   updatePower();
   updateArmSettings();
@@ -600,6 +700,49 @@ function updateHud() {
   const isMoving = speed > 0.03 || (drive.publishing && (Math.abs(drive.cmd_linear_x || 0) > 0.01 || Math.abs(drive.cmd_angular_z || 0) > 0.01));
   const probeReady = probe.ready !== false && !probe.fault && !drive.calibrating;
   const canProbe = owner && servoSafe && probeReady && !isMoving && !probe.cycle_active;
+  const probeStowed = !probe.cycle_active && ((probe.depth_mm || 0) <= 2.0);
+
+  const align = getProbeAlignment();
+  const canAlign = owner && servoSafe && probeStowed && align.hasPeak && align.reachable;
+
+  if ($('mode-align-btn')) {
+    $('mode-align-btn').disabled = !canAlign;
+    $('mode-align-btn').title = align.hasPeak
+      ? (align.reachable ? `Pivot probe to target (arm: ${align.pivotAngle}°, peak: ${align.peakAngle.toFixed(0)}°)` : align.reason)
+      : 'No metal detection peak recorded to align with';
+
+    if ($('mode-align-pill')) {
+      if (!align.hasPeak) {
+        $('mode-align-pill').textContent = 'NO PEAK';
+        $('mode-align-pill').className = 'badge neutral';
+      } else if (!align.reachable) {
+        $('mode-align-pill').textContent = 'UNREACHABLE';
+        $('mode-align-pill').className = 'badge blocked';
+      } else if (!servoSafe) {
+        $('mode-align-pill').textContent = 'DISARMED';
+        $('mode-align-pill').className = 'badge neutral';
+      } else if (!probeStowed) {
+        $('mode-align-pill').textContent = 'PROBE DOWN';
+        $('mode-align-pill').className = 'badge blocked';
+      } else {
+        $('mode-align-pill').textContent = `READY (${align.pivotAngle > 0 ? '+' : ''}${align.pivotAngle}°)`;
+        $('mode-align-pill').className = 'badge safe';
+      }
+    }
+  }
+
+  if ($('detector-align-probe')) {
+    $('detector-align-probe').disabled = !canAlign;
+    $('detector-align-probe').title = align.reason;
+    if ($('align-probe-hint')) {
+      $('align-probe-hint').textContent = align.hasPeak
+        ? (align.reachable
+            ? `Target peak: ${align.peakAngle.toFixed(0)}° (${Math.round(align.peakSignal * 100)}%) → Pivot arm to ${align.pivotAngle}°`
+            : `⚠️ ${align.reason}`)
+        : 'No target detection peak recorded.';
+      $('align-probe-hint').style.color = align.hasPeak && !align.reachable ? '#e59d4a' : '';
+    }
+  }
 
   $('probe-slider').disabled = !owner || !servoSafe || probe.ready === false || drive.calibrating || Boolean(probe.cycle_active);
   $('probe-stop').disabled = !owner;
@@ -1131,9 +1274,11 @@ for (const [id, type, field] of [['probe-slider', 'probe_target', 'depth_mm'], [
   $(id).onchange = event => { activeSliders.delete(id); commit(event); };
 }
 $('sweep-toggle').onclick = () => send({type: 'sweep_enabled', enabled: !state.detector.sweep_enabled});
+if ($('detector-align-probe')) $('detector-align-probe').onclick = alignProbeToPeak;
 if ($('start-probing')) $('start-probing').onclick = startProbeCycle;
 if ($('mode-probe-btn')) $('mode-probe-btn').onclick = startProbeCycle;
 if ($('mode-sweep-btn')) $('mode-sweep-btn').onclick = () => send({type: 'sweep_enabled', enabled: !state.detector.sweep_enabled});
+if ($('mode-align-btn')) $('mode-align-btn').onclick = alignProbeToPeak;
 if ($('mode-mark-btn')) $('mode-mark-btn').onclick = markCurrentPose;
 if ($('mark-target-btn')) $('mark-target-btn').onclick = markCurrentPose;
 if ($('export-target-log')) $('export-target-log').onclick = exportTargetLogCsv;
@@ -1557,6 +1702,25 @@ function drawRadar(now = performance.now()) {
     drawSegment(context, {x: cx, y: cy}, {x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius});
   }
 
+  // Draw probe unreachable dead zone (right sector where pivot < minimum)
+  const deadZoneEdge = minimum + 45;
+  if (deadZoneEdge > minimum && deadZoneEdge < maximum) {
+    const from = beamScreenAngle(deadZoneEdge);
+    const to = beamScreenAngle(minimum);
+    context.save();
+    context.fillStyle = 'rgba(230, 80, 50, 0.12)';
+    context.beginPath();
+    context.moveTo(cx, cy);
+    context.arc(cx, cy, radius, from, to);
+    context.closePath();
+    context.fill();
+    context.setLineDash([3, 3]);
+    context.strokeStyle = 'rgba(230, 80, 50, 0.5)';
+    context.lineWidth = 1.5;
+    drawSegment(context, {x: cx, y: cy}, {x: cx + Math.cos(from) * radius, y: cy + Math.sin(from) * radius});
+    context.restore();
+  }
+
   // Trace bins span the calibrated sector, including asymmetric endpoints.
   context.lineWidth = 8;
   for (let index = 0; index < beam.length - 1; index++) {
@@ -1570,10 +1734,47 @@ function drawRadar(now = performance.now()) {
     context.stroke();
   }
 
-  const angle = beamScreenAngle(displayDetectorAngle(now));
+  // Active detector coil arm (solid green)
+  const currentAngle = displayDetectorAngle(now);
+  const angle = beamScreenAngle(currentAngle);
   context.strokeStyle = '#4de0a8';
   context.lineWidth = 2;
   drawSegment(context, {x: cx, y: cy}, {x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius});
+
+  // Rigid probe position on arm (+45° counter-clockwise of detector)
+  const probeArmAngle = currentAngle + 45;
+  if (probeArmAngle >= minimum && probeArmAngle <= maximum + 5) {
+    const probeScreen = beamScreenAngle(probeArmAngle);
+    context.save();
+    context.strokeStyle = '#72d6b4';
+    context.lineWidth = 1.5;
+    context.setLineDash([3, 3]);
+    drawSegment(context, {x: cx, y: cy}, {x: cx + Math.cos(probeScreen) * radius * 0.9, y: cy + Math.sin(probeScreen) * radius * 0.9});
+    context.beginPath();
+    context.arc(cx + Math.cos(probeScreen) * radius * 0.9, cy + Math.sin(probeScreen) * radius * 0.9, 3, 0, Math.PI * 2);
+    context.fillStyle = '#72d6b4';
+    context.fill();
+    context.restore();
+  }
+
+  // Latest metal detection peak target reticle
+  const align = getProbeAlignment();
+  if (align.hasPeak && align.peakAngle >= minimum && align.peakAngle <= maximum) {
+    const peakScreen = beamScreenAngle(align.peakAngle);
+    const px = cx + Math.cos(peakScreen) * radius * 0.84;
+    const py = cy + Math.sin(peakScreen) * radius * 0.84;
+    context.save();
+    context.strokeStyle = align.reachable ? '#f59e0b' : '#ef4444';
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(px, py, 6, 0, Math.PI * 2);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(px - 8, py); context.lineTo(px + 8, py);
+    context.moveTo(px, py - 8); context.lineTo(px, py + 8);
+    context.stroke();
+    context.restore();
+  }
 
   if (state.detector.detected) {
     context.fillStyle = '#e5b54a';

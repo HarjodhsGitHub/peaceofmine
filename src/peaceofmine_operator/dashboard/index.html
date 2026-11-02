@@ -52,6 +52,11 @@
           <span class="mode-text">Start sweeping</span>
           <span id="mode-sweep-pill" class="badge neutral">OFF</span>
         </button>
+        <button id="mode-align-btn" type="button" class="mode-btn" disabled title="Pivot probe to latest metal detection peak (45° offset)">
+          <span class="mode-icon">🎯</span>
+          <span class="mode-text">Align probe</span>
+          <span id="mode-align-pill" class="badge neutral">NO PEAK</span>
+        </button>
         <button id="mode-probe-btn" type="button" class="mode-btn" disabled title="Probe ground for contact (rover must be stationary)">
           <span class="mode-icon">📍</span>
           <span class="mode-text">Start probing</span>
@@ -138,9 +143,11 @@
           <p id="detector-detail">Threshold 65% &middot; fixture 0&deg;</p>
           <div class="sweep-controls">
             <button id="sweep-toggle" class="quiet">Start sweep</button>
+            <button id="detector-align-probe" class="quiet" disabled title="Pivot probe to latest metal detection peak">Align probe</button>
             <label for="sweep-speed">Sweep <output id="sweep-speed-value">60&deg;/s</output></label>
             <input id="sweep-speed" type="range">
           </div>
+          <p id="align-probe-hint" class="safety-note" style="margin-top:4px;">No target detection peak recorded.</p>
           <div class="detector-chart"><canvas id="detector-history" role="img" aria-label="Metal detector ADC and servo angle over the last 30 seconds"></canvas></div>
         </section>
 

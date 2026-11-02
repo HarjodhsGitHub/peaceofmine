@@ -51,6 +51,7 @@ class DetectorNode(Node):
         self.pose_at = 0.0
         self.detected = False
         self.hits = []
+        self.latest_peak = None
         self.threshold_request = None
 
         # Sample tracking for zeroing and rate statistics
@@ -269,12 +270,20 @@ class DetectorNode(Node):
             if 0 <= idx < len(self.beam):
                 self.beam[idx] = self.signal
         detected = self.signal >= self.threshold
+        if detected:
+            if not self.latest_peak or self.signal > self.latest_peak.get('signal', 0.0) or (now - self.latest_peak.get('timestamp', 0) > 30.0):
+                self.latest_peak = dict(
+                    angle_deg=round(self.angle, 1),
+                    signal=round(self.signal, 3),
+                    timestamp=now
+                )
         if detected and not self.detected and now - self.pose_at < 0.5:
             self.hits.append(dict(
                 x=self.pose['x'],
                 y=self.pose['y'],
                 heading_deg=math.degrees(self.pose['yaw']) + self.angle,
-                signal=self.signal
+                fixture_angle_deg=round(self.angle, 1),
+                signal=round(self.signal, 3)
             ))
             self.hits = self.hits[-20:]
         self.detected = detected
@@ -345,7 +354,7 @@ class DetectorNode(Node):
             sweep_speed_min=0.684 if arm.get('connected') else 5.0,
             sweep_speed_max=arm.get('motion_speed_limit', 180 / 0.684) * 0.684,
             beam_half_angle_deg=45, beam_min_angle_deg=self.lower, beam_max_angle_deg=self.upper,
-            beam=self.beam), detections=self.hits), allow_nan=False)))
+            beam=self.beam, latest_peak=self.latest_peak), detections=self.hits), allow_nan=False)))
 
 
 def main():
