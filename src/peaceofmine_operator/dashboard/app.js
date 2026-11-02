@@ -489,6 +489,42 @@ function markCurrentPose() {
   showNotice(`Marked target at (${robot.x.toFixed(2)}, ${robot.y.toFixed(2)})`);
 }
 
+function triggerPumpMark() {
+  if (!state.connected || !state.drive?.you_control_owner) return;
+  const speed = Math.abs(state.robot?.speed_mps || 0);
+  if (speed > 0.03) {
+    showNotice('Cannot dispense mark while vehicle is moving. Stop rover first.');
+    return;
+  }
+  const probe = state.probe || {};
+  if (probe.cycle_active || (probe.depth_mm || 0) > 2.0) {
+    showNotice('Cannot dispense mark while probe is deployed. Stow probe first.');
+    return;
+  }
+  if (state.pump_active || state.drive?.pump_active) {
+    showNotice('Marking pump is already active.');
+    return;
+  }
+
+  send({type: 'pump_mark', duration_s: 2.0});
+  showNotice('Dispensing physical ground mark (2s)...');
+
+  const robot = state.robot || {x: 0, y: 0, yaw: 0};
+  const detector = state.detector || {};
+  const heading = ((robot.yaw * 180 / Math.PI % 360) + 360) % 360;
+  const signalPct = Math.round((detector.signal_ratio || 0) * 100);
+
+  logTarget({
+    x: robot.x,
+    y: robot.y,
+    heading_deg: heading,
+    metal_signal_pct: signalPct,
+    contact_depth_mm: '—',
+    status: 'PHYSICALLY MARKED',
+    statusType: 'marked'
+  });
+}
+
 function startProbeCycle() {
   if (!state.connected || !state.drive?.you_control_owner) return;
   const speed = Math.abs(state.robot?.speed_mps || 0);
@@ -787,8 +823,32 @@ function updateHud() {
     if (label) label.textContent = detector.sweep_enabled ? 'Stop sweeping' : 'Start sweeping';
   }
 
+  const pumpActive = Boolean(state.pump_active || state.drive?.pump_active);
+  const canMark = owner && !isMoving && probeStowed && !pumpActive;
+
   if ($('mode-mark-btn')) {
-    $('mode-mark-btn').disabled = !owner;
+    $('mode-mark-btn').disabled = !canMark;
+    if ($('mode-mark-pill')) {
+      if (pumpActive) {
+        $('mode-mark-pill').textContent = 'MARKING...';
+        $('mode-mark-pill').className = 'badge active';
+      } else if (!owner) {
+        $('mode-mark-pill').textContent = 'NO CONTROL';
+        $('mode-mark-pill').className = 'badge neutral';
+      } else if (isMoving) {
+        $('mode-mark-pill').textContent = 'STOP ROVER';
+        $('mode-mark-pill').className = 'badge neutral';
+      } else if (!probeStowed) {
+        $('mode-mark-pill').textContent = 'PROBE DOWN';
+        $('mode-mark-pill').className = 'badge neutral';
+      } else {
+        $('mode-mark-pill').textContent = 'READY (2s)';
+        $('mode-mark-pill').className = 'badge safe';
+      }
+    }
+  }
+  if ($('mark-ground-btn')) {
+    $('mark-ground-btn').disabled = !canMark;
   }
   if ($('mark-target-btn')) {
     $('mark-target-btn').disabled = !owner;
@@ -1279,7 +1339,8 @@ if ($('start-probing')) $('start-probing').onclick = startProbeCycle;
 if ($('mode-probe-btn')) $('mode-probe-btn').onclick = startProbeCycle;
 if ($('mode-sweep-btn')) $('mode-sweep-btn').onclick = () => send({type: 'sweep_enabled', enabled: !state.detector.sweep_enabled});
 if ($('mode-align-btn')) $('mode-align-btn').onclick = alignProbeToPeak;
-if ($('mode-mark-btn')) $('mode-mark-btn').onclick = markCurrentPose;
+if ($('mode-mark-btn')) $('mode-mark-btn').onclick = triggerPumpMark;
+if ($('mark-ground-btn')) $('mark-ground-btn').onclick = triggerPumpMark;
 if ($('mark-target-btn')) $('mark-target-btn').onclick = markCurrentPose;
 if ($('export-target-log')) $('export-target-log').onclick = exportTargetLogCsv;
 if ($('clear-target-log')) $('clear-target-log').onclick = () => { targetLog = []; renderTargetLog(); };

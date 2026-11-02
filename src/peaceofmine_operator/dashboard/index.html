@@ -62,10 +62,10 @@
           <span class="mode-text">Start probing</span>
           <span id="mode-probe-pill" class="badge neutral">STOP ROVER</span>
         </button>
-        <button id="mode-mark-btn" type="button" class="mode-btn" title="Mark target at current vehicle pose">
+        <button id="mode-mark-btn" type="button" class="mode-btn" disabled title="Dispense physical ground mark (pump activates for 2s)">
           <span class="mode-icon">🚩</span>
-          <span class="mode-text">Start marking</span>
-          <span id="mode-mark-pill" class="badge neutral">MARK</span>
+          <span class="mode-text">Mark ground</span>
+          <span id="mode-mark-pill" class="badge neutral">READY (2s)</span>
         </button>
       </div>
     </nav>
@@ -227,7 +227,8 @@
           </table>
         </div>
         <div class="target-log-actions">
-          <button id="mark-target-btn" type="button" class="quiet">Mark target</button>
+          <button id="mark-ground-btn" type="button" class="quiet" title="Dispense physical ground mark (pump runs for 2s)">Mark ground (2s)</button>
+          <button id="mark-target-btn" type="button" class="quiet" title="Record vehicle pose in log without running pump">Log pose</button>
           <button id="export-target-log" type="button" class="quiet">Export CSV</button>
           <button id="clear-target-log" type="button" class="quiet">Clear log</button>
         </div>

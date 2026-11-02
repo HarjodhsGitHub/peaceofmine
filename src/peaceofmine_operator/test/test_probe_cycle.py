@@ -25,6 +25,12 @@ for mod_name in [
         m.__path__ = []
         sys.modules[mod_name] = m
 
+class MockBool:
+    def __init__(self, data=False):
+        self.data = bool(data)
+
+sys.modules['std_msgs.msg'].Bool = MockBool
+
 import importlib.util
 from pathlib import Path
 spec = importlib.util.spec_from_file_location(
@@ -203,7 +209,13 @@ class OperatorControlProbeTest(unittest.TestCase):
         self.ctrl._arm_state_at = time.monotonic()
         self.ctrl._probe_command_pub = MagicMock()
         self.ctrl._arm_command_pub = MagicMock()
+        self.ctrl._sweep_enabled_pub = MagicMock()
         self.ctrl._permission_pub = MagicMock()
+        self.ctrl._pump_pub = MagicMock()
+        self.ctrl._pump_active = False
+        self.ctrl._pump_timer = None
+        self.ctrl.create_timer = MagicMock()
+        self.ctrl.destroy_timer = MagicMock()
         self.ctrl._rc_safety = MagicMock()
         self.ctrl._rc_safety.simulation = True
         self.ctrl._rc_safety.snapshot.return_value = {'allowed': True, 'servo_allowed': True}
@@ -250,6 +262,72 @@ class OperatorControlProbeTest(unittest.TestCase):
         res = self.ctrl.handle_command('client1', {'type': 'align_probe', 'angle_deg': -15.0})
         self.assertIsNotNone(res)
         self.assertIn('deployed', res['message'])
+
+    def test_pump_mark_dispatches_when_stationary_and_stowed(self):
+        res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
+        self.assertIsNone(res)
+        self.assertTrue(self.ctrl._pump_active)
+        self.ctrl._pump_pub.publish.assert_called_once()
+        published_msg = self.ctrl._pump_pub.publish.call_args[0][0]
+        self.assertTrue(published_msg.data)
+        self.ctrl.create_timer.assert_called_once_with(2.0, self.ctrl._pump_timeout_cb)
+
+    def test_pump_mark_blocked_when_moving(self):
+        self.ctrl._speed = 0.05
+        res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
+        self.assertIsNotNone(res)
+        self.assertIn('stationary', res['message'])
+        self.ctrl._pump_pub.publish.assert_not_called()
+
+    def test_pump_mark_blocked_when_probe_deployed(self):
+        # Case 1: cycle_active is True
+        self.ctrl._probe_state['probe']['cycle_active'] = True
+        res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
+        self.assertIsNotNone(res)
+        self.assertIn('Stow probe', res['message'])
+
+        # Case 2: depth > 2 mm
+        self.ctrl._probe_state['probe']['cycle_active'] = False
+        self.ctrl._probe_state['probe']['depth_mm'] = 15.0
+        res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
+        self.assertIsNotNone(res)
+        self.assertIn('Stow probe', res['message'])
+
+    def test_pump_mark_blocked_when_already_active(self):
+        self.ctrl._pump_active = True
+        res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
+        self.assertIsNotNone(res)
+        self.assertIn('already in progress', res['message'])
+
+    def test_drive_blocked_when_pump_active(self):
+        self.ctrl._pump_active = True
+        res = self.ctrl.handle_command('client1', {'type': 'drive', 'linear_x': 0.2, 'angular_z': 0.0, 'deadman': True})
+        self.assertIsNotNone(res)
+        self.assertIn('ground marking is active', res['message'])
+
+    def test_pump_timeout_deactivates_pump(self):
+        self.ctrl._pump_active = True
+        mock_timer = MagicMock()
+        self.ctrl._pump_timer = mock_timer
+        self.ctrl._pump_timeout_cb()
+        self.assertFalse(self.ctrl._pump_active)
+        self.assertIsNone(self.ctrl._pump_timer)
+        mock_timer.cancel.assert_called_once()
+        self.ctrl._pump_pub.publish.assert_called_once()
+        published_msg = self.ctrl._pump_pub.publish.call_args[0][0]
+        self.assertFalse(published_msg.data)
+
+    def test_stop_motion_aborts_pump(self):
+        self.ctrl._pump_active = True
+        mock_timer = MagicMock()
+        self.ctrl._pump_timer = mock_timer
+        self.ctrl._stop_motion_locked()
+        self.assertFalse(self.ctrl._pump_active)
+        self.assertIsNone(self.ctrl._pump_timer)
+        mock_timer.cancel.assert_called_once()
+        self.ctrl._pump_pub.publish.assert_called_once()
+        published_msg = self.ctrl._pump_pub.publish.call_args[0][0]
+        self.assertFalse(published_msg.data)
 
 
 spec_arm = importlib.util.spec_from_file_location(
