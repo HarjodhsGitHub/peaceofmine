@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interpret the shared acquisition's A3 samples; never open another I²C driver."""
+"""Interpret the shared acquisition's A2 samples; never open another I²C driver."""
 import json
 from rclpy.node import Node
 from std_msgs.msg import String, Float32
@@ -44,7 +44,7 @@ class ADCDetectorNode(Node):
             if not isinstance(request_id, str) or not 1 <= len(request_id) <= 100:
                 raise ValueError('Invalid request ID')
             if not self.sensor.snapshot(include_history=False)['fresh']:
-                raise ValueError('Fresh A3 readings required')
+                raise ValueError('Fresh A2 readings required')
             action = command.get('action')
             if action == 'apply':
                 calibration = dict(baseline_volts=command.get('baseline_adc'), trigger_volts=command.get('full_response_adc'))
@@ -53,7 +53,7 @@ class ADCDetectorNode(Node):
                     raise ValueError('Set a new voltage trigger before zeroing')
                 recent = [v for at,v,_ in self.sensor.samples if self.sensor.clock()-at < 10]
                 if len(recent) < 5:
-                    raise ValueError('Wait for five fresh A3 readings')
+                    raise ValueError('Wait for five fresh A2 readings')
                 calibration = {**self.sensor.calibration, 'baseline_volts':sum(recent)/len(recent)}
             elif action == 'reset':
                 def cleared(ok, message):

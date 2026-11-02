@@ -1,4 +1,4 @@
-"""Timestamped A3 voltage interpretation; never reuse legacy 8-bit calibration."""
+"""Timestamped A2 voltage interpretation; never reuse legacy 8-bit calibration."""
 from collections import deque
 import math
 import time
@@ -35,7 +35,7 @@ class ADCDetector:
             self.error = 'ADS1115 acquisition unavailable'
             return
         for sample in samples:
-            if sample['mux'] != 7 or sample['seq'] <= self.last_sequence:
+            if sample['mux'] != 6 or sample['seq'] <= self.last_sequence:
                 continue
             self.last_sequence = sample['seq']
             voltage, at = sample['volts'], sample['time']
@@ -62,8 +62,8 @@ class ADCDetector:
         if fresh and self.calibration:
             low, high = self.calibration['baseline_volts'], self.calibration['trigger_volts']
             ratio = min(1., max(0., (last[1]-low)/(high-low)))
-        return dict(connected=self.valid, fresh=fresh, unit='V', source='ADS1115 A3',
-                    port='shared Pi I²C · A3 / MUX 7', age_ms=round((now-last[0])*1000) if last else None,
+        return dict(connected=self.valid, fresh=fresh, unit='V', source='ADS1115 A2',
+                    port='shared Pi I²C · A2 / MUX 6', age_ms=round((now-last[0])*1000) if last else None,
                     rate_hz=round(rate, 1), received=self.received,
                     packet=dict(seq=last[2], voltage_volts=last[1], amplitude_adc=last[1]) if last else None,
                     calibration_required=self.calibration is None, signal_ratio=ratio,
