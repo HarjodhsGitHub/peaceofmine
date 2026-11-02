@@ -454,6 +454,8 @@ class OperatorControl(Node):
             elif self._calibrating and message_type in ('drive', 'probe_target', 'sweep_enabled', 'sweep_speed'):
                 return {'type': 'error', 'message': 'Vehicle and probe motion are blocked during arm calibration.'}
             elif message_type == 'drive':
+                if self._probe_state.get('probe', {}).get('cycle_active'):
+                    return {'type': 'error', 'message': 'Drive blocked while probe cycle is active. Stop probe first.'}
                 # A live ROS pad on the SVEA owns the sticks so the browser
                 # Gamepad API is not required on http://<lan-ip>.
                 if not self._joy_live(time.monotonic()):
@@ -474,8 +476,8 @@ class OperatorControl(Node):
                     self._publish_twist(0.0, 0.0)
                 command = {key: payload[key] for key in ('action', 'request_id', 'role', 'point', 'held', 'direction', 'position', 'speed_deg_s', 'hold_id', 'load_percent') if key in payload}
                 return self._actuator_command(command)
-            elif message_type == 'probe_target':
-                requested = float(payload.get('depth_mm', 0.0))
+            elif message_type in ('probe_target', 'start_probe_cycle', 'probe_cycle'):
+                requested = float(payload.get('depth_mm', 80.0 if message_type != 'probe_target' else 0.0))
                 if not math.isfinite(requested):
                     return {'type': 'error', 'message': 'Probe extension must be finite'}
                 if abs(self._speed) > self._probe_speed_limit:
@@ -490,7 +492,12 @@ class OperatorControl(Node):
                         return {'type': 'error', 'message': 'Stop arm sweep before moving the probe'}
                     if not 0 <= requested <= probe['max_depth_mm']:
                         return {'type': 'error', 'message': 'Target exceeds saved maximum extension'}
-                    self._probe_command_pub.publish(command_message(dict(action='target', depth_mm=requested, request_id=payload.get('request_id'))))
+                    if message_type in ('start_probe_cycle', 'probe_cycle'):
+                        if requested <= 0:
+                            return {'type': 'error', 'message': 'Probe cycle target depth must be greater than 0 mm'}
+                        self._probe_command_pub.publish(command_message(dict(action='probe_cycle', depth_mm=requested, target_depth_mm=requested, request_id=payload.get('request_id'))))
+                    else:
+                        self._probe_command_pub.publish(command_message(dict(action='target', depth_mm=requested, request_id=payload.get('request_id'))))
             elif message_type == 'sweep_enabled':
                 if payload.get('enabled') and not self._rc_safety.simulation:
                     if time.monotonic() - self._arm_state_at >= 1 or not self._arm_state.get('connected'):

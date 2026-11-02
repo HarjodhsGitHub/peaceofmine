@@ -16,7 +16,7 @@ from peaceofmine_operator.node_runner import run_node
 
 class ProbeController(ActuatorController):
     role = 'probe'
-    supported_actions = ('home','target')
+    supported_actions = ('home', 'target', 'probe_cycle')
 
     def __init__(self, **kwargs):
         self.home_position = None
@@ -29,6 +29,12 @@ class ProbeController(ActuatorController):
         self.speed = 0.
         self.odometry_at = 0.
         self.history = []
+        self.cycle_active = False
+        self.cycle_phase = 'IDLE'
+        self.cycle_target_depth = 80.0
+        self.contact_detected = False
+        self.contact_depth_mm = None
+        self.last_probe_result = None
         super().__init__(**kwargs)
         self.extension = probe_calibration.load(self.config_file,self.simulation)
         self.apply_probe_motion(self.saved.get('probe_motion',dict(max_speed_deg_s=self.motion_speed*.684,acceleration_deg_s2=34.332)))
@@ -118,6 +124,11 @@ class ProbeController(ActuatorController):
         self.home_status = 'Home required after driver loss'
 
     def stop(self, reason='Stopped; torque released', success=False):
+        if self.cycle_active:
+            self.cycle_active = False
+            self.cycle_phase = 'IDLE'
+            if not success:
+                self.last_probe_result = dict(status='ABORTED', reason=reason, timestamp=time.time())
         if self.motion == 'home' and not success:
             self.home_position = None
             self.home_status = 'Homing interrupted; zero not set'
@@ -135,6 +146,21 @@ class ProbeController(ActuatorController):
         self.home_hold, self.home_position = hold, None
         self.motion, self.started = 'home', time.monotonic()
         self.home_status, self.lifecycle = 'Seeking top; release to stop', 'HOMING'
+
+    def start_probe_cycle(self, depth):
+        calibration = self.extension
+        if self.home_position is None or not calibration or calibration['servo_id'] != self.ident:
+            raise ValueError('Home and calibrate probe before probing cycle')
+        if type(depth) not in (int, float) or not math.isfinite(depth) or not 0 < depth <= calibration['max_extension_mm']:
+            raise ValueError(f"Target depth must be between 0 and {calibration['max_extension_mm']} mm")
+        if not self.interlock():
+            raise ValueError('Probe cycle requires stationary odometry and no fault')
+        self.cycle_active = True
+        self.cycle_phase = 'DESCENDING'
+        self.cycle_target_depth = float(depth)
+        self.contact_detected = False
+        self.contact_depth_mm = None
+        self.start_target(depth, hold=False)
 
     def start_target(self, depth, hold=True):
         calibration = self.extension
@@ -160,6 +186,9 @@ class ProbeController(ActuatorController):
             self.start_home(hold, command.get('load_percent'))
         elif action == 'target':
             self.start_target(command.get('depth_mm'))
+        elif action == 'probe_cycle':
+            target = command.get('target_depth_mm', command.get('depth_mm', 80.0))
+            self.start_probe_cycle(target)
         elif action == 'save_probe_extension':
             if self.operation or self.telemetry.torque or self.home_position is None:
                 raise ValueError('Home and stop before saving maximum extension')
@@ -207,7 +236,57 @@ class ProbeController(ActuatorController):
         if not self.operation:
             return
         if self.motion and time.monotonic()-self.started >= 60:
+            if self.cycle_active:
+                self.cycle_active = False
+                self.cycle_phase = 'IDLE'
+                self.last_probe_result = dict(status='TIMEOUT', reason='Probe cycle timed out', timestamp=time.time())
             self.stop('Probe operation timed out')
+            return
+
+        if self.cycle_active:
+            self.command_at = time.monotonic()
+            if not self.interlock():
+                self.cycle_active = False
+                self.cycle_phase = 'IDLE'
+                self.last_probe_result = dict(status='ABORTED', reason='Rover moved or interlock lost', timestamp=time.time())
+                self.stop('Probe cycle aborted: vehicle moved or interlock lost')
+                return
+
+            ready = bool(self.connected() and self.extension and self.extension['servo_id']==self.ident and self.home_position is not None)
+            current_depth = (self.home_position-self.telemetry.position)*self.extension['max_extension_mm']/self.extension['travel_ticks'] if ready else 0.0
+
+            if self.cycle_phase == 'DESCENDING':
+                spike = bool(self.contact.spike_detected or self.contact.detected)
+                if spike:
+                    self.contact_detected = True
+                    self.contact_depth_mm = round(max(0.0, current_depth), 1)
+                    self.cycle_phase = 'RETRACTING'
+                    self.reason = f'Contact spike detected at {self.contact_depth_mm:.1f} mm; retracting'
+                    self.start_target(0.0, hold=False)
+                    return
+                elif abs(self.telemetry.position-self.operation.target) <= 3 or current_depth >= (self.cycle_target_depth - 1.0):
+                    self.contact_detected = False
+                    self.contact_depth_mm = None
+                    self.cycle_phase = 'RETRACTING'
+                    self.reason = f'Target {self.cycle_target_depth:.0f} mm reached without contact; retracting'
+                    self.start_target(0.0, hold=False)
+                    return
+
+            elif self.cycle_phase == 'RETRACTING':
+                if abs(self.telemetry.position-self.operation.target) <= 3 or current_depth <= 2.0:
+                    status = 'CONTACT' if self.contact_detected else 'CLEAR'
+                    self.last_probe_result = dict(
+                        status=status,
+                        contact=self.contact_detected,
+                        contact_depth_mm=self.contact_depth_mm,
+                        target_depth_mm=self.cycle_target_depth,
+                        timestamp=time.time()
+                    )
+                    self.cycle_active = False
+                    self.cycle_phase = 'IDLE'
+                    self.stop(f'Probe cycle complete: {status}', success=True)
+                    return
+
         elif self.motion == 'target':
             self.command_at = time.monotonic()
             if self.telemetry.operation_id == self.operation.operation_id and abs(self.telemetry.position-self.operation.target) <= 3:
@@ -247,6 +326,8 @@ class ProbeController(ActuatorController):
             probe=dict(ready=ready, homed=self.home_position is not None, calibrated=bool(self.extension),
                 max_depth_mm=self.extension['max_extension_mm'] if self.extension else None,
                 depth_mm=depth, target_mm=self.target, active=self.motion=='target', moving=self.motion=='target' and self.lifecycle!='HOLDING', holding=self.lifecycle=='HOLDING',
+                cycle_active=self.cycle_active, cycle_phase=self.cycle_phase, cycle_target_depth=self.cycle_target_depth,
+                contact_detected=self.contact_detected, contact_depth_mm=self.contact_depth_mm, last_result=self.last_probe_result,
                 reason=self.reason, fault=self.fault, pressure_ratio=ratio, pressure_window_s=30,
                 pressure_samples=[dict(x=t-now,y=v*100) for t,v in self.history],
                 **self.load_contact.snapshot(now), adc_contact=contact['detected'], adc_contact_fresh=contact['fresh'], adc_contact_state=contact))

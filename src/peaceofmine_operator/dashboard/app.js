@@ -380,6 +380,202 @@ function updatePower() {
   text('power-arm', state.connected && arm.connected ? `ID ${arm.servo_id} · ${fmt(arm.voltage, 'V')} · ${fmt(arm.current_a, 'A', 3)} · ${fmt(arm.temperature_c, '°C', 0)}` : 'No telemetry');
 }
 
+/* -------------------------------------------------- Target Log & Probe Cycle --- */
+
+let targetLog = [];
+let nextTargetId = 1;
+let lastSeenProbeResultTime = 0;
+let probeAlertTimeout = null;
+let audioCtx = null;
+
+function playContactAlertSound() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    const now = audioCtx.currentTime;
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.setValueAtTime(1760, now + 0.1);
+    osc.frequency.setValueAtTime(880, now + 0.2);
+    osc.frequency.setValueAtTime(1760, now + 0.3);
+    gain.gain.setValueAtTime(0.3, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.45);
+    osc.start(now);
+    osc.stop(now + 0.45);
+  } catch (e) {}
+}
+
+function logTarget({x, y, heading_deg, metal_signal_pct, contact_depth_mm, status, statusType}) {
+  const existing = targetLog.find(t => Math.hypot(t.x - x, t.y - y) < 0.35);
+  if (existing) {
+    existing.metal_signal_pct = Math.max(existing.metal_signal_pct, metal_signal_pct);
+    existing.contact_depth_mm = contact_depth_mm;
+    existing.status = status;
+    existing.statusType = statusType;
+    existing.timestamp = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+  } else {
+    targetLog.unshift({
+      id: `T${nextTargetId++}`,
+      x: Number(x.toFixed(2)),
+      y: Number(y.toFixed(2)),
+      heading_deg: Number(heading_deg.toFixed(0)),
+      metal_signal_pct,
+      contact_depth_mm,
+      status,
+      statusType,
+      timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
+    });
+    if (targetLog.length > 50) targetLog.pop();
+  }
+  renderTargetLog();
+}
+
+function renderTargetLog() {
+  const tbody = $('target-log-body');
+  const countBadge = $('target-count');
+  if (!tbody) return;
+  if (countBadge) countBadge.textContent = `${targetLog.length} ${targetLog.length === 1 ? 'TARGET' : 'TARGETS'}`;
+  if (targetLog.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No targets logged. Detect metal, click "Start marking", or run a probe cycle.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = targetLog.map(t => `
+    <tr class="target-row ${t.statusType || ''}">
+      <td><strong>${t.id}</strong></td>
+      <td>(${t.x}, ${t.y})</td>
+      <td>${t.metal_signal_pct}%</td>
+      <td>${t.contact_depth_mm}</td>
+      <td><span class="badge ${t.statusType === 'contact' ? 'active' : t.statusType === 'clear' ? 'safe' : 'neutral'}">${t.status}</span></td>
+      <td>${t.timestamp}</td>
+    </tr>
+  `).join('');
+}
+
+function exportTargetLogCsv() {
+  if (!targetLog.length) return;
+  const header = ['ID', 'X (m)', 'Y (m)', 'Heading (deg)', 'Metal Signal (%)', 'Contact Depth', 'Status', 'Timestamp'];
+  const rows = targetLog.map(t => [t.id, t.x, t.y, t.heading_deg, t.metal_signal_pct, `"${t.contact_depth_mm}"`, t.status, t.timestamp]);
+  const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `peaceofmine-targets-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function markCurrentPose() {
+  const robot = state.robot || {x: 0, y: 0, yaw: 0};
+  const detector = state.detector || {};
+  const probe = state.probe || {};
+  const heading = ((robot.yaw * 180 / Math.PI % 360) + 360) % 360;
+  const signalPct = Math.round((detector.signal_ratio || 0) * 100);
+  const depthStr = Number.isFinite(probe.depth_mm) && probe.depth_mm > 2 ? `${probe.depth_mm.toFixed(1)} mm` : '—';
+  
+  logTarget({
+    x: robot.x,
+    y: robot.y,
+    heading_deg: heading,
+    metal_signal_pct: signalPct,
+    contact_depth_mm: depthStr,
+    status: signalPct >= Math.round((detector.threshold_ratio || 0.65) * 100) ? 'METAL MARKED' : 'POSITION MARKED',
+    statusType: 'marked'
+  });
+  showNotice(`Marked target at (${robot.x.toFixed(2)}, ${robot.y.toFixed(2)})`);
+}
+
+function startProbeCycle() {
+  if (!state.connected || !state.drive?.you_control_owner) return;
+  const speed = Math.abs(state.robot?.speed_mps || 0);
+  if (speed > 0.03) {
+    showNotice('Cannot probe while vehicle is moving. Stop rover first.');
+    return;
+  }
+  const depthInput = $('probe-cycle-target');
+  const targetDepth = depthInput ? Math.max(10, Math.min(120, parseFloat(depthInput.value) || 80)) : 80;
+  send({type: 'start_probe_cycle', depth_mm: targetDepth});
+  showNotice(`Started probing down to ${targetDepth} mm`);
+}
+
+function checkProbeCycleState() {
+  const probe = state.probe || {};
+  const alertEl = $('probe-cycle-alert');
+  const alertBadge = $('probe-cycle-alert-badge');
+  const alertText = $('probe-cycle-alert-text');
+
+  // Live spike alert during cycle
+  if (probe.cycle_active && (probe.contact_detected || probe.adc_contact_state?.spike_detected)) {
+    if (alertEl) alertEl.classList.remove('hidden');
+    if (alertBadge) {
+      alertBadge.textContent = 'SPIKE CONTACT';
+      alertBadge.className = 'badge active';
+    }
+    if (alertText) {
+      const depthStr = Number.isFinite(probe.contact_depth_mm) ? `${probe.contact_depth_mm.toFixed(1)} mm` : `${Math.round(probe.depth_mm || 0)} mm`;
+      alertText.textContent = `Hard contact spike detected at ${depthStr}! Retracting probe.`;
+    }
+    playContactAlertSound();
+  }
+
+  // Completed result
+  const lastRes = probe.last_result;
+  if (lastRes && lastRes.timestamp && lastRes.timestamp !== lastSeenProbeResultTime) {
+    lastSeenProbeResultTime = lastRes.timestamp;
+    if (lastRes.contact) {
+      if (alertEl) alertEl.classList.remove('hidden');
+      if (alertBadge) {
+        alertBadge.textContent = 'CONTACT CONFIRMED';
+        alertBadge.className = 'badge active';
+      }
+      if (alertText) {
+        alertText.textContent = `Target object struck at ${lastRes.contact_depth_mm ?? '—'} mm! Probe stowed.`;
+      }
+      playContactAlertSound();
+      showNotice(`Contact spike confirmed at ${lastRes.contact_depth_mm} mm`);
+      logTarget({
+        x: state.robot.x,
+        y: state.robot.y,
+        heading_deg: ((state.robot.yaw * 180 / Math.PI % 360) + 360) % 360,
+        metal_signal_pct: Math.round((state.detector?.signal_ratio || 0) * 100),
+        contact_depth_mm: `${lastRes.contact_depth_mm} mm`,
+        status: 'HARD CONTACT',
+        statusType: 'contact'
+      });
+    } else if (lastRes.status === 'CLEAR') {
+      if (alertEl) alertEl.classList.remove('hidden');
+      if (alertBadge) {
+        alertBadge.textContent = 'DEPTH CLEAR';
+        alertBadge.className = 'badge safe';
+      }
+      if (alertText) {
+        alertText.textContent = `Clear down to ${Math.round(lastRes.target_depth_mm)} mm. No contact spike.`;
+      }
+      showNotice(`Clear down to ${Math.round(lastRes.target_depth_mm)} mm`);
+      logTarget({
+        x: state.robot.x,
+        y: state.robot.y,
+        heading_deg: ((state.robot.yaw * 180 / Math.PI % 360) + 360) % 360,
+        metal_signal_pct: Math.round((state.detector?.signal_ratio || 0) * 100),
+        contact_depth_mm: `None (to ${Math.round(lastRes.target_depth_mm)} mm)`,
+        status: 'CLEAR',
+        statusType: 'clear'
+      });
+    } else if (lastRes.status === 'ABORTED') {
+      showNotice(`Probe cycle aborted: ${lastRes.reason || 'movement detected'}`);
+    }
+
+    if (probeAlertTimeout) clearTimeout(probeAlertTimeout);
+    probeAlertTimeout = setTimeout(() => {
+      if (alertEl && !state.probe?.cycle_active) alertEl.classList.add('hidden');
+    }, 8000);
+  }
+}
+
 function updateHud() {
   updatePower();
   updateArmSettings();
@@ -399,10 +595,63 @@ function updateHud() {
   if (servoSafe && !safe) $('rc-safety').textContent += ' · SERVOS READY';
   $('rc-safety').title = state.safety?.reason || 'Waiting for PX4 safety status';
   $('rc-safety').className = `badge ${safe ? 'ready' : 'blocked'}`;
-  $('probe-slider').disabled = !owner || !servoSafe || probe.ready === false || drive.calibrating;
+
+  const speed = Math.abs(robot.speed_mps || 0);
+  const isMoving = speed > 0.03 || (drive.publishing && (Math.abs(drive.cmd_linear_x || 0) > 0.01 || Math.abs(drive.cmd_angular_z || 0) > 0.01));
+  const probeReady = probe.ready !== false && !probe.fault && !drive.calibrating;
+  const canProbe = owner && servoSafe && probeReady && !isMoving && !probe.cycle_active;
+
+  $('probe-slider').disabled = !owner || !servoSafe || probe.ready === false || drive.calibrating || Boolean(probe.cycle_active);
   $('probe-stop').disabled = !owner;
   $('sweep-toggle').disabled = !owner || !servoSafe;
   $('sweep-speed').disabled = !owner || !servoSafe;
+
+  if ($('start-probing')) {
+    $('start-probing').disabled = !canProbe;
+    if (probe.cycle_active) {
+      $('start-probing').textContent = probe.cycle_phase === 'DESCENDING' ? 'Probing (descending)...' : 'Probing (retracting)...';
+    } else {
+      $('start-probing').textContent = isMoving ? 'Stop rover to probe' : 'Start probing';
+    }
+  }
+
+  if ($('mode-probe-btn')) {
+    $('mode-probe-btn').disabled = !canProbe;
+    if ($('mode-probe-pill')) {
+      if (probe.cycle_active) {
+        $('mode-probe-pill').textContent = probe.cycle_phase || 'PROBING';
+        $('mode-probe-pill').className = 'badge active';
+      } else if (isMoving) {
+        $('mode-probe-pill').textContent = 'STOP ROVER';
+        $('mode-probe-pill').className = 'badge neutral';
+      } else if (!probeReady) {
+        $('mode-probe-pill').textContent = 'NOT READY';
+        $('mode-probe-pill').className = 'badge neutral';
+      } else {
+        $('mode-probe-pill').textContent = 'READY';
+        $('mode-probe-pill').className = 'badge safe';
+      }
+    }
+  }
+
+  if ($('mode-sweep-btn')) {
+    $('mode-sweep-btn').disabled = !owner || !servoSafe;
+    if ($('mode-sweep-pill')) {
+      $('mode-sweep-pill').textContent = detector.sweep_enabled ? 'SWEEPING' : 'OFF';
+      $('mode-sweep-pill').className = `badge ${detector.sweep_enabled ? 'safe' : 'neutral'}`;
+    }
+    const label = $('mode-sweep-btn').querySelector('.mode-text');
+    if (label) label.textContent = detector.sweep_enabled ? 'Stop sweeping' : 'Start sweeping';
+  }
+
+  if ($('mode-mark-btn')) {
+    $('mode-mark-btn').disabled = !owner;
+  }
+  if ($('mark-target-btn')) {
+    $('mark-target-btn').disabled = !owner;
+  }
+
+  checkProbeCycleState();
 
   $('speed').textContent = `${Math.abs(robot.speed_mps).toFixed(2)} m/s`;
 
@@ -444,8 +693,8 @@ function updateHud() {
   setRange($('probe-slider'), 0, probe.max_depth_mm || 1, .1);
   if (!activeSliders.has('probe-slider')) $('probe-slider').value = probe.target_mm;
   if (!state.connected) drawProbeMotion(probe.depth_mm);
-  $('probe-status').textContent = probe.ready === false ? (probe.reason || 'HOME REQUIRED') : probe.fault ? 'FAULT' : probe.holding ? 'HOLDING' : probe.depth_mm > 2 ? 'DEPLOYED' : 'STOWED';
-  $('probe-status').className = `badge ${probe.fault ? 'active' : probe.depth_mm > 2 ? 'safe' : 'neutral'}`;
+  $('probe-status').textContent = probe.ready === false ? (probe.reason || 'HOME REQUIRED') : probe.fault ? 'FAULT' : probe.cycle_active ? (probe.cycle_phase === 'DESCENDING' ? 'PROBING' : 'RETRACTING') : probe.holding ? 'HOLDING' : probe.depth_mm > 2 ? 'DEPLOYED' : 'STOWED';
+  $('probe-status').className = `badge ${probe.fault || (probe.cycle_active && probe.contact_detected) ? 'active' : probe.cycle_active ? 'active' : probe.depth_mm > 2 ? 'safe' : 'neutral'}`;
 
   $('arm-state').textContent = state.safety?.mode === 'override' ? 'RC CONTROL' : !owner ? 'SPECTATOR' : safe ? (drive.publishing ? 'ROS CONTROL' : 'READY') : 'RC LOCKED';
   $('arm-state').className = `badge ${owner && drive.armed ? 'active' : 'neutral'}`;
@@ -882,6 +1131,13 @@ for (const [id, type, field] of [['probe-slider', 'probe_target', 'depth_mm'], [
   $(id).onchange = event => { activeSliders.delete(id); commit(event); };
 }
 $('sweep-toggle').onclick = () => send({type: 'sweep_enabled', enabled: !state.detector.sweep_enabled});
+if ($('start-probing')) $('start-probing').onclick = startProbeCycle;
+if ($('mode-probe-btn')) $('mode-probe-btn').onclick = startProbeCycle;
+if ($('mode-sweep-btn')) $('mode-sweep-btn').onclick = () => send({type: 'sweep_enabled', enabled: !state.detector.sweep_enabled});
+if ($('mode-mark-btn')) $('mode-mark-btn').onclick = markCurrentPose;
+if ($('mark-target-btn')) $('mark-target-btn').onclick = markCurrentPose;
+if ($('export-target-log')) $('export-target-log').onclick = exportTargetLogCsv;
+if ($('clear-target-log')) $('clear-target-log').onclick = () => { targetLog = []; renderTargetLog(); };
 
 function savePreferences() {
   try { localStorage.setItem('peaceofmine.operator.preferences', JSON.stringify(preferences)); } catch {}
@@ -1069,6 +1325,21 @@ function drawForwardView(pose = state.robot) {
     context.fillText('MARKED', point.x + 10, point.y - 6);
   }
 
+  for (const t of targetLog) {
+    const point = project(worldToCamera(t.x, t.y, pose), width, height);
+    if (!point) continue;
+    context.fillStyle = t.statusType === 'contact' ? '#df6251' : t.statusType === 'clear' ? '#22885a' : '#e5c07b';
+    context.beginPath();
+    context.arc(point.x, point.y - 8, 7, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = '#fff';
+    context.lineWidth = 1.5;
+    context.stroke();
+    context.fillStyle = '#fff4e6';
+    context.font = '700 11px system-ui';
+    context.fillText(`${t.id} ${t.status}`, point.x + 10, point.y - 6);
+  }
+
   // Rover nose in the near field.
   context.fillStyle = '#18282a';
   context.beginPath();
@@ -1124,6 +1395,21 @@ function drawMap(pose = state.robot) {
     context.beginPath();
     context.arc(point.x, point.y, 5, 0, Math.PI * 2);
     context.stroke();
+  }
+
+  // Verified & marked targets from targetLog
+  for (const t of targetLog) {
+    const point = toScreen(t.x, t.y);
+    context.fillStyle = t.statusType === 'contact' ? '#df6251' : t.statusType === 'clear' ? '#22885a' : '#e5c07b';
+    context.beginPath();
+    context.arc(point.x, point.y, 6, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = '#fff';
+    context.lineWidth = 1.5;
+    context.stroke();
+    context.fillStyle = '#fff';
+    context.font = 'bold 9px system-ui';
+    context.fillText(t.id, point.x + 8, point.y + 3);
   }
 
   const rover = toScreen(pose.x, pose.y);

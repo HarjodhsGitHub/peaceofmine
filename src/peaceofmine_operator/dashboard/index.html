@@ -44,6 +44,27 @@
       </div>
     </header>
 
+    <nav class="operation-modes-strip" aria-label="Operational modes">
+      <span class="modes-label">MODES</span>
+      <div class="modes-actions">
+        <button id="mode-sweep-btn" type="button" class="mode-btn" title="Toggle coil sweeping (operates while driving)">
+          <span class="mode-icon">📡</span>
+          <span class="mode-text">Start sweeping</span>
+          <span id="mode-sweep-pill" class="badge neutral">OFF</span>
+        </button>
+        <button id="mode-probe-btn" type="button" class="mode-btn" disabled title="Probe ground for contact (rover must be stationary)">
+          <span class="mode-icon">📍</span>
+          <span class="mode-text">Start probing</span>
+          <span id="mode-probe-pill" class="badge neutral">STOP ROVER</span>
+        </button>
+        <button id="mode-mark-btn" type="button" class="mode-btn" title="Mark target at current vehicle pose">
+          <span class="mode-icon">🚩</span>
+          <span class="mode-text">Start marking</span>
+          <span id="mode-mark-pill" class="badge neutral">MARK</span>
+        </button>
+      </div>
+    </nav>
+
     <section class="workspace">
       <section id="camera-panel" class="viewport panel">
         <canvas id="forward-view" tabindex="0" aria-label="Virtual rover camera view. Click to focus for keyboard driving input."></canvas>
@@ -150,16 +171,60 @@
             <span>Telemetry <strong id="probe-contact-rate">—</strong></span>
           </div>
           <p id="probe-adc-contact" role="status">ADC trigger disabled</p>
+          <div class="probe-cycle-card">
+            <div class="probe-cycle-input-row">
+              <label for="probe-cycle-target">Probe cycle depth</label>
+              <div class="probe-cycle-input-wrap">
+                <input id="probe-cycle-target" type="number" min="10" max="120" step="5" value="80">
+                <span class="unit">mm</span>
+              </div>
+            </div>
+            <div class="probe-cycle-buttons">
+              <button id="start-probing" type="button" class="primary">Start probing</button>
+              <button id="probe-stop" type="button">Stop probe</button>
+            </div>
+            <div id="probe-cycle-alert" class="probe-cycle-alert hidden" role="alert">
+              <span id="probe-cycle-alert-badge" class="badge active">SPIKE CONTACT</span>
+              <span id="probe-cycle-alert-text">Target contact detected! Retracting.</span>
+            </div>
+          </div>
           <button id="probe-zero-contact" type="button">Zero contact</button>
           <small id="probe-zero-status">Hold clear of the ground before zeroing. Reference lasts for this connection.</small>
-          <label for="probe-slider">Target depth</label>
+          <label for="probe-slider">Manual target depth</label>
           <input id="probe-slider" type="range">
-          <button id="probe-stop" type="button">Stop probe</button>
-          <p class="safety-note">Holds torque at the target to sense contact. Stop probe releases torque. Load is a servo estimate, not measured force. Each command times out after 60 seconds; movement and holding require a stationary rover and valid control permission.</p>
+          <p class="safety-note">Automated probe cycle moves downward to sense hard objects via FSR spike and returns to 0 mm. Holds torque at manual target depth. Stop probe releases torque. Probing is strictly disabled when the rover is moving.</p>
         </section>
       </aside>
 
       <div class="lower-panels">
+      <section class="panel target-log-panel" aria-labelledby="target-log-heading">
+        <div class="panel-heading">
+          <h2 id="target-log-heading">Target verification log</h2>
+          <span id="target-count" class="badge neutral">0 TARGETS</span>
+        </div>
+        <div class="table-wrap">
+          <table class="target-table">
+            <thead>
+              <tr>
+                <th scope="col">ID</th>
+                <th scope="col">Pose (X, Y)</th>
+                <th scope="col">Coil %</th>
+                <th scope="col">Contact depth</th>
+                <th scope="col">Status</th>
+                <th scope="col">Time</th>
+              </tr>
+            </thead>
+            <tbody id="target-log-body">
+              <tr class="empty-row"><td colspan="6">No targets logged. Detect metal, click "Start marking", or run a probe cycle.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="target-log-actions">
+          <button id="mark-target-btn" type="button" class="quiet">Mark target</button>
+          <button id="export-target-log" type="button" class="quiet">Export CSV</button>
+          <button id="clear-target-log" type="button" class="quiet">Clear log</button>
+        </div>
+      </section>
       <section class="panel map-panel">
         <div class="panel-heading">
           <h2>Field map</h2>

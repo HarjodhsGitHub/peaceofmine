@@ -68,17 +68,16 @@ camera session before starting the ROS stack.
 `fixture_angle_offset_deg` sets the centre angle of the forward fixture, for
 example `fixture_angle_offset_deg:=10.0`.
 
-## Arduino detector launch
+## Metal detector I2C acquisition (legacy Arduino / ESP32 serial deprecated)
 
-The operator XML includes the standalone `sensor_serial.launch.xml` by default
-in hardware mode. Set `use_sensor_serial:=false` to disable it.
-`sensor_serial_port` defaults to the configured Uno's
-full `/dev/serial/by-id/...` path; override it for another board. Optional settings are
-`sensor_baud_rate` (115200), `sensor_baseline_adc` (0.0), and
-`sensor_full_response_adc` (255.0). The endpoints require detector calibration.
-The real sensor is excluded in vehicle or payload simulation. Its topics share
-the operator namespace, for example `/self/detector/amplitude_adc`.
-See [sensor setup](../../DevTools/sensorArduinoFast/README.md) for bench testing.
+The metal detector coil signal is now fed directly into the Raspberry Pi over I2C
+via the onboard ADS1115 ADC (channel AIN3 / MUX 7 by default) through `ads1115_node.py`
+and `detector_node.py`.
+
+The legacy Arduino Uno and ESP32 USB-serial nodes (`sensor_serial_node.py` via
+`sensor_serial.launch.xml`) are deprecated and disabled by default (`use_sensor_serial:=false`).
+Calibration (baseline ADC, full response, and reference voltage) is persisted in
+`operator_config.json` under `metal_detector` and managed dynamically via `detector_node.py`.
 
 ## Coordinate convention
 
@@ -95,6 +94,21 @@ take or steal control at any time; ownership transfers immediately, the
 previous owner becomes a spectator, and the gateway stops active motion.
 Only the owner can drive, sweep, move the probe, or change calibration.
 Take control, then click **Arm controls**. The physical RC still determines drive authority; motion requires the configured held input/deadman. **Disarm** stops outputs.
+
+### Operational Modes & Demining Workflow
+
+The dashboard provides a dedicated **Operational Modes** strip and integrated tools:
+
+1. **Start Sweeping**: Toggles the Dynamixel sweep arm across its calibrated arc. Operates while driving to scan lanes for metal anomalies.
+2. **Start Probing**: Automated soil penetration cycle down to an editable target depth (default 80 mm).
+   - **Stationary Safety Gate**: Probing is strictly disabled whenever the vehicle is moving (`speed > 0.03 m/s`). If the vehicle moves during a cycle, descent aborts immediately. Driving via the web interface is blocked while probing.
+   - **Spike Detection**: Soil resistance rises linearly; striking a hard buried object creates an analog FSR voltage spike ($\Delta V / \Delta t$).
+   - On contact spike: descent halts instantly, contact depth is recorded, probe auto-retracts to stow (0 mm), a 2-tone audio chime sounds, and visual alerts flash.
+   - On reaching target depth clear: probe auto-retracts to stow and reports clear.
+3. **Start Marking & Target Verification Log**:
+   - The operator can manually mark targets at any time (while driving or stopped).
+   - The **Target Verification Log** records target ID, coordinates $(X, Y)$, heading, metal detector %, contact depth, and verification status.
+   - Logged targets are plotted on both the Field Map and 3D camera overlay, and can be exported as CSV for mission reporting.
 
 Plug the Xbox 360 (or another gamepad) into the computer that is showing this
 dashboard, then press any button if the Drive panel still says no controller

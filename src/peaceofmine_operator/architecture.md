@@ -20,8 +20,8 @@ See [the ROS graph](ros_graph.md) for interfaces and publisher/subscriber diagra
 | `actuator_protocol.py` | Browser optional-field conversion to typed actuator messages |
 | `ads1115_node.py`, `adc_acquisition.py`, `ads1115.py` | Acquisition and configuration application; timestamped typed ADC samples and scalar measurements |
 | `adc_contact.py`, `probe_contact.py` | ADC threshold/hysteresis/debounce and session-only motor contact baseline |
-| `sensor_serial_node.py`, `sensor_serial.py` | Arduino detector acquisition and calibration application |
-| `detector_node.py` | Detector interpretation, calibrated plot geometry and georeferenced detections |
+| `sensor_serial_node.py`, `sensor_serial.py` | Legacy Arduino/ESP32 serial acquisition (deprecated; replaced by direct I2C ADS1115 ADC reading) |
+| `detector_node.py` | Detector interpretation from direct I2C ADC / fallback, calibrated plot geometry and georeferenced detections |
 | `operator_settings_node.py`, `configuration.py` | Sole runtime file writer; validation, optimistic revisions, migration and atomic persistence |
 | `settings_client.py` | Asynchronous saves; no extra executor/thread and no blocking control-loop wait |
 | Camera drivers / `camera_registry_node.py` | Capture / lightweight camera metadata discovery |
@@ -79,8 +79,12 @@ resistance alone cannot identify its physical cause.
 The browser's probe target retains its existing bounded hold behavior: hold the
 requested depth until Stop, permission/interlock loss, or the 60-second timeout.
 A ROS `target` action completes at depth and releases torque. Motor-contact zeroing
-remains session-only and requires a stable hold. Neither mode automatically retracts
-on ADC contact. ADC trigger and homing motor-load threshold are separate settings.
+remains session-only and requires a stable hold. ADC trigger and homing motor-load threshold are separate settings.
+An automated `probe_cycle` command (`start_probe_cycle`) descends toward an editable target depth (default 80 mm).
+It evaluates FSR slope/rate-of-change spikes (`spike_threshold`) as well as threshold contact.
+If a contact spike is encountered, descent halts immediately, contact depth is recorded, and the probe automatically retracts to 0 mm with an audible/visual operator alert.
+If the target depth is reached without contact, the probe safely retracts and logs a clear result.
+Probing is strictly interlocked to a stationary rover (`speed <= 0.03 m/s`); vehicle movement immediately aborts the cycle and web driving is blocked while a probe cycle is active.
 
 Probe ADC contact consumes `adc/samples`, not a plot. Disabled, unavailable,
 configuration-mismatched or stale measurements produce unknown contact. Hysteresis
