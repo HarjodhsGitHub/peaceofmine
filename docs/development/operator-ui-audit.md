@@ -1,5 +1,24 @@
 # PeaceOfMine project audit — 2026-11-05
 
+## RC supervision follow-up
+
+The operator chose physical RC supervision as the motion authority. The earlier
+snapshot below predates that decision: its stationary-velocity, PX4-status and
+probe-stow prerequisites are superseded. Fresh CH5 input now permits or denies
+motion; stale/lost RC and kill still stop it. Probe home/jog/targets and detector
+calibration do not require odometry. Sweep, alignment and marking do not require
+probe calibration or stow; active-operation conflicts remain. Pose logging still
+requires real localization. Settings Stop now stops only its selected actuator
+without releasing dashboard control. A shallow probe cycle must actually descend
+and return before reporting completion.
+
+Validation: 174 operator tests passed, two Chrome browser suites passed separately,
+controller-input checks passed, and the updated launch and desktop/phone UI were
+checked locally. Physical movement was not exercised in this follow-up. The
+original core-suite limitation remains open.
+
+## Earlier audit snapshot
+
 What this repo does: this ROS 2 Jazzy workspace controls the SVEA vehicle, detector arm, probe and marking pump through a browser dashboard. The audit assumes one physical vehicle, one active operator and several observers on a trusted private network.
 
 Kent and upstream SVEA were merged into local `main` before this work. At validation time, the audit fixes were uncommitted and nothing had been pushed; subsequent publication is recorded in Git history. Existing local `.agents/` and `skills-lock.json` were left untouched. Existing uncommitted car changes and calibration were preserved.

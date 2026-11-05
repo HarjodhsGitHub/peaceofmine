@@ -138,7 +138,7 @@ If the Wi-Fi address changes, regenerate the certificate with the new address.
 3. Accept the certificate warning.
 4. Confirm the Drive panel shows the pad and the graphic moves.
 5. **Take control** and select ROS authority on the physical RC.
-6. Use the RC to permit motion; there is no separate dashboard arm/disarm step. RT forward, LT reverse, left stick steer. Release the input deadman to stop driving. Servo STOP releases dashboard control; click **Take control** before a new operation. Opening Settings stops motion and blocks driving while calibrating; jogging needs only RC permission and a held movement control.
+6. Use the RC to permit motion; there is no separate dashboard arm/disarm step. RT forward, LT reverse, left stick steer. Release the input deadman to stop driving. The header STOP releases dashboard control; click **Take control** before a new operation. Settings → Stop / release torque stops only the selected actuator and keeps dashboard control. Opening Settings stops motion and blocks driving while calibrating; jogging needs only RC permission and a held movement control.
 
 The status line must read `ROS cmd_vel …`. Stick lights alone are not
 enough. The virtual forward camera is first-person, so the car will not
@@ -409,9 +409,11 @@ capture changes apply after restart. Laptop camera IDs and browser controller
 mappings remain local to each browser. Ports, TLS and device-enable flags remain
 launch options.
 
-Without localization, the hardware probe checks the existing MAVROS wheel-velocity
-output. Missing/stale velocity blocks every probe movement, including homing and
-jogging. A detector location marker still requires actual odometry.
+Probe motion and detector calibration do not require odometry. Fresh RC permission,
+the actuator connection and its own calibration/fault checks determine readiness.
+Sweeping, alignment and marking do not require probe setup, but wait for an active
+probe or marking operation to finish. A detector location marker still requires
+actual odometry.
 
 The browser depth slider holds the requested depth until Stop, safety loss or the
 60-second limit. ROS `probe/execute` target actions instead finish and release torque

@@ -15,7 +15,7 @@ See [the ROS graph](ros_graph.md) for interfaces and publisher/subscriber diagra
 | `servo_driver_node.py` | One serial connection, discovery, telemetry, independent RC/permission gate and command watchdog |
 | `servo_runtime.py`, `servo_motor.py`, `servo_transport.py` | Serialized hardware transactions, bounded motion primitives, protective load stop and firmware protocol |
 | `arm_controller_node.py` | Calibration, positions, sweeps and arm action lifecycle |
-| `probe_controller_node.py` | Homing, calibrated depth/holding, stationary/fault interlocks and contact interpretation |
+| `probe_controller_node.py` | Homing, calibrated depth/holding, RC/fault interlocks and contact interpretation |
 | `actuator_controller.py` | Nonblocking common lifecycle, typed commands/status, action execution and settings client |
 | `actuator_protocol.py` | Browser optional-field conversion to typed actuator messages |
 | `ads1115_node.py`, `adc_acquisition.py`, `ads1115.py` | Acquisition and configuration application; timestamped typed ADC samples and scalar measurements |
@@ -64,11 +64,11 @@ controller interlocks, permission freshness and driver/firmware watchdogs remain
 
 ## Behaviors
 
-Probe homing, jogging and target movement all enforce permission, fresh stationary
-velocity and no probe fault, continuously. Simulation/localization uses the selected
-odometry topic. Without localization, hardware defaults to the enabled MAVROS
-`wheel_odometry/velocity` output (`TwistWithCovarianceStamped`). Missing velocity
-blocks probe motion; no fake stationary sample or pose is fabricated.
+Probe homing, jogging and target movement continuously enforce fresh RC permission,
+driver telemetry and no probe fault. Odometry is not a motion prerequisite. Probe
+targets require the probe's own home and travel calibration; arm motion and marking
+do not depend on probe setup. Active probe and marking operations remain mutually
+exclusive.
 
 `arm/execute` supports `sweep` and `position`; `probe/execute` supports `home` and
 `target`. Actions expose feedback, cancellation and final success/failure. Homing
@@ -84,7 +84,7 @@ An automated `probe_cycle` command (`start_probe_cycle`) descends toward an edit
 It evaluates FSR slope/rate-of-change spikes (`spike_threshold`) as well as threshold contact.
 If a contact spike is encountered, descent halts immediately, contact depth is recorded, and the probe automatically retracts to 0 mm with an audible/visual operator alert.
 If the target depth is reached without contact, the probe safely retracts and logs a clear result.
-Probing is strictly interlocked to a stationary rover (`speed <= 0.03 m/s`); vehicle movement immediately aborts the cycle and web driving is blocked while a probe cycle is active.
+The RC operator supervises vehicle motion during probing. Web driving is blocked while a probe cycle is active or the probe is deployed. Cycle completion requires encoder arrival from the current operation, including for shallow targets.
 
 Probe ADC contact consumes `adc/samples`, not a plot. Disabled, unavailable,
 configuration-mismatched or stale measurements produce unknown contact. Hysteresis

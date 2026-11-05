@@ -33,11 +33,11 @@ The gateway subscribes to:
 The fork's `src/modules/mavlink/streams/HEARTBEAT.hpp` already maps
 `actuator_armed.kill`, `termination`, or non-HIL `lockdown` to
 `MAV_STATE_FLIGHT_TERMINATION` (8). Armed failsafe maps to CRITICAL (5).
-Vehicle drive requires connected, armed, ACTIVE (4), and fresh RC in the low
-CH5 position. The servo independently subscribes to both state and RC input:
-it requires fresh connected status **4** and fresh RC with CH5 low or middle.
-Every other status, including 0 and 8, blocks servo motion. It does not
-additionally require the `armed` flag or ROS mode on CH5. No PX4 patch, uORB safety
+Software motion permission follows fresh physical RC input. CH5 low permits ROS
+driving and servos; middle permits servos while the RC drives; high kills motion.
+The servo independently subscribes to state and RC input. State disconnect/reboot
+invalidates previous samples, but heartbeat status and PX4 arming do not add
+software permission gates. PX4 continues enforcing its own vehicle arming. No PX4 patch, uORB safety
 streams or schema overrides are required. The generic uORB tunnel
 remains available for its existing power telemetry.
 
@@ -47,15 +47,11 @@ Intermediate, missing, or invalid channel values deny motion. These bands
 assume the documented board mapping and normal transmitter calibration.
 If that mapping is changed, update the ROS interlock to match before use.
 
-Local timeouts are 1.5 s for state and 0.4 s for RC. Repeated ROS message
-stamps do not refresh permission; disconnect clears permission immediately.
-The stock HEARTBEAT rate is 1 Hz and onboard RC_CHANNELS is 20 Hz, so a PX4
-arming-state change can take roughly one heartbeat period to reach ROS.
-Vehicle drive also checks kill/override through the faster CH5 stream.
-Servo permission also checks kill/RC loss through the faster RC stream. This mirrors
-the reported PX4 state, not the instantaneous internal power-gate timing.
-`RCIn` does not expose every receiver failsafe flag; PX4 heartbeat failsafe,
-RC freshness, and zero RSSI inhibit control. RSSI 255 means unknown, not loss.
+RC permission expires after 0.4 s. Repeated ROS message stamps do not refresh
+permission; disconnect clears previous samples immediately. Onboard RC_CHANNELS
+is 20 Hz. Both driving and servos check kill/RC loss through that stream.
+`RCIn` does not expose every receiver failsafe flag; stale RC and zero RSSI
+inhibit software control. Physical vehicle protection remains the RC/PX4's job. RSSI 255 means unknown, not loss.
 Returning from kill never replays a servo target.
 
 ## Bring up the actual PX4 connection
@@ -89,9 +85,9 @@ Dynamixel bus baud 1000000. It is not a transparent USB adapter. The driver requ
 MX-64 model 310 in joint position-control mode and never rewrites EEPROM angle limits or mode. It addresses one
 explicit servo ID; no automatic actuator selection or full-range move occurs.
 
-The servo independently checks PX4 safety plus the gateway's short-lived
-website permission. Any PX4 status other than 4 disables torque. RC override alone does not block
-servo motion or disable torque. RC kill, RC loss and website
+The servo independently checks fresh RC permission plus the gateway's short-lived
+website permission. PX4 heartbeat status does not gate servo torque. RC override
+permits servo motion. RC kill, RC loss and website
 lease-loss paths stop the servo too. This is not a separate physical servo
 arming mode. Calibration movement requires a held command refreshed within
 0.25 s; gateway permission expires within 0.3 s. A stopped target is discarded.
@@ -120,7 +116,7 @@ performed as part of these changes.
    and exported XML (4096 ticks = 360°). Selecting a different ID receives an
    explicit driver confirmation or an error. All calibration commands show
    pending, confirmed, failed, or timed-out feedback.
-3. Support/unload the linkage and ensure clear space. With PX4 status 4,
+3. Support/unload the linkage and ensure clear space. With the RC permitting motion,
    enable slow jogging, then hold left/right. Jogging is approximately 2°/s,
    with at most 16 ticks (1.4°) outstanding per step. The motor speed register
    limits travel speed; a two-tick goal offset can be too small to overcome
@@ -136,7 +132,7 @@ performed as part of these changes.
 5. Apply recorded limits: `0 <= minimum < center < maximum <= 4095`, inside the
    EEPROM range. Jogging thereafter stays inside this saved range. Hold-to-move
    preset buttons and automated sweeping still require complete calibration.
-6. Check kill/status loss and button-release stopping. Copy the generated XML
+6. Check RC kill/loss and button-release stopping. Copy the generated XML
    defaults into `operator.launch.xml` to persist calibration across restarts.
    These changes were tested using a fake servo bus, not physical jogging.
 

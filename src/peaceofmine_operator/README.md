@@ -241,17 +241,17 @@ retry remain in the main dashboard; the redundant Connection settings tab is rem
 
 ### Arm servo and RC authority
 
-Servo motion requires fresh connected PX4 `system_status == 4` and fresh RC input
-with kill clear; RC override does not block servos. Vehicle drive additionally
-requires RC ROS authority and PX4 arming, with no separate browser arming.
-The header distinguishes ROS mode, RC override, kill, disarmed, and unknown/lost
-status. Settings → Arm calibration records safe limits and exports launch XML.
+Fresh RC input determines software motion permission: CH5 low permits ROS
+driving and servos, middle gives driving to the RC while permitting servos, and
+high kills motion. Missing, stale or invalid RC input blocks motion. PX4 remains
+responsible for its own arming; its heartbeat status is not another software gate.
+The header distinguishes ROS mode, RC override, kill and unknown/lost RC input. Settings → Arm calibration records safe limits and exports launch XML.
 See [the safety audit and setup](../../docs/development/arm-servo-safety.md) before
 enabling the hardware driver. Safety uses existing `mavros/state` and `mavros/rc/in`;
 no PX4 firmware changes are required. The ArbotiX requires
 [safe_arm firmware v1](../../DevTools/servodemo/firmware/safe_arm/README.md) for
 the permission watchdog and locally eased sweep. Legacy ArbotiX firmware is
-rejected before motion. Missing or stale MAVROS state leaves actuation locked.
+rejected before motion. RC kill, RC loss and driver watchdogs stop actuation.
 The XML defaults to hardware mode with the verified FTDI adapter and servo ID 1 enabled.
 Use `is_sim:=true` for simulation; this excludes the hardware arm driver.
 Servo limits remain unset until calibration.
