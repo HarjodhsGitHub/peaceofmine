@@ -28,6 +28,9 @@ Object.defineProperty(document, 'hidden', {value: false});
 const assert = (condition, label) => { if (!condition) throw Error(label); };
 const latestDrive = () => sent.filter(m => m.type === 'drive').at(-1);
 state.connected = true;
+state.robot.stationary = true;
+state.probe.ready = true;
+state.probe.depth_mm = 0;
 state.power = {battery: {available: true, present: true, stale: false, power_w: 24, current_a: 2, voltage_v: 12, remaining_pct: 50},
   esc: {available: false}, history: [{age_s: 2, watts: 24}]};
 updatePower();
@@ -331,9 +334,11 @@ assert(!sent.slice(beforeCalibrationLoop).some(m => m.type === 'drive'), 'calibr
 state.drive.calibrating = false;
 state.drive.you_control_owner = true;
 state.safety = {allowed: false, servo_allowed: true, mode: 'override'};
+state.actuators = {arm: {connected: true, calibration: {minimum: 1000, center: 2000, maximum: 3000}}};
 state.drive.rc = {fresh: true, steering: .5, throttle: -.7, channels: [1750, 1150, 1500, 1500, 1500], steering_channel: 1, throttle_channel: 2};
 updateHud();
 assert(!$('sweep-toggle').disabled, 'RC override permits sweep without website arming');
+delete state.actuators;
 assert($('controller').textContent === 'Physical RC transmitter' && $('pad-raw').textContent.includes('1750'), 'RC inputs visualized');
 for (const [minimum, maximum] of [[-20, 80], [-120, 220], [-1, 2]]) {
   state.detector.beam_min_angle_deg = minimum;
@@ -464,7 +469,7 @@ $('probe-servo-save-extension').click();
 assert(sent.at(-1).action === 'save_probe_extension' && sent.at(-1).max_extension_mm === 90, 'save maximum extension reaches driver');
 state.drive.calibrating = false;
 state.probe.ready = false; state.probe.reason = 'Home probe first'; updateHud();
-assert($('probe-slider').disabled && $('probe-status').textContent === 'Home probe first', 'main probe requires home');
+assert($('probe-slider').disabled && $('probe-status').textContent === 'SETUP REQUIRED' && $('probe-cycle-help').textContent.includes('Home probe first'), 'main probe requires home');
 state.probe.ready = true; state.probe.depth_mm = 25; state.probe.max_depth_mm = 90; state.probe.target_mm = 50; updateHud();
 assert(!$('probe-slider').disabled && Number($('probe-slider').max) === 90, 'main probe uses saved extension limit');
 assert($('probe-depth').textContent === '25 mm', 'main probe shows actual calibrated travel');
@@ -528,6 +533,97 @@ assert(frameDraws === 2 && detectorChart.$scrollPixels > 0, 'chart scrolls betwe
 assert(detectorChart.data.datasets[1].data.length === measuredCount, 'rendering does not invent angle samples');
 assert(sent.length === commandCount, 'rendering never renews motion permission');
 detectorChart.draw = oldDraw;
+
+state.connected = true; state.drive.you_control_owner = true; state.drive.armed = true; state.drive.calibrating = false;
+state.safety = {allowed: true, servo_allowed: true, mode: 'simulation'};
+state.robot = {x: 1, y: 2, yaw: 0, speed_mps: 0, stationary: true, pose_fresh: true};
+state.actuators = {arm: {connected: true, calibration: {minimum: 1000, center: 2000, maximum: 3000}}};
+state.probe = {...state.probe, ready: true, fault: false, active: false, holding: false, depth_mm: 0, max_depth_mm: 65, cycle_active: false,
+  adc_contact_state: {enabled: true, fresh: true, detected: false}};
+state.detector.sweep_enabled = false;
+state.detector.fresh = true;
+state.detector.latest_peak = {angle_deg: 20, signal: .9, fresh: true};
+state.detector.beam_min_angle_deg = -45; state.detector.beam_max_angle_deg = 45;
+updateHud();
+assert($('environment-label').textContent.includes('simulation'), 'environment label uses live mode');
+assert(Number($('probe-cycle-target').max) === 65, 'cycle target uses calibrated maximum');
+assert(!$('mode-align-btn').disabled, 'fresh reachable peak enables alignment');
+state.safety.servo_allowed = false;
+state.safety.reason = 'UI servo controls available when permitted';
+state.safety.servo_reason = 'PX4 is not active. Enable motion on the RC.';
+updateHud();
+assert($('mode-sweep-help').textContent.includes('PX4 is not active') && $('probe-cycle-help').textContent.includes('PX4 is not active'), 'servo gates show actual servo reason rather than permissive drive reason');
+state.safety.servo_allowed = true;
+state.robot.pose_fresh = false; updateHud();
+assert($('mark-target-btn').disabled && $('position').textContent.includes('Position unavailable'), 'missing localization is explicit and cannot log pose');
+const beforeUnknownPoseLog = targetLog.length;
+markCurrentPose();
+logTarget({x: 0, y: 0, heading_deg: 0, metal_signal_pct: 0, contact_depth_mm: '—', status: 'POSE LOGGED', statusType: 'marked'});
+assert(targetLog.length === beforeUnknownPoseLog, 'stale or missing pose rejects direct and automatic log entries');
+state.robot.pose_fresh = true; updateHud();
+assert(!$('mark-target-btn').disabled && $('position').textContent.includes('X 1.0'), 'fresh localization restores measured pose and logging');
+
+state.actuators.arm.connected = false; state.actuators.arm.reason = 'Arm driver disconnected'; updateHud();
+assert($('mode-align-btn').disabled && $('mode-align-help').textContent.includes('disconnected'), 'alignment explains disconnected arm');
+state.actuators.arm.connected = true; state.actuators.arm.calibration = null; updateHud();
+assert($('detector-align-probe').disabled && $('mode-align-help').textContent.includes('Calibrate'), 'alignment requires calibrated arm');
+state.actuators.arm.calibration = {minimum: 1000, center: 2000, maximum: 3000};
+state.probe.active = state.probe.holding = true; updateHud();
+assert($('start-probing').disabled && $('probe-cycle-help').textContent.includes('Stop probe'), 'manual holding requires stop before cycle');
+assert(!$('probe-slider').disabled, 'manual target remains adjustable while holding');
+state.probe.active = state.probe.holding = false; updateHud();
+
+state.detector.latest_peak.fresh = false; updateHud();
+assert($('mode-align-btn').disabled && $('align-probe-hint').textContent.includes('fresh'), 'stale peak cannot fall back to stored detections');
+state.detector.latest_peak.fresh = true;
+state.robot.stationary = false; updateHud();
+assert($('start-probing').disabled && $('mode-mark-btn').disabled && $('mode-align-btn').disabled, 'fresh stationary odometry gates search actions');
+state.robot.stationary = true; state.probe.depth_mm = null; updateHud();
+assert($('mode-mark-btn').disabled && $('mode-align-btn').disabled, 'unknown depth never means stowed');
+state.probe.depth_mm = 0; state.probe.adc_contact_state.fresh = false; updateHud();
+assert($('start-probing').disabled && $('probe-cycle-help').textContent.includes('fresh contact'), 'stale contact explains blocked cycle');
+state.probe.adc_contact_state.fresh = true; updateHud();
+$('probe-cycle-target').value = '60';
+const beforeCycle = sent.length; startProbeCycle();
+assert(sent.slice(beforeCycle).some(m => m.type === 'start_probe_cycle' && m.depth_mm === 60), 'validated cycle depth sent unchanged');
+$('probe-cycle-target').value = '66';
+const beforeInvalidCycle = sent.length; startProbeCycle();
+assert(sent.length === beforeInvalidCycle, 'invalid cycle depth is rejected rather than clamped');
+targetLog = []; renderTargetLog();
+state.pump_active = false; state.drive.pump_active = false; pumpWasActive = false;
+triggerPumpMark();
+assert(targetLog.length === 0 && pendingPumpMark, 'pump request does not claim a physical mark');
+state.pump_active = true; updateHud();
+assert(targetLog.length === 1 && targetLog[0].status === 'PUMP ACTIVATED', 'acknowledged pump activation is logged accurately');
+logTarget({x: 8, y: 9, heading_deg: 0, metal_signal_pct: 10, contact_depth_mm: '<img src=x onerror=alert(1)>', status: '<b>untrusted</b>', statusType: 'contact'});
+assert(!$('target-log-body').querySelector('img, b') && $('target-log-body').textContent.includes('<b>untrusted</b>'), 'log values are text, never HTML');
+state.pump_active = false; updateHud();
+const savedContactSound = playContactAlertSound; playContactAlertSound = () => {};
+state.probe.cycle_active = true; state.probe.contact_detected = true; checkProbeCycleState();
+assert($('probe-cycle-alert-text').textContent.includes('Retracting'), 'active contact trigger reports current retraction');
+state.probe.cycle_active = false;
+for (const [status, timestamp] of [['ABORTED', 111], ['TIMEOUT', 112]]) {
+  state.probe.last_result = {status, timestamp, reason: 'Interlock lost'}; checkProbeCycleState();
+  assert(!$('probe-cycle-alert-text').textContent.includes('Retracting') && $('probe-cycle-alert-text').textContent.includes('Cycle stopped'), 'stopped cycle never claims continued retraction: ' + status);
+}
+state.probe.last_result = {status: 'CLEAR', timestamp: 113, target_depth_mm: 20};
+state.probe.contact_detected = false; checkProbeCycleState();
+state.probe.cycle_active = true; state.probe.cycle_phase = 'DESCENDING'; checkProbeCycleState();
+assert($('probe-cycle-alert').classList.contains('hidden'), 'new descent clears prior completed result banner');
+state.probe.cycle_active = false; state.probe.last_result = null;
+playContactAlertSound = savedContactSound;
+const beforeStop = sent.length; $('stop-controls').click();
+assert(sent.slice(beforeStop).some(m => m.type === 'estop'), 'visible STOP releases control through existing protocol');
+$('settings-dialog').close(); $('settings').click();
+const inputTab = document.querySelector('[data-settings-tab="input"]'); inputTab.click();
+inputTab.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true}));
+assert(document.querySelector('[data-settings-tab="cameras"]').getAttribute('aria-selected') === 'true', 'settings tabs support arrow keys');
+assert($('settings-dialog').getAttribute('aria-labelledby') === 'settings-title', 'settings dialog has accessible name');
+showNotice('Motor unavailable. Reconnect in Settings → Arm.');
+assert($('notice').parentElement.tagName === 'MAIN' && getComputedStyle($('notice')).position === 'static', 'errors are visible outside camera');
+
+socket.onmessage({data: JSON.stringify({type: 'error', message: 'Motor unavailable. Reconnect in Settings → Arm.'})});
+assert(noticeExpiry === Infinity && $('notice').textContent.includes('Motor unavailable'), 'server errors remain visible until replaced');
 document.body.textContent = 'BROWSER TESTS PASSED';
 '''
         import json

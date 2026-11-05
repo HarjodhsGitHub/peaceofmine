@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#09131a">
-  <title>PeaceOfMine Operator Simulator</title>
+  <title>PeaceOfMine Operator</title>
   <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
@@ -23,7 +23,7 @@
   <main>
     <header>
       <div>
-        <p class="eyebrow">PeaceOfMine &middot; operator simulator</p>
+        <p id="environment-label" class="eyebrow">PeaceOfMine &middot; connecting</p>
         <h1>Search lane</h1>
       </div>
       <div class="header-actions">
@@ -41,34 +41,46 @@
         <span id="control-owner" class="badge neutral">SPECTATING</span>
         <button id="take-control" class="primary">Take control</button>
         <button id="settings" class="quiet">Settings</button>
+        <button id="stop-controls" type="button" class="danger" disabled>STOP</button>
       </div>
     </header>
 
     <nav class="operation-modes-strip" aria-label="Operational modes">
-      <span class="modes-label">MODES</span>
+      <span class="modes-label">SEARCH ACTIONS</span>
       <div class="modes-actions">
+        <div class="operation-action">
         <button id="mode-sweep-btn" type="button" class="mode-btn" title="Toggle coil sweeping (operates while driving)">
-          <span class="mode-icon">📡</span>
           <span class="mode-text">Start sweeping</span>
           <span id="mode-sweep-pill" class="badge neutral">OFF</span>
         </button>
+          <small id="mode-sweep-help" class="safety-note"></small>
+        </div>
+        <div class="operation-action">
         <button id="mode-align-btn" type="button" class="mode-btn" disabled title="Pivot probe to latest metal detection peak (45° offset)">
-          <span class="mode-icon">🎯</span>
           <span class="mode-text">Align probe</span>
           <span id="mode-align-pill" class="badge neutral">NO PEAK</span>
         </button>
+          <small id="mode-align-help" class="safety-note"></small>
+        </div>
+        <div class="operation-action">
         <button id="mode-probe-btn" type="button" class="mode-btn" disabled title="Probe ground for contact (rover must be stationary)">
-          <span class="mode-icon">📍</span>
           <span class="mode-text">Start probing</span>
           <span id="mode-probe-pill" class="badge neutral">STOP ROVER</span>
         </button>
+          <small id="mode-probe-help" class="safety-note"></small>
+        </div>
+        <div class="operation-action">
         <button id="mode-mark-btn" type="button" class="mode-btn" disabled title="Dispense physical ground mark (pump activates for 2s)">
-          <span class="mode-icon">🚩</span>
           <span class="mode-text">Mark ground</span>
           <span id="mode-mark-pill" class="badge neutral">READY (2s)</span>
         </button>
+          <small id="mode-mark-help" class="safety-note"></small>
+        </div>
       </div>
     </nav>
+
+    <p id="operation-help" class="safety-note" role="status">Connect to the operator stack, then take control.</p>
+    <div id="notice" class="notice hidden" role="alert"></div>
 
     <section class="workspace">
       <section id="camera-panel" class="viewport panel">
@@ -86,7 +98,6 @@
           <span>ACTUAL SPEED</span>
           <strong id="speed">0.00 m/s</strong>
         </div>
-        <div id="notice" class="notice hidden" role="alert"></div>
         <div class="camera-notice" id="camera-notice">Waiting for RC authority.</div>
       </section>
 
@@ -122,6 +133,7 @@
           </svg>
           <p id="drive-block">Take control when RC permits ROS driving.</p>
           <p id="drive-help" class="safety-note">RC switch controls drive authority.</p>
+          <button type="button" class="quiet" data-open-settings="input">Choose input / test controls</button>
         </section>
 
         <section class="panel detector-panel">
@@ -182,7 +194,7 @@
             <div class="probe-cycle-input-row">
               <label for="probe-cycle-target">Probe cycle depth</label>
               <div class="probe-cycle-input-wrap">
-                <input id="probe-cycle-target" type="number" min="10" max="120" step="5" value="80">
+                <input id="probe-cycle-target" type="number" min="0.1" step="any" value="80" required>
                 <span class="unit">mm</span>
               </div>
             </div>
@@ -191,15 +203,17 @@
               <button id="probe-stop" type="button">Stop probe</button>
             </div>
             <div id="probe-cycle-alert" class="probe-cycle-alert hidden" role="alert">
-              <span id="probe-cycle-alert-badge" class="badge active">SPIKE CONTACT</span>
-              <span id="probe-cycle-alert-text">Target contact detected! Retracting.</span>
+              <span id="probe-cycle-alert-badge" class="badge active">CONTACT TRIGGER</span>
+              <span id="probe-cycle-alert-text">Contact trigger detected. Retracting.</span>
             </div>
           </div>
-          <button id="probe-zero-contact" type="button">Zero contact</button>
+          <p id="probe-cycle-help" class="safety-note" role="status">Home the probe and enable a fresh contact sensor before probing.</p>
+          <button type="button" class="quiet" data-open-settings="probe">Probe setup / home</button>
+          <button id="probe-zero-contact" type="button">Zero motor load</button>
           <small id="probe-zero-status">Hold clear of the ground before zeroing. Reference lasts for this connection.</small>
           <label for="probe-slider">Manual target depth</label>
           <input id="probe-slider" type="range">
-          <p class="safety-note">Automated probe cycle moves downward to sense hard objects via FSR spike and returns to 0 mm. Holds torque at manual target depth. Stop probe releases torque. Probing is strictly disabled when the rover is moving.</p>
+          <p class="safety-note">Probe cycle lowers the probe until contact or the selected depth, then retracts. Manual depth holds position. Stop probe releases torque.</p>
         </section>
       </aside>
 
@@ -222,10 +236,11 @@
               </tr>
             </thead>
             <tbody id="target-log-body">
-              <tr class="empty-row"><td colspan="6">No targets logged. Detect metal, click "Start marking", or run a probe cycle.</td></tr>
+              <tr class="empty-row"><td colspan="6">No entries yet. Log a pose, activate the marking pump, or run a probe cycle.</td></tr>
             </tbody>
           </table>
         </div>
+        <p class="safety-note">This browser session only · export CSV before closing. Pump activation does not confirm a visible ground mark.</p>
         <div class="target-log-actions">
           <button id="mark-ground-btn" type="button" class="quiet" title="Dispense physical ground mark (pump runs for 2s)">Mark ground (2s)</button>
           <button id="mark-target-btn" type="button" class="quiet" title="Record vehicle pose in log without running pump">Log pose</button>
@@ -256,12 +271,12 @@
     </section>
   </main>
 
-  <dialog id="settings-dialog">
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
     <form method="dialog">
       <div class="dialog-heading">
         <div>
           <p class="eyebrow">This operator client</p>
-          <h2>Control settings</h2>
+          <h2 id="settings-title">Control settings</h2>
         </div>
         <button value="close" formnovalidate class="quiet" aria-label="Close settings">Close</button>
       </div>
@@ -276,7 +291,7 @@
 
       <section id="settings-adc" class="settings-panel" role="tabpanel" data-settings-panel="adc" hidden>
         <div class="settings-section-heading"><h3>ADS1115 sensor</h3><span id="adc-status" class="badge neutral">STOPPED</span></div>
-        <p class="dialog-help">Configure inputs and add their scaled readings to the detector or probe plot. Settings are saved on the operator host. Take control to apply or start acquisition. Stop the standalone ADC devtool before starting here.</p>
+        <p class="dialog-help">Configure the sensor inputs used for detection and probe contact. Assign exactly one enabled input to Detector or Both; A2 is the metal detector default; A0 is the probe default. Take control to apply changes or start acquisition. Settings are saved on the vehicle.</p>
         <p id="adc-error" role="alert"></p><p id="adc-feedback" role="status"></p>
         <div class="adc-actions"><button type="button" id="adc-run">Start acquisition</button><button type="button" id="adc-apply">Apply &amp; save</button><button type="button" id="adc-revert">Revert edits</button><button type="button" id="adc-save">Export settings</button><button type="button" id="adc-import">Import settings</button><input type="file" id="adc-file" accept=".json,application/json" hidden></div>
 <fieldset><legend>Bus &amp; conversion</legend>
@@ -290,7 +305,7 @@
 </div><p class="electrical">Analog pins: GND to VDD. A wider PGA range does not raise the input voltage limit.</p><output id="adc-resolution"></output></fieldset>
 
 <fieldset><legend>Inputs &amp; scaling</legend>
-<div class="table-wrap"><table><thead><tr><th>Enabled</th><th>Input</th><th>Multiplier</th><th>Offset</th><th>Add to plot</th></tr></thead><tbody id="adc-input-settings"></tbody></table></div><p class="formula">Scaled = volts &times; multiplier + offset</p><div class="fields"><small>Enable only the inputs you need for more readings per input. Differential selections measure the voltage between two pins.</small><small>Multiplier converts volts to sensor units or compensates for a voltage divider. It does not change the chip's gain.</small><small>Offset removes a known zero bias after multiplication, in your scaled units.</small></div></fieldset>
+<div class="table-wrap"><table><thead><tr><th>Enabled</th><th>Input</th><th>Multiplier</th><th>Offset</th><th>Signal use</th></tr></thead><tbody id="adc-input-settings"></tbody></table></div><p class="formula">Scaled = volts &times; multiplier + offset</p><div class="fields"><small>Enable only the inputs you need for more readings per input. Differential selections measure the voltage between two pins.</small><small>Multiplier converts volts to sensor units or compensates for a voltage divider. It does not change the chip's gain.</small><small>Offset removes a known zero bias after multiplication, in your scaled units.</small></div></fieldset>
 
 <fieldset><legend>ALERT / RDY</legend>
 <div class="fields">
@@ -310,7 +325,7 @@
           <label>Hysteresis (scaled units)<input id="adc-trigger-hysteresis" type="number" min="0" step="any" value="0"></label>
           <label>Debounce (ms)<input id="adc-trigger-debounce" type="number" min="0" max="10000" value="0"></label>
           <label>Contact when<select id="adc-trigger-direction"><option value="above">At or above trigger level</option><option value="below">At or below trigger level</option></select></label></div>
-          <p class="dialog-help">Select an enabled input assigned to the probe plot. Contact is indicated when its scaled reading reaches this level. This indicator does not automatically stop the probe; motor protection and homing thresholds remain separate.</p>
+          <p class="dialog-help">Select an enabled input assigned to the probe plot. Contact is indicated when its scaled reading reaches this level. During a probe cycle, fresh contact triggers retraction. Stale or disabled contact input aborts the cycle. Motor protection and homing limits remain separate.</p>
           <p id="adc-trigger-state" role="status">Trigger disabled</p>
         </fieldset>
 
@@ -378,7 +393,7 @@
         <h3>Calibration</h3>
         <div class="metal-calibration">
           <label>Zero level (ADC)<input id="metal-baseline" type="number" min="0" max="255" step="0.01"></label>
-          <label>Mine trigger (ADC)<input id="metal-full" type="number" min="0" max="255" step="0.01"></label>
+          <label>Detection threshold (ADC)<input id="metal-full" type="number" min="0" max="255" step="0.01"></label>
         </div>
         <div class="metal-actions">
           <button id="metal-zero" type="button">Zero from last 10 s</button>

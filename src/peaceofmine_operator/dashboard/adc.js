@@ -8,7 +8,7 @@
   const field = key => fields.find(input => input.dataset.adcField === key);
   field('rate').innerHTML = [8,16,32,64,128,250,475,860].map(n => `<option value="${n}">${n} SPS</option>`).join('');
   field('pga').innerHTML = ranges.map((n,i) => `<option value="${i}">±${n} V</option>`).join('');
-  el('input-settings').innerHTML = names.map((name,i) => `<tr data-adc-channel="${i}"><td><input type="checkbox" aria-label="Enable ${name}"></td><td>${name}</td><td><input type="number" step="any" aria-label="${name} multiplier"></td><td><input type="number" step="any" aria-label="${name} offset"></td><td><select aria-label="${name} plot"><option value="none">None</option><option value="detector">Metal detector</option><option value="probe">Probe</option><option value="both">Both</option></select></td></tr>`).join('');
+  el('input-settings').innerHTML = names.map((name,i) => `<tr data-adc-channel="${i}"><td><input type="checkbox" aria-label="Enable ${name}"></td><td>${name}</td><td><input type="number" step="any" aria-label="${name} multiplier"></td><td><input type="number" step="any" aria-label="${name} offset"></td><td><select aria-label="${name} signal use"><option value="none">None</option><option value="detector">Metal detector</option><option value="probe">Probe</option><option value="both">Both</option></select></td></tr>`).join('');
   const rows = [...document.querySelectorAll('[data-adc-channel]')];
   el('trigger-mux').innerHTML = names.map((name,i) => `<option value="${i}">${name}</option>`).join('');
   let latest = null, revision = null, session = null, cursor = 0, history = [], chart = null, clockOffset = 0;
@@ -25,7 +25,7 @@
       inputs[2].value = value.config.channels[i].offset;
       row.querySelector('select').value = value.routes[i];
     });
-    const trigger = value.probe_trigger || {enabled:false,mux:5,level:1,direction:'above'};
+    const trigger = value.probe_trigger || {enabled:false,mux:4,level:1,direction:'above'};
     el('trigger-enabled').checked = trigger.enabled;
     el('trigger-mux').value = trigger.mux;
     el('trigger-level').value = trigger.level;

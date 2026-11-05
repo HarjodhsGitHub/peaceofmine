@@ -29,7 +29,7 @@ const state = {
     command_source: 'none',
     joy: {seen: false},
   },
-  robot: {x: 0, y: 0, yaw: 0, speed_mps: 0},
+  robot: {x: 0, y: 0, yaw: 0, speed_mps: 0, pose_fresh: false},
   detector: {
     signal_ratio: 0,
     threshold_ratio: 1.0,
@@ -161,6 +161,8 @@ let cameraFocused = false;
 let lastDriveSent = 0;
 let lastPadUi = 0;
 let noticeExpiry = 0;
+let pendingPumpMark = null;
+let pumpWasActive = false;
 let latencyProbeId = 0;
 let latencyProbeStarted = 0;
 let linkLatencyMs = null;
@@ -279,6 +281,8 @@ function connect() {
     state.drive.armed = false;
     state.drive.deadman = false;
     state.drive.you_control_owner = false;
+    pendingPumpMark = null;
+    pumpWasActive = false;
     stopLocalInput();
     setConnection(false, 'Raspberry Pi disconnected', 'The gateway stopped responding or the network link was lost. The rover command is stopped. Retrying automatically…');
     reconnectTimer = setTimeout(connect, 1200);
@@ -298,7 +302,8 @@ function connect() {
     if (message.type === 'settings_result') { window.operatorSettingsResult?.(message); return; }
     if (message.type === 'adc_result') { window.operatorADCResult?.(message); return; }
     if (message.type === 'error') {
-      showNotice(message.message);
+      pendingPumpMark = null;
+      showNotice(message.message, true);
       if (metalPending) { metalPending = null; metalFeedback = message.message; }
       servoSettings.forEach(panel => panel.error(message.message));
       return;
@@ -330,11 +335,11 @@ $('retry-connection').onclick = connect;
 
 // The camera notice is rewritten on every telemetry tick, so rejected
 // commands need their own element to stay readable.
-function showNotice(text) {
+function showNotice(text, persistent = false) {
   const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
   $('notice').textContent = `${time} · ${text}`;
   $('notice').classList.remove('hidden');
-  noticeExpiry = performance.now() + 6000;
+  noticeExpiry = persistent ? Infinity : performance.now() + 6000;
 }
 
 /* ------------------------------------------------------------------ HUD --- */
@@ -385,6 +390,7 @@ function updatePower() {
 let targetLog = [];
 let nextTargetId = 1;
 let lastSeenProbeResultTime = 0;
+let contactAlertPlayed = false;
 let probeAlertTimeout = null;
 let audioCtx = null;
 
@@ -410,6 +416,7 @@ function playContactAlertSound() {
 }
 
 function logTarget({x, y, heading_deg, metal_signal_pct, contact_depth_mm, status, statusType}) {
+  if (!state.connected || state.robot.pose_fresh !== true || ![x, y, heading_deg, metal_signal_pct].every(Number.isFinite)) { showNotice('Position unavailable. No log entry was saved.'); return; }
   const existing = targetLog.find(t => Math.hypot(t.x - x, t.y - y) < 0.35);
   if (existing) {
     existing.metal_signal_pct = Math.max(existing.metal_signal_pct, metal_signal_pct);
@@ -436,30 +443,30 @@ function logTarget({x, y, heading_deg, metal_signal_pct, contact_depth_mm, statu
 
 function renderTargetLog() {
   const tbody = $('target-log-body');
-  const countBadge = $('target-count');
-  if (!tbody) return;
-  if (countBadge) countBadge.textContent = `${targetLog.length} ${targetLog.length === 1 ? 'TARGET' : 'TARGETS'}`;
-  if (targetLog.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No targets logged. Detect metal, click "Start marking", or run a probe cycle.</td></tr>';
+  $('target-count').textContent = `${targetLog.length} ${targetLog.length === 1 ? 'ENTRY' : 'ENTRIES'}`;
+  tbody.replaceChildren();
+  if (!targetLog.length) {
+    const row = tbody.insertRow();
+    row.className = 'empty-row';
+    const cell = row.insertCell(); cell.colSpan = 6;
+    cell.textContent = 'No entries yet. Log a pose, activate the marking pump, or run a probe cycle.';
     return;
   }
-  tbody.innerHTML = targetLog.map(t => `
-    <tr class="target-row ${t.statusType || ''}">
-      <td><strong>${t.id}</strong></td>
-      <td>(${t.x}, ${t.y})</td>
-      <td>${t.metal_signal_pct}%</td>
-      <td>${t.contact_depth_mm}</td>
-      <td><span class="badge ${t.statusType === 'contact' ? 'active' : t.statusType === 'clear' ? 'safe' : 'neutral'}">${t.status}</span></td>
-      <td>${t.timestamp}</td>
-    </tr>
-  `).join('');
+  for (const entry of targetLog) {
+    const row = tbody.insertRow();
+    row.className = ['contact', 'clear', 'marked'].includes(entry.statusType) ? entry.statusType : '';
+    for (const value of [entry.id, `(${entry.x}, ${entry.y})`, `${entry.metal_signal_pct}%`, entry.contact_depth_mm, entry.status, entry.timestamp]) {
+      row.insertCell().textContent = value;
+    }
+  }
+  $('export-target-log').disabled = $('clear-target-log').disabled = false;
 }
 
 function exportTargetLogCsv() {
   if (!targetLog.length) return;
   const header = ['ID', 'X (m)', 'Y (m)', 'Heading (deg)', 'Metal Signal (%)', 'Contact Depth', 'Status', 'Timestamp'];
-  const rows = targetLog.map(t => [t.id, t.x, t.y, t.heading_deg, t.metal_signal_pct, `"${t.contact_depth_mm}"`, t.status, t.timestamp]);
-  const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const rows = targetLog.map(t => [t.id, t.x, t.y, t.heading_deg, t.metal_signal_pct, t.contact_depth_mm, t.status, t.timestamp]);
+  const csv = [header.join(','), ...rows.map(row => row.map(value => '"' + String(value).replaceAll('"', '""') + '"').join(','))].join('\n');
   const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -470,6 +477,7 @@ function exportTargetLogCsv() {
 }
 
 function markCurrentPose() {
+  if (!state.connected || state.robot.pose_fresh !== true || ![state.robot?.x, state.robot?.y, state.robot?.yaw].every(Number.isFinite)) { showNotice('Fresh vehicle position is required to log a pose.'); return; }
   const robot = state.robot || {x: 0, y: 0, yaw: 0};
   const detector = state.detector || {};
   const probe = state.probe || {};
@@ -483,59 +491,47 @@ function markCurrentPose() {
     heading_deg: heading,
     metal_signal_pct: signalPct,
     contact_depth_mm: depthStr,
-    status: signalPct >= Math.round((detector.threshold_ratio || 0.65) * 100) ? 'METAL MARKED' : 'POSITION MARKED',
+    status: detector.fresh === true && detector.detected ? 'METAL DETECTED' : 'POSE LOGGED',
     statusType: 'marked'
   });
-  showNotice(`Marked target at (${robot.x.toFixed(2)}, ${robot.y.toFixed(2)})`);
+  showNotice(`Pose logged at (${robot.x.toFixed(2)}, ${robot.y.toFixed(2)}).`);
+}
+
+function probeActionBlock(allowManualTarget = false) {
+  if (!state.connected) return 'Connect to the operator stack.';
+  if (!state.drive.you_control_owner) return 'Take control first.';
+  if (!state.safety?.servo_allowed || !state.drive.armed) return state.safety?.servo_reason || 'RC must permit servo motion.';
+  if (state.drive.calibrating) return 'Close Settings before operating.';
+  if (state.robot.stationary !== true) return 'Stop the rover; fresh stationary odometry is required.';
+  if (state.probe.ready !== true || !Number.isFinite(state.probe.depth_mm) || !Number.isFinite(state.probe.max_depth_mm) || state.probe.max_depth_mm <= 0) return state.probe.reason || 'Home and calibrate the probe in Settings → Probe.';
+  if (state.probe.fault) return 'Clear the probe fault in Settings → Probe.';
+  if (state.probe.cycle_active) return 'Probe cycle is running. Stop probe to cancel.';
+  if (!allowManualTarget && (state.probe.active || state.probe.holding)) return 'Stop probe before starting another action.';
+  if (state.pump_active || state.drive.pump_active) return 'Wait for the marking pump to stop.';
+  return '';
 }
 
 function triggerPumpMark() {
-  if (!state.connected || !state.drive?.you_control_owner) return;
-  const speed = Math.abs(state.robot?.speed_mps || 0);
-  if (speed > 0.03) {
-    showNotice('Cannot dispense mark while vehicle is moving. Stop rover first.');
-    return;
-  }
-  const probe = state.probe || {};
-  if (probe.cycle_active || (probe.depth_mm || 0) > 2.0) {
-    showNotice('Cannot dispense mark while probe is deployed. Stow probe first.');
-    return;
-  }
-  if (state.pump_active || state.drive?.pump_active) {
-    showNotice('Marking pump is already active.');
-    return;
-  }
-
-  send({type: 'pump_mark', duration_s: 2.0});
-  showNotice('Dispensing physical ground mark (2s)...');
-
-  const robot = state.robot || {x: 0, y: 0, yaw: 0};
-  const detector = state.detector || {};
-  const heading = ((robot.yaw * 180 / Math.PI % 360) + 360) % 360;
-  const signalPct = Math.round((detector.signal_ratio || 0) * 100);
-
-  logTarget({
-    x: robot.x,
-    y: robot.y,
-    heading_deg: heading,
-    metal_signal_pct: signalPct,
-    contact_depth_mm: '—',
-    status: 'PHYSICALLY MARKED',
-    statusType: 'marked'
-  });
+  const blocked = probeActionBlock();
+  if (blocked) { showNotice(blocked); return; }
+  if (state.probe.depth_mm > 2) { showNotice('Stow the probe before marking.'); return; }
+  if (pendingPumpMark) return;
+  pendingPumpMark = {at: performance.now(), robot: {...state.robot}, signal: state.detector.signal_ratio};
+  send({type: 'pump_mark', duration_s: 2});
+  showNotice('Marking pump requested. Waiting for the operator stack.');
 }
 
 function startProbeCycle() {
-  if (!state.connected || !state.drive?.you_control_owner) return;
-  const speed = Math.abs(state.robot?.speed_mps || 0);
-  if (speed > 0.03) {
-    showNotice('Cannot probe while vehicle is moving. Stop rover first.');
-    return;
-  }
-  const depthInput = $('probe-cycle-target');
-  const targetDepth = depthInput ? Math.max(10, Math.min(120, parseFloat(depthInput.value) || 80)) : 80;
-  send({type: 'start_probe_cycle', depth_mm: targetDepth});
-  showNotice(`Started probing down to ${targetDepth} mm`);
+  const blocked = probeActionBlock();
+  if (blocked) { showNotice(blocked); return; }
+  if (state.detector.sweep_enabled) { showNotice('Stop sweeping before probing.'); return; }
+  const contact = state.probe.adc_contact_state;
+  if (!contact?.enabled || !contact.fresh) { showNotice('Enable a fresh contact sensor in Settings → ADS1115.'); return; }
+  if (contact.detected) { showNotice('Contact is already active. Check the sensor before probing.'); return; }
+  const input = $('probe-cycle-target');
+  if (!input.reportValidity()) return;
+  send({type: 'start_probe_cycle', depth_mm: input.valueAsNumber});
+  showNotice(`Probe cycle requested to ${input.valueAsNumber} mm.`);
 }
 
 function checkProbeCycleState() {
@@ -545,64 +541,71 @@ function checkProbeCycleState() {
   const alertText = $('probe-cycle-alert-text');
 
   // Live spike alert during cycle
+  if (!probe.cycle_active) contactAlertPlayed = false;
+  if (probe.cycle_active && probe.cycle_phase === 'DESCENDING' && !probe.contact_detected && !probe.adc_contact_state?.spike_detected) {
+    if (alertEl) alertEl.classList.add('hidden');
+  }
   if (probe.cycle_active && (probe.contact_detected || probe.adc_contact_state?.spike_detected)) {
     if (alertEl) alertEl.classList.remove('hidden');
     if (alertBadge) {
-      alertBadge.textContent = 'SPIKE CONTACT';
+      alertBadge.textContent = 'CONTACT TRIGGER';
       alertBadge.className = 'badge active';
     }
     if (alertText) {
       const depthStr = Number.isFinite(probe.contact_depth_mm) ? `${probe.contact_depth_mm.toFixed(1)} mm` : `${Math.round(probe.depth_mm || 0)} mm`;
-      alertText.textContent = `Hard contact spike detected at ${depthStr}! Retracting probe.`;
+      alertText.textContent = `Contact trigger at ${depthStr}. Retracting probe.`;
     }
-    playContactAlertSound();
+    if (!contactAlertPlayed) { playContactAlertSound(); contactAlertPlayed = true; }
   }
 
   // Completed result
   const lastRes = probe.last_result;
-  if (lastRes && lastRes.timestamp && lastRes.timestamp !== lastSeenProbeResultTime) {
+  if (!probe.cycle_active && lastRes && lastRes.timestamp && lastRes.timestamp !== lastSeenProbeResultTime) {
     lastSeenProbeResultTime = lastRes.timestamp;
     if (lastRes.contact) {
       if (alertEl) alertEl.classList.remove('hidden');
       if (alertBadge) {
-        alertBadge.textContent = 'CONTACT CONFIRMED';
+        alertBadge.textContent = 'CONTACT TRIGGER';
         alertBadge.className = 'badge active';
       }
       if (alertText) {
-        alertText.textContent = `Target object struck at ${lastRes.contact_depth_mm ?? '—'} mm! Probe stowed.`;
+        alertText.textContent = `Contact trigger at ${lastRes.contact_depth_mm ?? '—'} mm. Probe retracted.`;
       }
       playContactAlertSound();
-      showNotice(`Contact spike confirmed at ${lastRes.contact_depth_mm} mm`);
+      showNotice(`Probe contact trigger at ${lastRes.contact_depth_mm} mm`);
       logTarget({
         x: state.robot.x,
         y: state.robot.y,
         heading_deg: ((state.robot.yaw * 180 / Math.PI % 360) + 360) % 360,
         metal_signal_pct: Math.round((state.detector?.signal_ratio || 0) * 100),
         contact_depth_mm: `${lastRes.contact_depth_mm} mm`,
-        status: 'HARD CONTACT',
+        status: 'CONTACT TRIGGER',
         statusType: 'contact'
       });
     } else if (lastRes.status === 'CLEAR') {
       if (alertEl) alertEl.classList.remove('hidden');
       if (alertBadge) {
-        alertBadge.textContent = 'DEPTH CLEAR';
+        alertBadge.textContent = 'NO CONTACT TRIGGER';
         alertBadge.className = 'badge safe';
       }
       if (alertText) {
-        alertText.textContent = `Clear down to ${Math.round(lastRes.target_depth_mm)} mm. No contact spike.`;
+        alertText.textContent = `No contact trigger to ${Math.round(lastRes.target_depth_mm)} mm. Probe retracted.`;
       }
-      showNotice(`Clear down to ${Math.round(lastRes.target_depth_mm)} mm`);
+      showNotice(`No contact trigger to ${Math.round(lastRes.target_depth_mm)} mm.`);
       logTarget({
         x: state.robot.x,
         y: state.robot.y,
         heading_deg: ((state.robot.yaw * 180 / Math.PI % 360) + 360) % 360,
         metal_signal_pct: Math.round((state.detector?.signal_ratio || 0) * 100),
         contact_depth_mm: `None (to ${Math.round(lastRes.target_depth_mm)} mm)`,
-        status: 'CLEAR',
+        status: 'NO CONTACT TRIGGER',
         statusType: 'clear'
       });
-    } else if (lastRes.status === 'ABORTED') {
-      showNotice(`Probe cycle aborted: ${lastRes.reason || 'movement detected'}`);
+    } else if (['ABORTED', 'TIMEOUT'].includes(lastRes.status)) {
+      if (alertEl) alertEl.classList.remove('hidden');
+      if (alertBadge) { alertBadge.textContent = lastRes.status === 'TIMEOUT' ? 'TIMED OUT' : 'STOPPED'; alertBadge.className = 'badge blocked'; }
+      if (alertText) alertText.textContent = `Cycle stopped: ${lastRes.reason || lastRes.status}. Probe position must be checked.`;
+      showNotice(`Probe cycle stopped: ${lastRes.reason || lastRes.status}`, true);
     }
 
     if (probeAlertTimeout) clearTimeout(probeAlertTimeout);
@@ -618,33 +621,9 @@ function getProbeAlignment() {
   const minAngle = detector.beam_min_angle_deg ?? -half;
   const maxAngle = detector.beam_max_angle_deg ?? half;
 
-  let peakAngle = null;
-  let peakSignal = 0;
-
-  if (detector.latest_peak && Number.isFinite(detector.latest_peak.angle_deg)) {
-    peakAngle = detector.latest_peak.angle_deg;
-    peakSignal = detector.latest_peak.signal || 0;
-  } else if (Array.isArray(state.detections) && state.detections.length > 0) {
-    const lastHit = state.detections[state.detections.length - 1];
-    if (Number.isFinite(lastHit.fixture_angle_deg)) {
-      peakAngle = lastHit.fixture_angle_deg;
-      peakSignal = lastHit.signal || 0;
-    }
-  } else if (Array.isArray(detector.beam) && detector.beam.length > 1) {
-    let maxSig = 0;
-    let maxIdx = -1;
-    for (let i = 0; i < detector.beam.length; i++) {
-      if (detector.beam[i] > maxSig) {
-        maxSig = detector.beam[i];
-        maxIdx = i;
-      }
-    }
-    const threshold = detector.threshold_ratio || 0.65;
-    if (maxSig >= threshold && maxIdx >= 0) {
-      peakAngle = Math.round((minAngle + (maxIdx / (detector.beam.length - 1)) * (maxAngle - minAngle)) * 10) / 10;
-      peakSignal = maxSig;
-    }
-  }
+  const peak = detector.latest_peak;
+  const peakAngle = detector.fresh === true && peak?.fresh === true && Number.isFinite(peak.angle_deg) ? peak.angle_deg : null;
+  const peakSignal = peakAngle === null ? 0 : peak.signal;
 
   if (peakAngle === null) {
     return {
@@ -654,7 +633,7 @@ function getProbeAlignment() {
       pivotAngle: null,
       reachable: false,
       deficitDeg: 0,
-      reason: 'No detection peak recorded'
+      reason: 'Sweep to record a fresh detection peak.'
     };
   }
 
@@ -664,13 +643,13 @@ function getProbeAlignment() {
   const FIXED_OFFSET_DEG = 45.0;
   const pivotAngle = Math.round((peakAngle - FIXED_OFFSET_DEG) * 10) / 10;
 
-  const isReachable = (pivotAngle >= minAngle - 0.5) && (pivotAngle <= maxAngle + 0.5);
+  const isReachable = pivotAngle >= minAngle && pivotAngle <= maxAngle;
   const deficitDeg = pivotAngle < minAngle ? Math.round((minAngle - pivotAngle) * 10) / 10 : 0;
 
   let reason = '';
   if (!isReachable) {
     if (pivotAngle < minAngle) {
-      reason = `Target at ${peakAngle.toFixed(0)}° is in dead zone (too far right). Steer rover ${deficitDeg.toFixed(0)}° right to align.`;
+      reason = `Target is outside the arm range. Reposition the rover and scan again.`;
     } else {
       reason = `Target angle outside arm limits (${pivotAngle}° vs max ${maxAngle.toFixed(0)}°).`;
     }
@@ -689,27 +668,21 @@ function getProbeAlignment() {
   };
 }
 
+function armSetupBlock() {
+  const arm = state.actuators?.arm;
+  if (arm?.connected !== true) return arm?.reason || 'Connect the arm in Settings → Arm.';
+  if (!arm.arm_calibration && !arm.calibration) return 'Calibrate the arm in Settings → Arm.';
+  return '';
+}
+
 function alignProbeToPeak() {
+  const blocked = probeActionBlock() || armSetupBlock();
+  if (blocked) { showNotice(blocked); return; }
+  if (state.probe.depth_mm > 2) { showNotice('Stow the probe before aligning.'); return; }
   const align = getProbeAlignment();
-  if (!align.hasPeak) {
-    showNotice('No metal detection peak recorded to align with.');
-    return;
-  }
-  if (!align.reachable) {
-    showNotice(align.reason);
-    return;
-  }
-  if (!state.drive?.you_control_owner) {
-    showNotice('Take control of the rover to align probe.');
-    return;
-  }
-  const probe = state.probe || {};
-  if (probe.cycle_active || (probe.depth_mm || 0) > 2.0) {
-    showNotice('Cannot align arm while probe is deployed.');
-    return;
-  }
-  showNotice(`Aligning probe: pivoting arm to ${align.pivotAngle}° (over target at ${align.peakAngle.toFixed(0)}°)...`);
-  send({ type: 'align_probe', angle_deg: align.pivotAngle });
+  if (!align.hasPeak || !align.reachable) { showNotice(align.reason); return; }
+  send({type: 'align_probe', angle_deg: align.pivotAngle});
+  showNotice(`Arm alignment requested to ${align.pivotAngle}°.`);
 }
 
 function updateHud() {
@@ -732,127 +705,66 @@ function updateHud() {
   $('rc-safety').title = state.safety?.reason || 'Waiting for PX4 safety status';
   $('rc-safety').className = `badge ${safe ? 'ready' : 'blocked'}`;
 
-  const speed = Math.abs(robot.speed_mps || 0);
-  const isMoving = speed > 0.03 || (drive.publishing && (Math.abs(drive.cmd_linear_x || 0) > 0.01 || Math.abs(drive.cmd_angular_z || 0) > 0.01));
-  const probeReady = probe.ready !== false && !probe.fault && !drive.calibrating;
-  const canProbe = owner && servoSafe && probeReady && !isMoving && !probe.cycle_active;
-  const probeStowed = !probe.cycle_active && ((probe.depth_mm || 0) <= 2.0);
-
+  $('environment-label').textContent = `PeaceOfMine · ${state.safety?.mode === 'simulation' ? 'simulation' : state.connected ? 'vehicle' : 'connecting'}`;
+  $('stop-controls').disabled = !owner;
+  const blocked = probeActionBlock();
+  const probeStowed = probe.ready === true && Number.isFinite(probe.depth_mm) && probe.depth_mm <= 2 && !probe.cycle_active;
   const align = getProbeAlignment();
-  const canAlign = owner && servoSafe && probeStowed && align.hasPeak && align.reachable;
-
-  if ($('mode-align-btn')) {
-    $('mode-align-btn').disabled = !canAlign;
-    $('mode-align-btn').title = align.hasPeak
-      ? (align.reachable ? `Pivot probe to target (arm: ${align.pivotAngle}°, peak: ${align.peakAngle.toFixed(0)}°)` : align.reason)
-      : 'No metal detection peak recorded to align with';
-
-    if ($('mode-align-pill')) {
-      if (!align.hasPeak) {
-        $('mode-align-pill').textContent = 'NO PEAK';
-        $('mode-align-pill').className = 'badge neutral';
-      } else if (!align.reachable) {
-        $('mode-align-pill').textContent = 'UNREACHABLE';
-        $('mode-align-pill').className = 'badge blocked';
-      } else if (!servoSafe) {
-        $('mode-align-pill').textContent = 'DISARMED';
-        $('mode-align-pill').className = 'badge neutral';
-      } else if (!probeStowed) {
-        $('mode-align-pill').textContent = 'PROBE DOWN';
-        $('mode-align-pill').className = 'badge blocked';
-      } else {
-        $('mode-align-pill').textContent = `READY (${align.pivotAngle > 0 ? '+' : ''}${align.pivotAngle}°)`;
-        $('mode-align-pill').className = 'badge safe';
-      }
-    }
+  const contact = probe.adc_contact_state;
+  const contactBlock = !contact?.enabled || !contact.fresh ? 'Enable a fresh contact sensor in Settings → ADS1115.'
+    : contact.detected ? 'Contact is already active. Check the sensor.' : '';
+  const cycleBlock = blocked || (detector.sweep_enabled ? 'Stop sweeping before probing.' : '') || contactBlock;
+  const alignBlock = blocked || armSetupBlock() || (!probeStowed ? 'Stow the probe before aligning.' : '') || (!align.hasPeak || !align.reachable ? align.reason : '');
+  const markBlock = blocked || (!probeStowed ? 'Stow the probe before marking.' : '');
+  const sweepBlock = !owner ? 'Take control to sweep.' : !servoSafe ? state.safety?.servo_reason || 'RC must permit servo motion.'
+    : drive.calibrating ? 'Close Settings before sweeping.' : !probeStowed ? 'Home and stow the probe before sweeping.'
+    : armSetupBlock();
+  $('mode-sweep-help').textContent = sweepBlock || 'Sweep the detector while searching.';
+  $('mode-align-help').textContent = alignBlock || align.reason;
+  $('mode-probe-help').textContent = cycleBlock || 'Use the cycle depth set in the Probe panel.';
+  $('mode-mark-help').textContent = markBlock || 'Run the marking pump for 2 seconds.';
+  $('operation-help').textContent = !state.connected ? 'Connect to the operator stack, then take control.'
+    : !owner ? 'Take control to operate. Taking over stops the previous operator.'
+    : !servoSafe ? state.safety?.servo_reason || 'RC must permit servo motion.'
+    : drive.calibrating ? 'Settings is open: driving and search actions are paused.'
+    : 'Sweep for metal → stop → align the probe → probe → mark. STOP releases control and stops outputs.';
+  for (const id of ['mode-align-btn', 'detector-align-probe']) {
+    $(id).disabled = Boolean(alignBlock); $(id).title = alignBlock || align.reason;
   }
-
-  if ($('detector-align-probe')) {
-    $('detector-align-probe').disabled = !canAlign;
-    $('detector-align-probe').title = align.reason;
-    if ($('align-probe-hint')) {
-      $('align-probe-hint').textContent = align.hasPeak
-        ? (align.reachable
-            ? `Target peak: ${align.peakAngle.toFixed(0)}° (${Math.round(align.peakSignal * 100)}%) → Pivot arm to ${align.pivotAngle}°`
-            : `⚠️ ${align.reason}`)
-        : 'No target detection peak recorded.';
-      $('align-probe-hint').style.color = align.hasPeak && !align.reachable ? '#e59d4a' : '';
-    }
+  $('mode-align-pill').textContent = alignBlock ? (!align.hasPeak ? 'SCAN FIRST' : 'BLOCKED') : 'READY';
+  $('align-probe-hint').textContent = alignBlock || align.reason;
+  for (const id of ['start-probing', 'mode-probe-btn']) { $(id).disabled = Boolean(cycleBlock); $(id).title = cycleBlock; }
+  $('start-probing').textContent = probe.cycle_active ? (probe.cycle_phase === 'DESCENDING' ? 'Probing…' : 'Retracting…') : 'Start probing';
+  $('mode-probe-pill').textContent = probe.cycle_active ? probe.cycle_phase : cycleBlock ? 'BLOCKED' : 'READY';
+  $('probe-cycle-help').textContent = cycleBlock || 'Ready. The probe retracts after contact or the selected depth.';
+  const depthInput = $('probe-cycle-target');
+  depthInput.max = Number.isFinite(probe.max_depth_mm) && probe.max_depth_mm > 0 ? probe.max_depth_mm : 0;
+  depthInput.disabled = !Number.isFinite(probe.max_depth_mm) || probe.max_depth_mm <= 0 || Boolean(probe.cycle_active);
+  for (const id of ['sweep-toggle', 'mode-sweep-btn']) {
+    $(id).disabled = !owner || (Boolean(sweepBlock) && !detector.sweep_enabled); $(id).title = sweepBlock;
   }
-
-  $('probe-slider').disabled = !owner || !servoSafe || probe.ready === false || drive.calibrating || Boolean(probe.cycle_active);
+  $('sweep-speed').disabled = Boolean(sweepBlock);
+  $('mode-sweep-pill').textContent = detector.sweep_enabled ? 'SWEEPING' : sweepBlock ? 'BLOCKED' : 'READY';
+  $('mode-sweep-btn').querySelector('.mode-text').textContent = detector.sweep_enabled ? 'Stop sweeping' : 'Start sweeping';
+  const pumpActive = Boolean(state.pump_active || drive.pump_active);
+  if (pendingPumpMark && pumpActive && !pumpWasActive) {
+    const {robot: pose, signal} = pendingPumpMark;
+    const positionKnown = pose.pose_fresh === true && robot.pose_fresh === true;
+    if (positionKnown) logTarget({x: pose.x, y: pose.y, heading_deg: pose.yaw * 180 / Math.PI,
+      metal_signal_pct: Math.round(signal * 100), contact_depth_mm: '—', status: 'PUMP ACTIVATED', statusType: 'marked'});
+    showNotice(positionKnown ? 'Marking pump activated. Check the ground mark visually.'
+      : 'Marking pump activated. Position unavailable; no log entry was saved. Check the ground mark visually.');
+    pendingPumpMark = null;
+  } else if (pendingPumpMark && performance.now() - pendingPumpMark.at > 3000) {
+    pendingPumpMark = null; showNotice('Pump activation was not confirmed. Check status before retrying.');
+  }
+  pumpWasActive = pumpActive;
+  for (const id of ['mode-mark-btn', 'mark-ground-btn']) { $(id).disabled = Boolean(markBlock) || Boolean(pendingPumpMark); $(id).title = markBlock; }
+  $('mode-mark-pill').textContent = pumpActive ? 'PUMP ON' : pendingPumpMark ? 'WAITING' : markBlock ? 'BLOCKED' : 'READY (2s)';
+  $('mark-target-btn').disabled = !state.connected || robot.pose_fresh !== true || ![robot.x, robot.y, robot.yaw].every(Number.isFinite);
+  $('mark-target-btn').title = $('mark-target-btn').disabled ? 'Fresh localization is required to log a pose.' : 'Record the current vehicle position.';
+  $('probe-slider').disabled = Boolean(probeActionBlock(true)) || detector.sweep_enabled;
   $('probe-stop').disabled = !owner;
-  $('sweep-toggle').disabled = !owner || !servoSafe;
-  $('sweep-speed').disabled = !owner || !servoSafe;
-
-  if ($('start-probing')) {
-    $('start-probing').disabled = !canProbe;
-    if (probe.cycle_active) {
-      $('start-probing').textContent = probe.cycle_phase === 'DESCENDING' ? 'Probing (descending)...' : 'Probing (retracting)...';
-    } else {
-      $('start-probing').textContent = isMoving ? 'Stop rover to probe' : 'Start probing';
-    }
-  }
-
-  if ($('mode-probe-btn')) {
-    $('mode-probe-btn').disabled = !canProbe;
-    if ($('mode-probe-pill')) {
-      if (probe.cycle_active) {
-        $('mode-probe-pill').textContent = probe.cycle_phase || 'PROBING';
-        $('mode-probe-pill').className = 'badge active';
-      } else if (isMoving) {
-        $('mode-probe-pill').textContent = 'STOP ROVER';
-        $('mode-probe-pill').className = 'badge neutral';
-      } else if (!probeReady) {
-        $('mode-probe-pill').textContent = 'NOT READY';
-        $('mode-probe-pill').className = 'badge neutral';
-      } else {
-        $('mode-probe-pill').textContent = 'READY';
-        $('mode-probe-pill').className = 'badge safe';
-      }
-    }
-  }
-
-  if ($('mode-sweep-btn')) {
-    $('mode-sweep-btn').disabled = !owner || !servoSafe;
-    if ($('mode-sweep-pill')) {
-      $('mode-sweep-pill').textContent = detector.sweep_enabled ? 'SWEEPING' : 'OFF';
-      $('mode-sweep-pill').className = `badge ${detector.sweep_enabled ? 'safe' : 'neutral'}`;
-    }
-    const label = $('mode-sweep-btn').querySelector('.mode-text');
-    if (label) label.textContent = detector.sweep_enabled ? 'Stop sweeping' : 'Start sweeping';
-  }
-
-  const pumpActive = Boolean(state.pump_active || state.drive?.pump_active);
-  const canMark = owner && !isMoving && probeStowed && !pumpActive;
-
-  if ($('mode-mark-btn')) {
-    $('mode-mark-btn').disabled = !canMark;
-    if ($('mode-mark-pill')) {
-      if (pumpActive) {
-        $('mode-mark-pill').textContent = 'MARKING...';
-        $('mode-mark-pill').className = 'badge active';
-      } else if (!owner) {
-        $('mode-mark-pill').textContent = 'NO CONTROL';
-        $('mode-mark-pill').className = 'badge neutral';
-      } else if (isMoving) {
-        $('mode-mark-pill').textContent = 'STOP ROVER';
-        $('mode-mark-pill').className = 'badge neutral';
-      } else if (!probeStowed) {
-        $('mode-mark-pill').textContent = 'PROBE DOWN';
-        $('mode-mark-pill').className = 'badge neutral';
-      } else {
-        $('mode-mark-pill').textContent = 'READY (2s)';
-        $('mode-mark-pill').className = 'badge safe';
-      }
-    }
-  }
-  if ($('mark-ground-btn')) {
-    $('mark-ground-btn').disabled = !canMark;
-  }
-  if ($('mark-target-btn')) {
-    $('mark-target-btn').disabled = !owner;
-  }
 
   checkProbeCycleState();
 
@@ -872,14 +784,11 @@ function updateHud() {
   $('detector-status').className = `badge ${detector.fresh === false ? 'neutral' : detector.detected ? 'active' : 'safe'}`;
 
   $('sweep-toggle').textContent = detector.sweep_enabled ? 'Stop sweep' : 'Start sweep';
-  $('sweep-status').textContent = detector.sweep_enabled ? 'Sweeping'
-    : !owner ? 'Take control to sweep'
-    : !servoSafe ? state.safety?.reason || 'RC blocks servo movement'
-    : state.actuators?.arm?.reason || state.arm_servo?.reason || (state.safety?.simulated ? 'Ready' : 'Waiting for arm controller');
+  $('sweep-status').textContent = detector.sweep_enabled ? 'Sweeping' : sweepBlock || 'Ready';
   setRange($('sweep-speed'), detector.sweep_speed_min, detector.sweep_speed_max, 'any');
   if (!activeSliders.has('sweep-speed')) $('sweep-speed').value = detector.sweep_speed_deg_s;
   $('sweep-speed-value').textContent = `${Math.round(detector.sweep_speed_deg_s)}°/s`;
-  $('sweep-speed').title = `Configured maximum: ${detector.sweep_speed_max.toFixed(1)}°/s. Change in Settings → Servos. Actual speed also depends on acceleration and load.`;
+  $('sweep-speed').title = `Configured maximum: ${detector.sweep_speed_max.toFixed(1)}°/s. Change in Settings → Arm. Actual speed also depends on acceleration and load.`;
 
   $('probe-depth').textContent = Number.isFinite(probe.depth_mm) ? `${Math.round(probe.depth_mm)} mm` : '—';
   $('probe-target').textContent = `${Math.round(probe.target_mm)} mm`;
@@ -896,7 +805,8 @@ function updateHud() {
   setRange($('probe-slider'), 0, probe.max_depth_mm || 1, .1);
   if (!activeSliders.has('probe-slider')) $('probe-slider').value = probe.target_mm;
   if (!state.connected) drawProbeMotion(probe.depth_mm);
-  $('probe-status').textContent = probe.ready === false ? (probe.reason || 'HOME REQUIRED') : probe.fault ? 'FAULT' : probe.cycle_active ? (probe.cycle_phase === 'DESCENDING' ? 'PROBING' : 'RETRACTING') : probe.holding ? 'HOLDING' : probe.depth_mm > 2 ? 'DEPLOYED' : 'STOWED';
+  $('probe-status').textContent = probe.ready !== true ? 'SETUP REQUIRED' : probe.fault ? 'FAULT' : probe.cycle_active ? (probe.cycle_phase === 'DESCENDING' ? 'PROBING' : 'RETRACTING') : probe.holding ? 'HOLDING' : probe.depth_mm > 2 ? 'DEPLOYED' : 'STOWED';
+  $('probe-status').title = probe.reason || '';
   $('probe-status').className = `badge ${probe.fault || (probe.cycle_active && probe.contact_detected) ? 'active' : probe.cycle_active ? 'active' : probe.depth_mm > 2 ? 'safe' : 'neutral'}`;
 
   $('arm-state').textContent = state.safety?.mode === 'override' ? 'RC CONTROL' : !owner ? 'SPECTATOR' : safe ? (drive.publishing ? 'ROS CONTROL' : 'READY') : 'RC LOCKED';
@@ -905,7 +815,9 @@ function updateHud() {
     : !owner ? 'Spectator mode' : safe ? 'RC permits ROS driving' : state.safety?.reason || 'Waiting for RC';
 
   const heading = ((robot.yaw * 180 / Math.PI % 360) + 360) % 360;
-  $('position').textContent = `X ${robot.x.toFixed(1)} · Y ${robot.y.toFixed(1)} · heading ${heading.toFixed(0)}°`;
+  $('position').textContent = state.connected && robot.pose_fresh === true && [robot.x, robot.y, robot.yaw].every(Number.isFinite)
+    ? `X ${robot.x.toFixed(1)} · Y ${robot.y.toFixed(1)} · heading ${heading.toFixed(0)}°`
+    : 'Position unavailable · check localization.';
 
   updateInputHint();
 }
@@ -964,9 +876,9 @@ function driveBlockMessage() {
   }
   if (!state.safety?.allowed) return {text: state.safety?.reason || 'Waiting for PX4 safety status', kind: 'blocked'};
   if (!owner) return {text: 'Spectator · take control. Pad input stays local until then.', kind: 'blocked'};
-  if (!state.drive.publishing) {
-    return {text: 'Commands leaving the browser · waiting for ROS cmd_vel…', kind: 'blocked'};
-  }
+  if (state.probe.cycle_active || state.probe.depth_mm > 2) return {text: 'Retract the probe before driving.', kind: 'blocked'};
+  if (state.pump_active || state.drive.pump_active) return {text: 'Wait for the marking pump to stop.', kind: 'blocked'};
+  if (!state.drive.publishing) return {text: 'Ready. Use the selected input to drive.', kind: 'ready'};
   return {
     text: `ROS cmd_vel ${state.drive.cmd_linear_x.toFixed(2)} m/s · ${state.drive.cmd_angular_z.toFixed(2)} rad/s`,
     kind: 'ready',
@@ -1318,6 +1230,7 @@ function stopLocalInput() {
 }
 
 $('take-control').onclick = () => send({type: 'take_control'});
+$('stop-controls').onclick = () => { stopInput(); pendingPumpMark = null; showNotice('Stop requested. Take control again to resume.'); };
 $('probe-zero-contact').onclick = () => send({type: 'probe_zero_contact'});
 $('probe-stop').onclick = () => send({type: 'arm_servo', action: 'stop', role: 'probe'});
 
@@ -1343,7 +1256,7 @@ if ($('mode-mark-btn')) $('mode-mark-btn').onclick = triggerPumpMark;
 if ($('mark-ground-btn')) $('mark-ground-btn').onclick = triggerPumpMark;
 if ($('mark-target-btn')) $('mark-target-btn').onclick = markCurrentPose;
 if ($('export-target-log')) $('export-target-log').onclick = exportTargetLogCsv;
-if ($('clear-target-log')) $('clear-target-log').onclick = () => { targetLog = []; renderTargetLog(); };
+if ($('clear-target-log')) $('clear-target-log').onclick = () => { if (targetLog.length && !confirm('Clear this session’s log? Export CSV first if you need it.')) return; targetLog = []; renderTargetLog(); };
 
 function savePreferences() {
   try { localStorage.setItem('peaceofmine.operator.preferences', JSON.stringify(preferences)); } catch {}
@@ -1618,6 +1531,7 @@ function drawMap(pose = state.robot) {
     context.fillText(t.id, point.x + 8, point.y + 3);
   }
 
+  if (!state.connected || state.robot.pose_fresh !== true || ![pose.x, pose.y, pose.yaw].every(Number.isFinite)) return;
   const rover = toScreen(pose.x, pose.y);
   context.save();
   context.translate(rover.x, rover.y);
@@ -2171,13 +2085,11 @@ function updateMetalSettings() {
   $('metal-port').textContent = sensor.port || '--';
   $('metal-counts').textContent = `${sensor.received ?? 0} / ${sensor.invalid_lines ?? 0}`;
   $('metal-sequence').textContent = sensor.packet ? `${sensor.packet.seq} / ${sensor.packet.uptime_ms} ms` : '--';
-  $('metal-error').textContent = !available ? 'Arduino driver unavailable' : sensor.error || (fresh ? 'Receiving valid packets' : 'Waiting for valid readings');
+  $('metal-error').textContent = !available ? 'Detector input unavailable' : sensor.error || (fresh ? 'Receiving detector readings' : 'No fresh readings. Start acquisition in Settings → ADS1115.');
   const reference = sensor.reference_voltage ?? 5;
   const voltage = sensor.packet?.amplitude_adc * reference / 255;
   $('metal-voltage').textContent = fresh ? `${voltage.toFixed(3)} V` : '-- V';
-  $('metal-voltage-note').textContent = fresh && voltage > reference / 2
-    ? 'Above the centered sine range: check clipping or waveform shape. Voltage is an amplitude estimate.'
-    : `Sine-equivalent AC peak, excluding DC bias. Reference ${reference.toFixed(2)} V.`;
+  $('metal-voltage-note').textContent = `Estimated ADC input voltage · reference ${reference.toFixed(2)} V.`;
   const threshold = state.detector.threshold_ratio;
   const key = `${sensor.baseline_adc}:${sensor.full_response_adc}:${reference}:${threshold}`;
   if (key !== metalCalibrationKey && Number.isFinite(sensor.baseline_adc)) {
@@ -2193,13 +2105,13 @@ function updateMetalSettings() {
     metalFeedback = 'No acknowledgement from detector driver.';
     metalPending = null;
   }
-  const moving = Math.abs(state.robot.speed_mps) > 0.03;
+  const moving = state.robot.stationary !== true;
   const allowed = fresh && owner && !moving && !metalPending;
   for (const id of ['metal-zero', 'metal-apply', 'metal-reset']) $(id).disabled = !allowed;
   $('metal-control').hidden = owner;
   $('metal-control').disabled = !state.connected;
-  $('metal-feedback').textContent = !fresh ? 'Fresh Arduino readings required for calibration.'
-    : !owner ? 'Take control to calibrate.' : moving ? 'Stop the vehicle to calibrate.'
+  $('metal-feedback').textContent = !fresh ? 'Fresh detector readings required for calibration.'
+    : !owner ? 'Take control to calibrate.' : moving ? 'Stop the vehicle; fresh stationary odometry is required.'
     : metalPending ? 'Applying calibration...' : metalFeedback || 'Ready';
   const packetKey = JSON.stringify(sensor.packet);
   if (fresh && sensor.packet && packetKey !== metalPacketKey) {
@@ -2341,12 +2253,12 @@ function initializeMetalSettings() {
     const id = `metal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const payload = {type: 'detector_calibrate', action, request_id: id};
     if (action === 'apply') {
-      if (!$('metal-baseline').value || !$('metal-full').value) { metalFeedback = 'Enter a zero level and mine trigger.'; updateMetalSettings(); return; }
+      if (!$('metal-baseline').value || !$('metal-full').value) { metalFeedback = 'Enter a zero level and detection threshold.'; updateMetalSettings(); return; }
       payload.baseline_adc = Number($('metal-baseline').value);
       payload.full_response_adc = Number($('metal-full').value);
       if (![payload.baseline_adc, payload.full_response_adc].every(v => Number.isFinite(v) && v >= 0 && v <= 255)
           || Math.abs(payload.full_response_adc - payload.baseline_adc) < 1) {
-        metalFeedback = 'Zero level and mine trigger must be within 0..255 and at least one count apart.'; updateMetalSettings(); return;
+        metalFeedback = 'Zero level and detection threshold must be within 0..255 and at least one count apart.'; updateMetalSettings(); return;
       }
     }
     metalPending = {id, at: performance.now()};
@@ -2369,13 +2281,22 @@ function initializeMetalSettings() {
 function initializeInputs() {
   initializeArmSettings();
   initializeMetalSettings();
-  document.querySelectorAll('[data-settings-tab]').forEach(tab => {
+  const tabs = [...document.querySelectorAll('[data-settings-tab]')];
+  tabs.forEach((tab, index) => {
+    tab.tabIndex = tab.getAttribute('aria-selected') === 'true' ? 0 : -1;
+    tab.onkeydown = event => {
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+        : event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : null;
+      if (next === null) return;
+      event.preventDefault(); tabs[next].click(); tabs[next].focus();
+    };
     tab.onclick = () => {
       stopArmMove();
       document.querySelectorAll('[data-settings-tab]').forEach(candidate => {
         const active = candidate === tab;
         candidate.classList.toggle('active', active);
         candidate.setAttribute('aria-selected', String(active));
+        candidate.tabIndex = active ? 0 : -1;
       });
       document.querySelectorAll('[data-settings-panel]').forEach(panel => {
         const active = panel.dataset.settingsPanel === tab.dataset.settingsTab;
@@ -2384,6 +2305,9 @@ function initializeInputs() {
       });
       updateMetalSettings();
     };
+  });
+  document.querySelectorAll('[data-open-settings]').forEach(button => {
+    button.onclick = () => { $('settings').click(); document.querySelector(`[data-settings-tab="${button.dataset.openSettings}"]`).click(); };
   });
   for (const [key, label, checkbox] of [
     ['steering', 'Steering axis'], ['throttle', 'Forward pedal axis'], ['brake', 'Reverse pedal axis'],

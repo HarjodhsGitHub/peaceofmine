@@ -1286,3 +1286,41 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
   padding: 0.35rem 0.6rem;
   font-size: 0.72rem;
 }
+
+
+/* Keep operational controls and feedback in the page flow at every size. */
+.operation-modes-strip { flex-wrap: wrap; padding: .7rem 0; background: transparent; }
+.modes-actions { flex: 1; }
+.mode-btn, button.quiet { min-height: 2.75rem; }
+.mode-btn { transition: background-color .15s ease, border-color .15s ease; }
+#operation-help { margin: .4rem 0 .7rem; line-height: 1.5; }
+.notice { position: static; margin: 0 0 .7rem; backdrop-filter: none; font-size: .85rem; }
+.workspace { grid-template-rows: auto auto; align-items: start; min-width: 0; }
+.viewport { aspect-ratio: 16 / 9; min-height: 0; min-width: 0; width: 100%; }
+.control-column { grid-template-rows: auto auto auto; }
+.lower-panels { grid-template-columns: minmax(0, 1fr); overflow: visible; }
+.lower-panels .map-panel { height: 20rem; min-height: 0; }
+.lower-panels .power-panel { overflow: visible; }
+.target-log-panel { overflow: visible; }
+.target-log-panel .table-wrap { overflow-x: auto; }
+.target-log-actions { flex-wrap: wrap; }
+.panel-heading { flex-wrap: wrap; }
+#stop-controls { min-width: 6rem; background: #a33131; color: white; }
+.probe-cycle-input-wrap input { min-height: 2.75rem; }
+.probe-cycle-input-row { gap: .5rem; }
+@media (max-width: 760px) {
+  .workspace { grid-template-rows: auto auto auto; }
+  .viewport { min-height: 14rem; }
+  .lower-panels { width: 100%; }
+  .lower-panels .map-panel { height: 18rem; }
+  .mode-btn { flex: 1 1 9rem; justify-content: space-between; }
+  .header-actions { gap: .5rem; }
+  .target-log-panel, .map-panel, .power-panel { min-width: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .mode-btn { transition: none; } }
+
+header { position: sticky; top: 0; z-index: 5; padding: .5rem 0; background: #09131a; }
+.operation-action { flex: 1 1 12rem; min-width: 0; display: flex; flex-direction: column; gap: .4rem; }
+.operation-action .mode-btn { width: 100%; justify-content: space-between; }
+.operation-action small { line-height: 1.4; overflow-wrap: anywhere; }
+@media (max-width: 760px) { .operation-action .mode-btn { flex: none; } }

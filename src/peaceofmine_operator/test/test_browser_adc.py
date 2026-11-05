@@ -18,12 +18,12 @@ class BrowserADCTest(unittest.TestCase):
     def test_settings_routing_and_sample_batches(self):
         config = copy.deepcopy(DEFAULTS)
         for channel in config['channels']:
-            channel['enabled'] = channel['mux'] in (4, 5)
-        value = dict(config=config, routes=['none']*4+['detector','probe','none','none'],
+            channel['enabled'] = channel['mux'] in (4, 6)
+        value = dict(config=config, routes=['none']*4+['probe','none','detector','none'],
                      revision=1, applied=1, running=True, connected=True, demo=True,
                      error=None, registers={'config': 0x8583}, now=100, sequence=2,
-                     samples=[dict(seq=1, time=99.9, mux=4, raw=100, volts=.1, scaled=2, clipped=False),
-                              dict(seq=2, time=99.9, mux=5, raw=200, volts=.2, scaled=3, clipped=False)])
+                     samples=[dict(seq=1, time=99.9, mux=6, raw=100, volts=.1, scaled=2, clipped=False),
+                              dict(seq=2, time=99.9, mux=4, raw=200, volts=.2, scaled=3, clipped=False)])
         setup = '''
 window.requestAnimationFrame = () => 0;
 window.setInterval = () => 0;
@@ -40,18 +40,19 @@ $('settings').click(); document.querySelector('[data-settings-tab="adc"]').click
 await window.nextPoll();
 assert($('adc-status').textContent.includes('DEMO'), 'demo is explicit: '+$('adc-status').textContent+' '+$('adc-error').textContent);
 assert(document.querySelectorAll('[data-adc-channel]').length === 8, 'all mux inputs');
+assert($('adc-trigger-mux').value==='4', 'default probe trigger uses A0');
 assert($('adc-readings').textContent.includes('Live'), 'live readings');
 const draftField=document.querySelector('[data-adc-field="rate"]');
 draftField.value='64'; await window.nextPoll();
 assert(draftField.value==='64', 'poll preserves edits');
 $('adc-apply').click();
 assert(sent.at(-1).settings.config.rate===64, 'settings sent');
-assert(sent.at(-1).settings.routes[4]==='detector', 'default A0 routing');
+assert(sent.at(-1).settings.routes[6]==='detector' && sent.at(-1).settings.routes[4]==='probe', 'A2 detector and A0 probe routing');
 operatorADCResult({ok:true});
 drawPressureHistory(); drawDetectorHistory(1000);
-assert(probePressureChart.data.datasets.at(-1).label.includes('A1'), 'A1 probe trace');
+assert(probePressureChart.data.datasets.at(-1).label.includes('A0'), 'A0 probe trace');
 assert(probePressureChart.data.datasets.at(-1).data[0].y===3, 'scaled probe value');
-assert(detectorChart.data.datasets.at(-1).label.includes('A0'), 'A0 detector trace');
+assert(detectorChart.data.datasets.at(-1).label.includes('A2'), 'A2 detector trace');
 assert(detectorChart.data.datasets.at(-1).data[0].y===2, 'scaled detector value');
 adcResponse={...adcResponse,revision:2,routes:['none','none','none','none','both','none','none','none'],sequence:3,
  samples:[{seq:3,time:100,mux:4,raw:300,volts:.3,scaled:7,clipped:true}]};
