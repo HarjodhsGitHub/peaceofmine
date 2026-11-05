@@ -16,6 +16,7 @@ import ssl
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Any
 
 try:
@@ -138,6 +139,9 @@ def build_app(node: OperatorGateway) -> web.Application:
         # Per-message deflate on the same socket as 20+ Hz drive commands
         # costs CPU on the Pi and delays the event loop. LAN bandwidth is
         # cheap; leave the frames uncompressed.
+        origin = request.headers.get('Origin')
+        if origin and (urlsplit(origin).netloc != request.host or urlsplit(origin).scheme != request.scheme):
+            raise web.HTTPForbidden(text='Open the dashboard from this operator host before connecting.')
         ws = web.WebSocketResponse(heartbeat=10.0, compress=False, timeout=0.5)
         await ws.prepare(request)
         node.connect_client(ws)

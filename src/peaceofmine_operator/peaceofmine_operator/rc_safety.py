@@ -69,8 +69,9 @@ class RcSafety:
         if self.simulation:
             return dict(mode='simulation', allowed=True, servo_allowed=True, reason='Simulation interlock', simulated=True)
         def result(mode, reason, allowed=False):
+            servo = self.servo_snapshot()
             return dict(mode=mode, reason=reason, allowed=allowed, simulated=False,
-                        servo_allowed=self.servo_snapshot()['allowed'])
+                        servo_allowed=servo['allowed'], servo_reason=servo['reason'])
         now = self.clock()
         state_sample = self.samples.get('state')
         if state_sample is None or now - state_sample[0] > self.TIMEOUTS['state']:

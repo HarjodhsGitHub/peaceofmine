@@ -32,6 +32,8 @@ class TeleopTest(unittest.TestCase):
         self.owner = object()
         self.clock = patch.object(gateway_module.time, 'monotonic', return_value=100.0)
         self.now = self.clock.start()
+        self.node._odometry_at = 100.0
+        self.node._motion_speed = 0.0
         self.output = patch.object(self.node, '_publish_twist').start()
 
     def tearDown(self):
@@ -53,6 +55,49 @@ class TeleopTest(unittest.TestCase):
                 patch.object(self.node._detector_command_pub, 'publish') as publish:
             self.assertIsNone(self.command('detector_calibrate', **command))
             self.assertEqual(json.loads(publish.call_args.args[0].data), command)
+
+    def test_typed_cycle_state_blocks_both_input_paths_and_watchdog(self):
+        from peaceofmine_interfaces.msg import ActuatorStatus
+        self.arm()
+        self.node._probe_state_cb(ActuatorStatus(probe_cycle_active=True))
+        self.assertTrue(self.node._probe_state['probe']['cycle_active'])
+        self.assertIsNotNone(self.command('drive', linear_x=.4, deadman=True))
+        self.node._joy_cb(Joy(axes=[0., 0., 1., 0., 0., -1.], buttons=[0]*11))
+        self.node._deadman = True
+        self.node._command = (.4, 0.)
+        self.node._last_command = 100.
+        self.node._stop_until = 100.5
+        self.node._emit_cmd_vel()
+        self.output.assert_called_with(0., 0.)
+        self.assertFalse(self.node._deadman)
+
+    def test_mark_rejects_unknown_probe_and_stale_or_rotating_vehicle(self):
+        from peaceofmine_interfaces.msg import ActuatorStatus
+        from nav_msgs.msg import Odometry
+        self.arm()
+        self.assertIsNotNone(self.command('pump_mark'))
+        self.node._probe_state_cb(ActuatorStatus(probe_ready=True, depth_mm=0.))
+        self.node._odometry_at = 99.
+        self.assertIsNotNone(self.command('pump_mark'))
+        odom = Odometry()
+        odom.twist.twist.angular.z = .2
+        self.node._odometry_cb(odom)
+        self.assertFalse(self.node.snapshot()['robot']['stationary'])
+        self.assertIsNotNone(self.command('pump_mark'))
+        odom.twist.twist.angular.z = 0.
+        self.node._odometry_cb(odom)
+        self.assertIsNone(self.command('pump_mark'))
+        self.now.return_value = 100.6
+        self.node._drive_watchdog()
+        self.assertFalse(self.node._pump_active)
+
+    def test_align_angle_survives_typed_command(self):
+        from peaceofmine_interfaces.msg import ActuatorStatus
+        self.arm()
+        self.node._probe_state_cb(ActuatorStatus(probe_ready=True, depth_mm=0.))
+        with patch.object(self.node._arm_command_pub, 'publish') as publish:
+            self.assertIsNone(self.command('align_probe', angle_deg=-15.))
+            self.assertEqual(command_dict(publish.call_args.args[0])['angle_deg'], -15.)
 
     def test_shutdown_stops_outputs_and_rejects_new_control(self):
         self.arm()
@@ -130,7 +175,7 @@ class TeleopTest(unittest.TestCase):
             self.output.assert_called_with(0.0, 0.0)
             self.assertFalse(sweep.call_args.args[0].enabled)
             for kind in ('arm', 'drive', 'probe_target', 'sweep_enabled', 'sweep_speed'):
-                self.assertIsNotNone(self.command(kind))
+                self.assertIsNotNone(self.command(kind, deadman=True))
             self.assertTrue(all(command_dict(call.args[0])['action'] == 'stop' for call in probe.call_args_list))
             self.node._rc_safety.samples['state'][1].system_status = 4
             self.node._drive_watchdog()
@@ -206,7 +251,8 @@ class TeleopTest(unittest.TestCase):
             self.assertTrue(sweep.call_args.args[0].enabled)
             self.node._drive_watchdog()
             self.assertTrue(permission.call_args.args[0].data)
-            self.assertIsNotNone(self.command('drive', linear_x=.4))
+            self.assertIsNotNone(self.command('drive', linear_x=.4, deadman=True))
+            self.assertIsNone(self.command('drive', linear_x=0., deadman=False))
             controls = self.node.snapshot()['drive']['rc']
             self.assertEqual((controls['steering'], controls['throttle']), (.5, -.5))
             remote.header.stamp.sec += 1

@@ -168,11 +168,14 @@
       <param name="rc_steering_channel" value="$(var rc_steering_channel)" type="int" />
       <param name="rc_throttle_channel" value="$(var rc_throttle_channel)" type="int" />
       <param name="cmd_vel_topic" value="cmd_vel" />
+      <param name="velocity_topic" value="$(var probe_velocity_topic)" />
       <param name="odometry_topic" value="$(var odometry_topic)" />
       <param name="max_velocity_mps" value="$(var max_velocity)" />
     </node>
     <node pkg="peaceofmine_operator" exec="detector_node.py" name="detector" output="screen">
       <param name="detector_threshold_ratio" value="$(var detector_threshold_ratio)"/>
+      <param name="velocity_topic" value="$(var probe_velocity_topic)"/>
+      <param name="use_adc" value="$(eval '&quot;$(var is_sim)&quot; != &quot;true&quot; and &quot;$(var use_sensor_serial)&quot; != &quot;true&quot;')"/>
       <param name="odometry_topic" value="$(var odometry_topic)"/>
       <param name="config_file" value="$(var config_file)"/>
     </node>

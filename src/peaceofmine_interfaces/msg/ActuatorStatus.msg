@@ -14,6 +14,7 @@ peaceofmine_interfaces/ServoTelemetry telemetry
 bool homed
 bool probe_ready
 bool probe_active
+bool probe_cycle_active
 bool probe_holding
 float64 depth_mm
 float64 target_mm

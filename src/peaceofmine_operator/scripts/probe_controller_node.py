@@ -155,12 +155,19 @@ class ProbeController(ActuatorController):
             raise ValueError(f"Target depth must be between 0 and {calibration['max_extension_mm']} mm")
         if not self.interlock():
             raise ValueError('Probe cycle requires stationary odometry and no fault')
+        if self.cycle_active or self.operation:
+            raise ValueError('Stop the current probe operation first')
+        contact = self.contact.snapshot()
+        if not contact['enabled'] or not contact['fresh']:
+            raise ValueError('Enable a fresh ADC contact input before probing')
+        if contact['detected']:
+            raise ValueError('Contact input is already triggered; clear or calibrate it first')
+        self.start_target(depth, hold=False)
         self.cycle_active = True
         self.cycle_phase = 'DESCENDING'
         self.cycle_target_depth = float(depth)
         self.contact_detected = False
         self.contact_depth_mm = None
-        self.start_target(depth, hold=False)
 
     def start_target(self, depth, hold=True):
         calibration = self.extension
@@ -218,7 +225,9 @@ class ProbeController(ActuatorController):
         return True
 
     def start_action(self, request):
-        if request.operation == 'home':
+        if request.operation == 'probe_cycle':
+            self.start_probe_cycle(request.target)
+        elif request.operation == 'home':
             import uuid
             self.start_home(uuid.uuid4().hex, request.load_percent)
         else:
@@ -256,20 +265,26 @@ class ProbeController(ActuatorController):
             current_depth = (self.home_position-self.telemetry.position)*self.extension['max_extension_mm']/self.extension['travel_ticks'] if ready else 0.0
 
             if self.cycle_phase == 'DESCENDING':
-                spike = bool(self.contact.spike_detected or self.contact.detected)
+                contact = self.contact.snapshot()
+                if not contact['enabled'] or not contact['fresh']:
+                    self.stop('Contact input lost; probe result unknown')
+                    return
+                spike = contact['detected'] is True
                 if spike:
                     self.contact_detected = True
                     self.contact_depth_mm = round(max(0.0, current_depth), 1)
                     self.cycle_phase = 'RETRACTING'
                     self.reason = f'Contact spike detected at {self.contact_depth_mm:.1f} mm; retracting'
-                    self.start_target(0.0, hold=False)
+                    self.target = 0.0
+                    self.operation.target = self.home_position
                     return
                 elif abs(self.telemetry.position-self.operation.target) <= 3 or current_depth >= (self.cycle_target_depth - 1.0):
                     self.contact_detected = False
                     self.contact_depth_mm = None
                     self.cycle_phase = 'RETRACTING'
                     self.reason = f'Target {self.cycle_target_depth:.0f} mm reached without contact; retracting'
-                    self.start_target(0.0, hold=False)
+                    self.target = 0.0
+                    self.operation.target = self.home_position
                     return
 
             elif self.cycle_phase == 'RETRACTING':

@@ -11,8 +11,10 @@ import math
 import time
 
 from rclpy.node import Node
-from std_msgs.msg import Bool, Float32, Float64, String, UInt16
+from std_msgs.msg import Bool, Float32, String, UInt16
 from nav_msgs.msg import Odometry
+from geometry_msgs.msg import TwistWithCovarianceStamped
+from rclpy.qos import qos_profile_sensor_data
 from peaceofmine_operator.detector import DetectorTelemetry
 from peaceofmine_interfaces.msg import ActuatorStatus, AdcSamples
 from peaceofmine_operator import configuration
@@ -22,12 +24,17 @@ from peaceofmine_operator.node_runner import run_node
 
 
 class DetectorNode(Node):
-    def __init__(self):
-        super().__init__('detector')
+    def __init__(self, **kwargs):
+        super().__init__('detector', **kwargs)
         self.threshold = float(self.declare_parameter('detector_threshold_ratio', 1.0).value)
         self.odometry_topic = str(self.declare_parameter('odometry_topic', 'odometry/local').value)
         self.config_file = str(self.declare_parameter('config_file', '').value or configuration.default_path())
-        self.adc_channel = int(self.declare_parameter('adc_channel', 7).value)  # 7 = single-ended AIN3
+        self.use_adc = bool(self.declare_parameter('use_adc', True).value)
+        self.adc_channel = 6
+        self.adc_revision = 0
+        self.adc_session = None
+        self.adc_sequence = -1
+        self.configuration_error = None
         self.adc_topic = str(self.declare_parameter('adc_topic', 'adc/samples').value)
 
         # Calibration parameters
@@ -35,12 +42,13 @@ class DetectorNode(Node):
         self.baseline = 0.0
         self.full_response = 255.0
         self.reference_voltage = 5.0
-        self.load_calibration()
+        self.reload_calibration()
         self.initial_calibration = (self.baseline, self.full_response, self.reference_voltage)
 
         self.sensor = DetectorTelemetry()
         self.signal = self.angle = self.speed = 0.0
         self.signal_at = 0.0
+        self.angle_at = 0.0
         self.lower, self.upper = -45.0, 45.0
         self.beam = [0.0] * 91
         self.sweep = False
@@ -70,72 +78,92 @@ class DetectorNode(Node):
         self.state_pub = self.create_publisher(String, 'detector/state', 10)
 
         # Direct I2C ADC subscriptions
-        self.create_subscription(AdcSamples, self.adc_topic, self.adc_samples_cb, 10)
-        channel_name = f'a{self.adc_channel - 4}' if self.adc_channel >= 4 else f'mux{self.adc_channel}'
-        self.create_subscription(Float64, f'adc/{channel_name}/scaled', self.adc_scaled_cb, 10)
+        if self.use_adc:
+            self.create_subscription(AdcSamples, self.adc_topic, self.adc_samples_cb, 10)
+        else:
+            self.create_subscription(String, 'detector/state', self.sensor_cb, 10)
 
-        # Fallback / coordination subscriptions
-        self.create_subscription(String, 'detector/state', self.sensor_cb, 10)
+        # Coordination subscriptions
         self.create_subscription(String, 'detector/command', self.command_cb, 10)
         self.create_subscription(ActuatorStatus, 'arm/state', self.arm_cb, 10)
-        self.create_subscription(Float32, 'detector/signal_ratio', self.signal_cb, 10)
+        if not self.use_adc:
+            self.create_subscription(Float32, 'detector/signal_ratio', self.signal_cb, 10)
         self.create_subscription(Float32, 'fixture/angle_deg', self.angle_cb, 10)
         self.create_subscription(Bool, 'fixture/sweep_enabled_state', lambda msg: setattr(self, 'sweep', msg.data), 10)
         self.create_subscription(Float32, 'fixture/sweep_speed_deg_s_state', lambda msg: setattr(self, 'sweep_speed', msg.data), 10)
         self.create_subscription(Odometry, self.odometry_topic, self.odometry_cb, 10)
+        velocity_topic = self.declare_parameter('velocity_topic', '').value
+        if velocity_topic:
+            self.create_subscription(TwistWithCovarianceStamped, velocity_topic, self.velocity_cb, qos_profile_sensor_data)
 
         self.create_timer(0.05, self.publish)
         self.create_timer(1.0, self.reload_calibration)
 
     def load_calibration(self):
-        try:
-            saved = configuration.load(self.config_file).get('metal_detector', {})
-            if saved:
-                self.baseline = float(saved.get('baseline_adc', self.baseline))
-                self.full_response = float(saved.get('full_response_adc', self.full_response))
-                self.reference_voltage = float(saved.get('reference_voltage', self.reference_voltage))
-        except (ValueError, OSError, TypeError):
-            pass
+        previous = (self.baseline, self.full_response, self.reference_voltage, self.adc_channel, self.adc_revision)
+        saved = configuration.load(self.config_file)
+        value = saved.get('metal_detector', dict(baseline_adc=0., full_response_adc=255., reference_voltage=5.))
+        base, full, ref = (value[k] for k in ('baseline_adc', 'full_response_adc', 'reference_voltage'))
+        if (not all(type(v) in (int, float) and math.isfinite(v) for v in (base, full, ref))
+                or not (0 <= base <= 255 and 0 <= full <= 255 and abs(full-base) >= 1 and 0 < ref <= 5.5)):
+            raise ValueError('Invalid saved detector calibration')
+        self.baseline, self.full_response, self.reference_voltage = float(base), float(full), float(ref)
+        adc = saved.get('adc', {})
+        channels = adc.get('config', {}).get('channels', [])
+        routes = adc.get('routes', ['none'] * 8)
+        assigned = [c['mux'] for c in channels if c['enabled'] and routes[c['mux']] in ('detector', 'both')] if 'adc' in saved else [6]
+        if self.use_adc and len(assigned) != 1:
+            raise ValueError('Assign exactly one enabled ADC input to the metal detector in Settings')
+        if assigned:
+            self.adc_channel = assigned[0]
+        self.adc_revision = saved.get('section_revisions', {}).get('adc', 0)
+        self.configuration_error = None
+        if previous != (self.baseline, self.full_response, self.reference_voltage, self.adc_channel, self.adc_revision) and hasattr(self, 'latest_peak'):
+            self.latest_peak = None
+            self.signal_at = 0.
+            self.detected = False
+            self.recent_samples.clear()
+            self.beam = [0.] * len(self.beam)
 
     def reload_calibration(self):
-        self.load_calibration()
+        try:
+            self.load_calibration()
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            self.configuration_error = str(exc)
+            self.signal_at = 0.
+            self.detected = False
 
     def adc_samples_cb(self, msg: AdcSamples):
         if not msg.valid:
+            self.signal_at = 0.
+            self.detected = False
             return
+        if msg.config_revision != self.adc_revision:
+            self.reload_calibration()
+        if self.configuration_error or msg.config_revision != self.adc_revision:
+            return
+        if msg.session != self.adc_session:
+            self.adc_session, self.adc_sequence = msg.session, -1
         for sample in msg.samples:
-            if sample.channel == self.adc_channel:
-                self.process_adc_sample(sample.scaled, sample.raw, sample.volts, sample.sequence)
+            age = time.time() - (sample.stamp.sec + sample.stamp.nanosec / 1e9)
+            if sample.channel != self.adc_channel or not 0 <= age < .5 or sample.sequence <= self.adc_sequence:
+                continue
+            if not math.isfinite(sample.volts):
+                continue
+            self.adc_sequence = sample.sequence
+            self.process_adc_sample(sample.volts, sample.sequence)
 
-    def adc_scaled_cb(self, msg: Float64):
-        self.process_adc_sample(msg.data)
-
-    def process_adc_sample(self, scaled_val, raw_val=None, volts=None, seq=None):
+    def process_adc_sample(self, volts, seq):
         now = time.monotonic()
-        self.seq = seq if seq is not None else (self.seq + 1)
+        self.seq = seq
         self.sample_times.append(now)
-
-        # Determine raw count equivalent (nominal 0..255 range to preserve UI display expectations)
-        if raw_val is not None and volts is not None:
-            ref = self.reference_voltage if self.reference_voltage > 0 else 5.0
-            raw_count = max(0.0, min(255.0, (volts / ref) * 255.0))
-        elif isinstance(scaled_val, (int, float)):
-            if self.full_response > 5.0 and scaled_val <= 5.0:
-                ref = self.reference_voltage if self.reference_voltage > 0 else 5.0
-                raw_count = max(0.0, min(255.0, (scaled_val / ref) * 255.0))
-            else:
-                raw_count = float(scaled_val)
-        else:
-            return
+        raw_count = max(0., min(255., volts / self.reference_voltage * 255.))
 
         self.last_raw_adc = raw_count
         self.recent_samples.append((now, raw_count))
 
-        # Calculate normalized ratio (0.0 to 1.0)
-        denom = self.full_response - self.baseline
-        ratio = (raw_count - self.baseline) / denom if abs(denom) > 1e-6 else 0.0
-        normalized = max(0.0, min(1.0, ratio))
-
+        ratio = (raw_count-self.baseline)/(self.full_response-self.baseline)
+        normalized = max(0., min(1., ratio))
         int_adc = int(round(raw_count))
         self.sensor.update(dict(
             fresh=True,
@@ -216,6 +244,8 @@ class DetectorNode(Node):
                 ), on_saved)
                 return
 
+            raise ValueError('Unknown detector calibration action')
+
         except (ValueError, TypeError, OSError) as exc:
             self.command_result = dict(request_id=request_id, ok=False, message=str(exc))
             self._publish_detector_state()
@@ -250,12 +280,25 @@ class DetectorNode(Node):
     def angle_cb(self, msg):
         if math.isfinite(msg.data):
             self.angle = msg.data
+            self.angle_at = time.monotonic()
+
+    def velocity_cb(self, msg):
+        twist = msg.twist.twist
+        values = (twist.linear.x, twist.linear.y, twist.linear.z, twist.angular.x, twist.angular.y, twist.angular.z)
+        if not all(math.isfinite(v) and abs(v) <= .03 for v in values):
+            self.latest_peak = None
 
     def odometry_cb(self, msg):
         q = msg.pose.pose.orientation
         self.pose = dict(x=msg.pose.pose.position.x, y=msg.pose.pose.position.y,
             yaw=math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z)))
         self.pose_at = time.monotonic()
+        if self.latest_peak:
+            origin = self.latest_peak['pose']
+            distance = math.hypot(self.pose['x']-origin['x'], self.pose['y']-origin['y'])
+            yaw_change = abs(math.atan2(math.sin(self.pose['yaw']-origin['yaw']), math.cos(self.pose['yaw']-origin['yaw'])))
+            if distance > .05 or yaw_change > math.radians(2):
+                self.latest_peak = None
 
     def signal_cb(self, msg):
         if not math.isfinite(msg.data):
@@ -270,12 +313,12 @@ class DetectorNode(Node):
             if 0 <= idx < len(self.beam):
                 self.beam[idx] = self.signal
         detected = self.signal >= self.threshold
-        if detected:
+        if detected and now - self.angle_at < .5:
             if not self.latest_peak or self.signal > self.latest_peak.get('signal', 0.0) or (now - self.latest_peak.get('timestamp', 0) > 30.0):
                 self.latest_peak = dict(
                     angle_deg=round(self.angle, 1),
                     signal=round(self.signal, 3),
-                    timestamp=now
+                    timestamp=now, pose=dict(self.pose)
                 )
         if detected and not self.detected and now - self.pose_at < 0.5:
             self.hits.append(dict(
@@ -289,6 +332,8 @@ class DetectorNode(Node):
         self.detected = detected
 
     def _publish_detector_state(self):
+        if not self.use_adc:
+            return
         now = time.monotonic()
         recent = [t for t in self.sample_times if now - t <= 2.0]
         rate = (len(recent) - 1) / (recent[-1] - recent[0]) if len(recent) > 1 and recent[-1] > recent[0] else 0.0
@@ -296,7 +341,7 @@ class DetectorNode(Node):
 
         channel_name = f'AIN{self.adc_channel - 4}' if self.adc_channel >= 4 else f'MUX{self.adc_channel}'
         state_data = dict(
-            connected=True,
+            connected=fresh,
             fresh=fresh,
             port=f'I2C bus 1, 0x48 ({channel_name})',
             baud_rate=0,
@@ -311,7 +356,7 @@ class DetectorNode(Node):
             ),
             baseline_adc=self.baseline,
             full_response_adc=self.full_response,
-            error=None,
+            error=self.configuration_error or (None if fresh else 'No fresh ADC samples; start acquisition and check A2 wiring'),
             reference_voltage=self.reference_voltage,
             command_result=self.command_result
         )
@@ -319,7 +364,7 @@ class DetectorNode(Node):
 
     def publish(self):
         arm = self.arm if time.monotonic() - self.arm_at < 0.5 else {}
-        fresh = time.monotonic() - self.signal_at < 0.5
+        fresh = self.signal_at > 0 and time.monotonic() - self.signal_at < 0.5 and not self.configuration_error
         self._publish_detector_state()
 
         now = time.monotonic()
@@ -328,7 +373,7 @@ class DetectorNode(Node):
         channel_name = f'AIN{self.adc_channel - 4}' if self.adc_channel >= 4 else f'MUX{self.adc_channel}'
 
         sensor_info = dict(
-            available=True,
+            available=bool(self.signal_at),
             fresh=fresh,
             device=f'I2C ADS1115 ({channel_name})',
             age_ms=round((now - self.signal_at) * 1000) if self.signal_at else None,
@@ -344,8 +389,11 @@ class DetectorNode(Node):
                 amplitude_adc=int(round(self.last_raw_adc))
             ),
             history=self.sensor.snapshot().get('history', []),
-            command_result=self.command_result
+            command_result=self.command_result, error=self.configuration_error or (None if fresh else 'No fresh ADC samples; start acquisition and check wiring')
         )
+        if not self.use_adc:
+            sensor_info = self.sensor.snapshot()
+        peak = {**self.latest_peak, 'fresh': fresh and now-self.latest_peak['timestamp'] <= 30} if self.latest_peak else None
 
         self.publisher.publish(String(data=json.dumps(dict(detector=dict(
             fresh=fresh, sensor=sensor_info, signal_ratio=self.signal,
@@ -354,7 +402,7 @@ class DetectorNode(Node):
             sweep_speed_min=0.684 if arm.get('connected') else 5.0,
             sweep_speed_max=arm.get('motion_speed_limit', 180 / 0.684) * 0.684,
             beam_half_angle_deg=45, beam_min_angle_deg=self.lower, beam_max_angle_deg=self.upper,
-            beam=self.beam, latest_peak=self.latest_peak), detections=self.hits), allow_nan=False)))
+            beam=self.beam, latest_peak=peak), detections=self.hits), allow_nan=False)))
 
 
 def main():

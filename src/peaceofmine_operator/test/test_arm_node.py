@@ -74,6 +74,33 @@ class ActuatorTest(unittest.TestCase):
         rclpy.shutdown()
         self.tmp.cleanup()
 
+    def test_probe_cycle_retracts_without_cancelling_its_operation(self):
+        for _ in range(20):
+            self.command(self.probe, action='home', held=True, hold_id='cycle-home', load_percent=20.)
+            self.spin(.08)
+            if self.probe.home_position is not None:
+                break
+        self.assertIsNotNone(self.probe.home_position, self.probe.reason)
+        self.command(self.probe, action='stop')
+        self.probe.contact.configure(dict(enabled=True, mux=4, level=100., direction='above', hysteresis=0., debounce_ms=0.))
+        sequence = [0]
+        def contact_sample():
+            sequence[0] += 1
+            self.probe.contact.sample(0., sequence[0], 'cycle-test')
+        timer = self.observer.create_timer(.04, contact_sample)
+        contact_sample()
+        try:
+            result = self.command(self.probe, action='probe_cycle', depth_mm=1.)
+            self.assertTrue(result['success'], result)
+            operation_id = self.probe.operation.operation_id
+            self.spin(1.4)
+            self.assertFalse(self.probe.cycle_active)
+            self.assertEqual(self.probe.last_probe_result['status'], 'CLEAR', self.probe.reason)
+            self.assertIsNone(self.probe.operation)
+            self.assertEqual(self.driver.runtime.outcomes[2][0], operation_id)
+        finally:
+            self.observer.destroy_timer(timer)
+
     def test_configured_speed_limit_survives_typed_status(self):
         from peaceofmine_interfaces.msg import ActuatorStatus
         from peaceofmine_operator.actuator_protocol import status_dict

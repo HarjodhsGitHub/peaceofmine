@@ -1,6 +1,7 @@
 import json
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+import time
 import rclpy
 from std_msgs.msg import String, Float32
 from nav_msgs.msg import Odometry
@@ -22,6 +23,43 @@ class DetectorTest(unittest.TestCase):
 
     def tearDown(self):
         self.node.destroy_node()
+
+    def test_adc_uses_A2_once_and_rejects_stale_or_replayed_samples(self):
+        from peaceofmine_interfaces.msg import AdcSample, AdcSamples
+        packet = AdcSamples(valid=True, session='sensor', config_revision=self.node.adc_revision)
+        sample = AdcSample(channel=6, sequence=1, volts=2.)
+        now = time.time()
+        sample.stamp.sec = int(now)
+        sample.stamp.nanosec = int((now-int(now))*1e9)
+        packet.samples.append(sample)
+        self.node.adc_samples_cb(packet)
+        self.assertEqual(self.node.seq, 1)
+        self.assertAlmostEqual(self.node.last_raw_adc, 102.)
+        self.node.adc_samples_cb(packet)
+        self.assertEqual(len(self.node.recent_samples), 1)
+        sample.sequence = 2
+        sample.stamp.sec -= 10
+        packet.samples = [sample]
+        self.node.adc_samples_cb(packet)
+        self.assertEqual(self.node.seq, 1)
+        packet.valid = False
+        self.node.adc_samples_cb(packet)
+        self.node.publish()
+        self.assertFalse(json.loads(self.node.publisher.publish.call_args.args[0].data)['detector']['fresh'])
+
+    def test_detection_peak_expires_and_invalidates_after_movement(self):
+        self.node.angle_cb(Float32(data=0.))
+        self.node.odometry_cb(Odometry())
+        self.node.signal_cb(Float32(data=1.))
+        self.node.publish()
+        self.assertTrue(json.loads(self.node.publisher.publish.call_args.args[0].data)['detector']['latest_peak']['fresh'])
+        with patch('time.monotonic', return_value=time.monotonic()+31):
+            self.node.publish()
+            self.assertFalse(json.loads(self.node.publisher.publish.call_args.args[0].data)['detector']['latest_peak']['fresh'])
+        odom = Odometry()
+        odom.pose.pose.position.x = 1.
+        self.node.odometry_cb(odom)
+        self.assertIsNone(self.node.latest_peak)
 
     def test_threshold_hit_requires_fresh_position(self):
         self.node.signal_cb(Float32(data=1.))

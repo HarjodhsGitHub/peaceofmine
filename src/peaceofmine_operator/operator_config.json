@@ -62,25 +62,25 @@
         },
         {
           "mux": 4,
-          "enabled": false,
+          "enabled": true,
           "multiplier": 1,
           "offset": 0
         },
         {
           "mux": 5,
-          "enabled": true,
-          "multiplier": 1,
-          "offset": 0
-        },
-        {
-          "mux": 6,
           "enabled": false,
           "multiplier": 1,
           "offset": 0
         },
         {
-          "mux": 7,
+          "mux": 6,
           "enabled": true,
+          "multiplier": 1,
+          "offset": 0
+        },
+        {
+          "mux": 7,
+          "enabled": false,
           "multiplier": 1,
           "offset": 0
         }
@@ -91,14 +91,14 @@
       "none",
       "none",
       "none",
-      "none",
       "probe",
       "none",
-      "detector"
+      "detector",
+      "none"
     ],
     "probe_trigger": {
       "enabled": false,
-      "mux": 5,
+      "mux": 4,
       "level": 1,
       "direction": "above",
       "hysteresis": 0,

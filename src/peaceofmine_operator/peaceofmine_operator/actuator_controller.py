@@ -355,7 +355,8 @@ class ActuatorController(Node):
             servo_id=self.ident,sweeping=bool(self.state.get('sweeping')),motion_speed_limit=self.motion_speed,calibrated=bool(calibration),
             minimum=calibration['minimum'] if calibration else 0,center=calibration['center'] if calibration else 0,
             maximum=calibration['maximum'] if calibration else 0,homed=bool(probe.get('homed')),
-            probe_ready=bool(probe.get('ready')),probe_active=bool(probe.get('active')),probe_holding=bool(probe.get('holding')),
+            probe_ready=bool(probe.get('ready')),probe_active=bool(probe.get('active')),
+            probe_cycle_active=bool(probe.get('cycle_active')),probe_holding=bool(probe.get('holding')),
             depth_mm=float(probe.get('depth_mm') or 0),target_mm=float(probe.get('target_mm') or 0),
             max_depth_mm=float(probe.get('max_depth_mm') or 0))
         status.header.stamp=self.get_clock().now().to_msg()

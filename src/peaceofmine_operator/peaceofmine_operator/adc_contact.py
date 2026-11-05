@@ -6,7 +6,7 @@ import time
 class AdcContact:
     def __init__(self, clock=time.monotonic):
         self.clock = clock
-        self.config = dict(enabled=False, mux=5, level=1., direction='above', hysteresis=0., debounce_ms=0.,
+        self.config = dict(enabled=False, mux=4, level=1., direction='above', hysteresis=0., debounce_ms=0.,
                            spike_threshold=0.3)
         self.value = None
         self.received = 0.
@@ -48,6 +48,8 @@ class AdcContact:
         spike_thresh = float(self.config.get('spike_threshold', 0.3))
         # Find past sample from 50ms to 200ms ago to detect sudden impact against soil baseline
         past_samples = [v for t, v in self.history if 0.05 <= (now - t) <= 0.25]
+        if now - self.spike_detected_at > 0.5:
+            self.spike_detected = False
         if past_samples:
             past_val = past_samples[0]
             sign = 1 if self.config.get('direction', 'above') == 'above' else -1
@@ -55,8 +57,6 @@ class AdcContact:
             if delta >= spike_thresh:
                 self.spike_detected = True
                 self.spike_detected_at = now
-        elif now - self.spike_detected_at > 0.5:
-            self.spike_detected = False
 
         self.history.append((now, value))
 
@@ -75,6 +75,6 @@ class AdcContact:
         is_hit = (self.detected or self.spike_detected) if valid else None
         return dict(enabled=self.config.get('enabled', False), fresh=valid, detected=is_hit,
             spike_detected=self.spike_detected if valid else False,
-            value=self.value if valid else None, mux=self.config.get('mux', 5), level=self.config.get('level', 1.0),
+            value=self.value if valid else None, mux=self.config.get('mux', 4), level=self.config.get('level', 1.0),
             direction=self.config.get('direction', 'above'),
             spike_threshold=self.config.get('spike_threshold', 0.3))

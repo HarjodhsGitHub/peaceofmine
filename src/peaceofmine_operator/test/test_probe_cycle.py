@@ -1,35 +1,6 @@
-import sys
 import unittest
 from unittest.mock import MagicMock, patch
 import time
-
-# Mock ROS modules for host execution
-import types
-class MockNode:
-    pass
-
-class MockModule(types.ModuleType):
-    def __getattr__(self, name):
-        if name == 'Node':
-            return MockNode
-        return MagicMock()
-
-for mod_name in [
-    'rclpy', 'rclpy.node', 'rclpy.qos', 'rclpy.parameter', 'rclpy.action', 'rclpy.task', 'rclpy.signals',
-    'nav_msgs', 'nav_msgs.msg', 'geometry_msgs', 'geometry_msgs.msg', 'sensor_msgs', 'sensor_msgs.msg',
-    'std_msgs', 'std_msgs.msg', 'mavros_msgs', 'mavros_msgs.msg', 'peaceofmine_interfaces',
-    'peaceofmine_interfaces.msg', 'peaceofmine_interfaces.srv', 'peaceofmine_interfaces.action'
-]:
-    if mod_name not in sys.modules:
-        m = MockModule(mod_name)
-        m.__path__ = []
-        sys.modules[mod_name] = m
-
-class MockBool:
-    def __init__(self, data=False):
-        self.data = bool(data)
-
-sys.modules['std_msgs.msg'].Bool = MockBool
 
 import importlib.util
 from pathlib import Path
@@ -56,6 +27,7 @@ class ProbeCycleTest(unittest.TestCase):
         self.probe.contact = MagicMock()
         self.probe.contact.spike_detected = False
         self.probe.contact.detected = False
+        self.probe.contact.snapshot.side_effect = lambda: dict(enabled=True, fresh=True, detected=self.probe.contact.spike_detected or self.probe.contact.detected)
         self.probe.speed = 0.0
         self.probe.speed_limit = 0.03
         self.probe.odometry_at = time.monotonic()
@@ -109,6 +81,26 @@ class ProbeCycleTest(unittest.TestCase):
         self.assertEqual(self.probe.cycle_target_depth, 80.0)
         self.assertIsNotNone(self.probe.operation)
 
+    def test_cycle_rejects_stale_disabled_and_already_triggered_contact(self):
+        for contact in (dict(enabled=False, fresh=False, detected=None),
+                        dict(enabled=True, fresh=False, detected=None),
+                        dict(enabled=True, fresh=True, detected=True)):
+            self.probe.contact.snapshot.side_effect = None
+            self.probe.contact.snapshot.return_value = contact
+            with self.assertRaises(ValueError):
+                self.probe.start_probe_cycle(80.)
+            self.assertFalse(self.probe.cycle_active)
+            self.probe.start.assert_not_called()
+
+    def test_cycle_never_reports_clear_when_contact_input_dies(self):
+        self.probe.start_probe_cycle(80.)
+        self.probe.contact.snapshot.side_effect = None
+        self.probe.contact.snapshot.return_value = dict(enabled=True, fresh=False, detected=None)
+        self.probe.telemetry.position = self.probe.operation.target
+        self.probe.update_behavior()
+        self.assertFalse(self.probe.cycle_active)
+        self.assertEqual(self.probe.last_probe_result['status'], 'ABORTED')
+
     def test_probe_cycle_spike_detection_and_retraction(self):
         self.probe.start_probe_cycle(80.0)
         self.assertEqual(self.probe.cycle_phase, 'DESCENDING')
@@ -153,6 +145,7 @@ class ProbeCycleTest(unittest.TestCase):
         self.probe.telemetry.position = 2000
         self.probe.contact.spike_detected = False
         self.probe.contact.detected = False
+        self.probe.contact.snapshot.side_effect = lambda: dict(enabled=True, fresh=True, detected=self.probe.contact.spike_detected or self.probe.contact.detected)
 
         self.probe.update_behavior()
         # Should switch to RETRACTING clear
@@ -201,9 +194,10 @@ class OperatorControlProbeTest(unittest.TestCase):
         self.ctrl._armed = True
         self.ctrl._calibrating = False
         self.ctrl._speed = 0.0
+        self.ctrl._stationary = lambda: self.ctrl._speed <= self.ctrl._probe_speed_limit
         self.ctrl._probe_speed_limit = 0.03
         self.ctrl._probe_fault = False
-        self.ctrl._probe_state = {'probe': {'ready': True, 'max_depth_mm': 120.0, 'cycle_active': False}}
+        self.ctrl._probe_state = {'probe': {'ready': True, 'max_depth_mm': 120.0, 'depth_mm': 0.0, 'cycle_active': False}}
         self.ctrl._probe_state_at = time.monotonic()
         self.ctrl._arm_state = {'sweeping': False, 'connected': True, 'calibration': {'minimum': 1024, 'center': 2048, 'maximum': 3072}}
         self.ctrl._arm_state_at = time.monotonic()
@@ -228,12 +222,13 @@ class OperatorControlProbeTest(unittest.TestCase):
         res = self.ctrl.handle_command('client1', {'type': 'start_probe_cycle', 'depth_mm': 80.0, 'request_id': 'req1'})
         self.assertIsNone(res)
         self.ctrl._probe_command_pub.publish.assert_called_once()
+        self.assertEqual(self.ctrl._probe_command_pub.publish.call_args.args[0].depth_mm, 80.0)
 
     def test_start_probe_cycle_blocked_when_moving(self):
         self.ctrl._speed = 0.05 # > 0.03 m/s limit
         res = self.ctrl.handle_command('client1', {'type': 'start_probe_cycle', 'depth_mm': 80.0, 'request_id': 'req1'})
         self.assertIsNotNone(res)
-        self.assertIn('rover is moving', res['message'])
+        self.assertIn('stationary', res['message'])
         self.ctrl._probe_command_pub.publish.assert_not_called()
 
     def test_drive_blocked_when_probe_cycle_active(self):
@@ -254,14 +249,14 @@ class OperatorControlProbeTest(unittest.TestCase):
         self.ctrl._probe_state['probe']['cycle_active'] = True
         res = self.ctrl.handle_command('client1', {'type': 'align_probe', 'angle_deg': -15.0})
         self.assertIsNotNone(res)
-        self.assertIn('deployed', res['message'])
+        self.assertIn('Stow', res['message'])
 
         # Case 2: depth > 2 mm
         self.ctrl._probe_state['probe']['cycle_active'] = False
         self.ctrl._probe_state['probe']['depth_mm'] = 20.0
         res = self.ctrl.handle_command('client1', {'type': 'align_probe', 'angle_deg': -15.0})
         self.assertIsNotNone(res)
-        self.assertIn('deployed', res['message'])
+        self.assertIn('Stow', res['message'])
 
     def test_pump_mark_dispatches_when_stationary_and_stowed(self):
         res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
@@ -284,14 +279,14 @@ class OperatorControlProbeTest(unittest.TestCase):
         self.ctrl._probe_state['probe']['cycle_active'] = True
         res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
         self.assertIsNotNone(res)
-        self.assertIn('Stow probe', res['message'])
+        self.assertIn('stow', res['message'].lower())
 
         # Case 2: depth > 2 mm
         self.ctrl._probe_state['probe']['cycle_active'] = False
         self.ctrl._probe_state['probe']['depth_mm'] = 15.0
         res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
         self.assertIsNotNone(res)
-        self.assertIn('Stow probe', res['message'])
+        self.assertIn('stow', res['message'].lower())
 
     def test_pump_mark_blocked_when_already_active(self):
         self.ctrl._pump_active = True

@@ -23,6 +23,17 @@ class ContactTest(unittest.TestCase):
         self.now+=.6
         self.assertIsNone(self.contact.snapshot()['detected'])
 
+    def test_spike_expires_with_continuous_samples(self):
+        self.contact.configure(dict(self.contact.config, level=10., debounce_ms=0.))
+        self.sample(0., 1)
+        self.now += .1
+        self.assertTrue(self.sample(.5, 2)['spike_detected'])
+        for seq in range(3, 12):
+            self.now += .1
+            result = self.sample(.5, seq)
+        self.assertFalse(result['spike_detected'])
+        self.assertFalse(result['detected'])
+
     def test_reordered_packets_do_not_refresh_input(self):
         self.sample(1.1,4)
         self.now+=.6

@@ -16,6 +16,7 @@ int32 maximum
 float64 speed_deg_s
 float64 load_percent
 float64 depth_mm
+float64 angle_deg
 float64 max_speed_deg_s
 float64 acceleration_deg_s2
 float64 max_extension_mm

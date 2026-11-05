@@ -31,6 +31,7 @@ class twist_consumer(rx.Node):
     _velocity = 0.0
     _steering = 0.0
     _last_msg = None
+    _pump_until = None
 
     def on_startup(self):
         if self.twist_type not in ("geometry_msgs/msg/Twist",
@@ -58,6 +59,7 @@ class twist_consumer(rx.Node):
 
     @rx.Subscriber(Bool, pump_top)
     def pump_cb(self, msg: Bool):
+        self._pump_until = self.get_clock().now().nanoseconds * 1e-9 + 0.25 if msg.data else None
         self.actuation.send_xtr(xtr1=100.0 if msg.data else 0.0)
 
     @rx.Subscriber(twist_type, twist_top)
@@ -74,6 +76,9 @@ class twist_consumer(rx.Node):
 
     @rx.Timer(0.1)
     def loop(self):
+        if self._pump_until is not None and self.get_clock().now().nanoseconds * 1e-9 >= self._pump_until:
+            self._pump_until = None
+            self.actuation.send_xtr(xtr1=0.0)
         age = (self.get_clock().now() - self._last_msg).nanoseconds * 1e-9
         if age > self.cmd_timeout:
             self._velocity = 0.0
