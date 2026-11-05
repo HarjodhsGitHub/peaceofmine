@@ -1,9 +1,7 @@
 <?xml version="1.0"?>
 <launch>
-  <arg name="probe_velocity_topic" default=""/>
   <arg name="fixture_angle_offset_deg" default="0.0"/>
   <arg name="simulation" default="false"/>
-  <arg name="odometry_topic" default="odometry/local"/>
   <arg name="serial_port" default="auto"/>
   <arg name="servo_id" default="-1"/>
   <arg name="probe_servo_id" default="-1"/>
@@ -43,8 +41,6 @@
     <param name="sweep_acceleration_deg_s2" value="$(var sweep_acceleration_deg_s2)" type="float"/>
   </node>
   <node pkg="peaceofmine_operator" exec="probe_controller_node.py" name="probe_controller" output="screen">
-    <param name="velocity_topic" value="$(var probe_velocity_topic)" type="str"/>
-    <param name="odometry_topic" value="$(var odometry_topic)"/>
     <param name="config_file" value="$(var config_file)" type="str"/>
     <param name="simulation" value="$(var simulation)"/>
     <param name="servo_id" value="$(var probe_servo_id)"/>

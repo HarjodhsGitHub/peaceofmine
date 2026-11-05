@@ -2,9 +2,6 @@
 """Probe homing, depth and contact policy over typed driver telemetry."""
 import math
 import time
-from nav_msgs.msg import Odometry
-from geometry_msgs.msg import TwistWithCovarianceStamped
-from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Bool, Float32
 from peaceofmine_interfaces.msg import AdcSamples, ContactState
 from peaceofmine_operator.actuator_controller import ActuatorController
@@ -26,8 +23,6 @@ class ProbeController(ActuatorController):
         self.target = 0.
         self.started = 0.
         self.fault = False
-        self.speed = 0.
-        self.odometry_at = 0.
         self.history = []
         self.cycle_active = False
         self.cycle_phase = 'IDLE'
@@ -38,7 +33,6 @@ class ProbeController(ActuatorController):
         super().__init__(**kwargs)
         self.extension = probe_calibration.load(self.config_file,self.simulation)
         self.apply_probe_motion(self.saved.get('probe_motion',dict(max_speed_deg_s=self.motion_speed*.684,acceleration_deg_s2=34.332)))
-        self.speed_limit = self.declare_parameter('probe_motion_speed_limit_mps', .03).value
         self.contact = AdcContact()
         self.load_contact = ProbeContact()
         self.hold_target = True
@@ -47,13 +41,6 @@ class ProbeController(ActuatorController):
         self.depth_pub = self.create_publisher(Float32, 'probe/depth_mm', 10)
         self.pressure_pub = self.create_publisher(Float32, 'probe/pressure_ratio', 10)
         self.contact_pub = self.create_publisher(ContactState, 'probe/contact', 1)
-        velocity_topic = self.declare_parameter('velocity_topic','').value
-        odometry_topic = self.declare_parameter('odometry_topic','odometry/local').value
-        self.velocity_stamp = -1
-        if velocity_topic:
-            self.create_subscription(TwistWithCovarianceStamped, velocity_topic, self.odometry_cb, qos_profile_sensor_data)
-        else:
-            self.create_subscription(Odometry, odometry_topic, self.odometry_cb, qos_profile_sensor_data)
         self.create_subscription(Bool, 'probe/fault', lambda msg:setattr(self, 'fault', msg.data), 1)
         self.create_subscription(AdcSamples, 'adc/samples', self.adc_cb, 10)
         self.create_timer(1., self.reload_contact)
@@ -100,21 +87,8 @@ class ProbeController(ActuatorController):
             if sample.channel == self.contact.config['mux'] and 0 <= age <= self.contact.max_age:
                 self.contact.sample(sample.scaled, sample.sequence, msg.session)
 
-    def odometry_cb(self, msg):
-        stamp = msg.header.stamp.sec*1000000000+msg.header.stamp.nanosec
-        if stamp <= self.velocity_stamp:
-            return
-        self.velocity_stamp = stamp
-        twist = msg.twist.twist
-        values = (twist.linear.x, twist.linear.y, twist.linear.z, twist.angular.x, twist.angular.y, twist.angular.z)
-        self.speed = max(abs(v) for v in values) if all(math.isfinite(v) for v in values) else math.inf
-        self.odometry_at = time.monotonic()
-
-    def stationary(self):
-        return time.monotonic()-self.odometry_at < .5 and self.speed <= self.speed_limit
-
     def interlock(self):
-        return super().interlock() and self.stationary() and not self.fault
+        return super().interlock() and not self.fault
 
     def calibration(self):
         return None
@@ -154,7 +128,7 @@ class ProbeController(ActuatorController):
         if type(depth) not in (int, float) or not math.isfinite(depth) or not 0 < depth <= calibration['max_extension_mm']:
             raise ValueError(f"Target depth must be between 0 and {calibration['max_extension_mm']} mm")
         if not self.interlock():
-            raise ValueError('Probe cycle requires stationary odometry and no fault')
+            raise ValueError('Probe cycle requires RC permission, a connected probe and no fault')
         if round(self.home_position-depth/calibration['max_extension_mm']*calibration['travel_ticks']) == self.home_position:
             raise ValueError('Probe depth is smaller than one encoder tick')
         if self.cycle_active or self.operation:
@@ -188,7 +162,7 @@ class ProbeController(ActuatorController):
     def special_command(self, action, command):
         if action == 'home':
             if command.get('held') is not True or not self.interlock():
-                raise ValueError('Homing requires held command, stationary odometry and no fault')
+                raise ValueError('Homing requires a held command, RC permission and no fault')
             hold = command.get('hold_id')
             if not isinstance(hold,str) or not hold:
                 raise ValueError('Home requires a unique hold identifier')
@@ -207,7 +181,7 @@ class ProbeController(ActuatorController):
             return True
         elif action == 'zero_contact':
             if not self.interlock():
-                raise ValueError('Contact zero requires permission and stationary odometry')
+                raise ValueError('Contact zero requires RC permission and a connected probe')
             self.load_contact.zero(time.monotonic())
             self.reason = 'Motor contact baseline zeroed for this session'
         elif action == 'configure_motion':
@@ -259,8 +233,8 @@ class ProbeController(ActuatorController):
             if not self.interlock():
                 self.cycle_active = False
                 self.cycle_phase = 'IDLE'
-                self.last_probe_result = dict(status='ABORTED', reason='Rover moved or interlock lost', timestamp=time.time())
-                self.stop('Probe cycle aborted: vehicle moved or interlock lost')
+                self.last_probe_result = dict(status='ABORTED', reason='RC permission or probe connection lost', timestamp=time.time())
+                self.stop('Probe cycle aborted: RC permission or probe connection lost')
                 return
 
             ready = bool(self.connected() and self.extension and self.extension['servo_id']==self.ident and self.home_position is not None)

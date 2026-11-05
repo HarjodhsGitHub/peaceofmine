@@ -497,24 +497,28 @@ function markCurrentPose() {
   showNotice(`Pose logged at (${robot.x.toFixed(2)}, ${robot.y.toFixed(2)}).`);
 }
 
-function probeActionBlock(allowManualTarget = false) {
+function operationBlock(allowManualTarget = false) {
   if (!state.connected) return 'Connect to the operator stack.';
   if (!state.drive.you_control_owner) return 'Take control first.';
   if (!state.safety?.servo_allowed || !state.drive.armed) return state.safety?.servo_reason || 'RC must permit servo motion.';
   if (state.drive.calibrating) return 'Close Settings before operating.';
-  if (state.robot.stationary !== true) return 'Stop the rover; fresh stationary odometry is required.';
-  if (state.probe.ready !== true || !Number.isFinite(state.probe.depth_mm) || !Number.isFinite(state.probe.max_depth_mm) || state.probe.max_depth_mm <= 0) return state.probe.reason || 'Home and calibrate the probe in Settings → Probe.';
-  if (state.probe.fault) return 'Clear the probe fault in Settings → Probe.';
   if (state.probe.cycle_active) return 'Probe cycle is running. Stop probe to cancel.';
   if (!allowManualTarget && (state.probe.active || state.probe.holding)) return 'Stop probe before starting another action.';
   if (state.pump_active || state.drive.pump_active) return 'Wait for the marking pump to stop.';
   return '';
 }
 
+function probeActionBlock(allowManualTarget = false) {
+  const blocked = operationBlock(allowManualTarget);
+  if (blocked) return blocked;
+  if (state.probe.ready !== true || !Number.isFinite(state.probe.depth_mm) || !Number.isFinite(state.probe.max_depth_mm) || state.probe.max_depth_mm <= 0) return 'Home and calibrate the probe in Settings → Probe.';
+  if (state.probe.fault) return 'Clear the probe fault in Settings → Probe.';
+  return '';
+}
+
 function triggerPumpMark() {
-  const blocked = probeActionBlock();
+  const blocked = operationBlock();
   if (blocked) { showNotice(blocked); return; }
-  if (state.probe.depth_mm > 2) { showNotice('Stow the probe before marking.'); return; }
   if (pendingPumpMark) return;
   pendingPumpMark = {at: performance.now(), robot: {...state.robot}, signal: state.detector.signal_ratio};
   send({type: 'pump_mark', duration_s: 2});
@@ -676,9 +680,8 @@ function armSetupBlock() {
 }
 
 function alignProbeToPeak() {
-  const blocked = probeActionBlock() || armSetupBlock();
+  const blocked = operationBlock() || armSetupBlock();
   if (blocked) { showNotice(blocked); return; }
-  if (state.probe.depth_mm > 2) { showNotice('Stow the probe before aligning.'); return; }
   const align = getProbeAlignment();
   if (!align.hasPeak || !align.reachable) { showNotice(align.reason); return; }
   send({type: 'align_probe', angle_deg: align.pivotAngle});
@@ -708,17 +711,15 @@ function updateHud() {
   $('environment-label').textContent = `PeaceOfMine · ${state.safety?.mode === 'simulation' ? 'simulation' : state.connected ? 'vehicle' : 'connecting'}`;
   $('stop-controls').disabled = !owner;
   const blocked = probeActionBlock();
-  const probeStowed = probe.ready === true && Number.isFinite(probe.depth_mm) && probe.depth_mm <= 2 && !probe.cycle_active;
+  const otherActionBlock = operationBlock();
   const align = getProbeAlignment();
   const contact = probe.adc_contact_state;
   const contactBlock = !contact?.enabled || !contact.fresh ? 'Enable a fresh contact sensor in Settings → ADS1115.'
     : contact.detected ? 'Contact is already active. Check the sensor.' : '';
   const cycleBlock = blocked || (detector.sweep_enabled ? 'Stop sweeping before probing.' : '') || contactBlock;
-  const alignBlock = blocked || armSetupBlock() || (!probeStowed ? 'Stow the probe before aligning.' : '') || (!align.hasPeak || !align.reachable ? align.reason : '');
-  const markBlock = blocked || (!probeStowed ? 'Stow the probe before marking.' : '');
-  const sweepBlock = !owner ? 'Take control to sweep.' : !servoSafe ? state.safety?.servo_reason || 'RC must permit servo motion.'
-    : drive.calibrating ? 'Close Settings before sweeping.' : !probeStowed ? 'Home and stow the probe before sweeping.'
-    : armSetupBlock();
+  const alignBlock = otherActionBlock || armSetupBlock() || (!align.hasPeak || !align.reachable ? align.reason : '');
+  const markBlock = otherActionBlock;
+  const sweepBlock = otherActionBlock || armSetupBlock();
   $('mode-sweep-help').textContent = sweepBlock || 'Sweep the detector while searching.';
   $('mode-align-help').textContent = alignBlock || align.reason;
   $('mode-probe-help').textContent = cycleBlock || 'Use the cycle depth set in the Probe panel.';
@@ -2105,13 +2106,12 @@ function updateMetalSettings() {
     metalFeedback = 'No acknowledgement from detector driver.';
     metalPending = null;
   }
-  const moving = state.robot.stationary !== true;
-  const allowed = fresh && owner && !moving && !metalPending;
+  const allowed = fresh && owner && state.safety?.servo_allowed && !metalPending;
   for (const id of ['metal-zero', 'metal-apply', 'metal-reset']) $(id).disabled = !allowed;
   $('metal-control').hidden = owner;
   $('metal-control').disabled = !state.connected;
   $('metal-feedback').textContent = !fresh ? 'Fresh detector readings required for calibration.'
-    : !owner ? 'Take control to calibrate.' : moving ? 'Stop the vehicle; fresh stationary odometry is required.'
+    : !owner ? 'Take control to calibrate.' : !state.safety?.servo_allowed ? state.safety?.servo_reason || 'RC must permit calibration.'
     : metalPending ? 'Applying calibration...' : metalFeedback || 'Ready';
   const packetKey = JSON.stringify(sensor.packet);
   if (fresh && sensor.packet && packetKey !== metalPacketKey) {

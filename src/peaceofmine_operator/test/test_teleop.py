@@ -48,6 +48,7 @@ class TeleopTest(unittest.TestCase):
         self.command('arm')
 
     def test_detector_calibration_requires_control_and_fresh_sensor(self):
+        self.node._odometry_at = 0.
         command = dict(action='apply', request_id='trigger', baseline_adc=20, full_response_adc=150)
         self.assertIsNotNone(self.command('detector_calibrate', **command))
         self.command('take_control')
@@ -71,25 +72,19 @@ class TeleopTest(unittest.TestCase):
         self.output.assert_called_with(0., 0.)
         self.assertFalse(self.node._deadman)
 
-    def test_mark_rejects_unknown_probe_and_stale_or_rotating_vehicle(self):
-        from peaceofmine_interfaces.msg import ActuatorStatus
-        from nav_msgs.msg import Odometry
-        self.arm()
-        self.assertIsNotNone(self.command('pump_mark'))
-        self.node._probe_state_cb(ActuatorStatus(probe_ready=True, depth_mm=0.))
-        self.node._odometry_at = 99.
-        self.assertIsNotNone(self.command('pump_mark'))
-        odom = Odometry()
-        odom.twist.twist.angular.z = .2
-        self.node._odometry_cb(odom)
-        self.assertFalse(self.node.snapshot()['robot']['stationary'])
-        self.assertIsNotNone(self.command('pump_mark'))
-        odom.twist.twist.angular.z = 0.
-        self.node._odometry_cb(odom)
+    def test_mark_is_independent_of_odometry_and_probe_setup_but_rc_still_stops_it(self):
+        from test_rc_safety import rc
+        self.node._rc_safety.simulation=False
+        self.node._rc_cb(rc())
+        self.command('take_control')
+        self.node._odometry_at=0.
+        self.node._probe_state={}
         self.assertIsNone(self.command('pump_mark'))
-        self.now.return_value = 100.6
         self.node._drive_watchdog()
+        self.assertTrue(self.node._pump_active)
+        self.node._rc_cb(rc(2000000,pwm=2000))
         self.assertFalse(self.node._pump_active)
+        self.assertFalse(self.node._armed)
 
     def test_align_angle_survives_typed_command(self):
         from peaceofmine_interfaces.msg import ActuatorStatus
@@ -132,9 +127,9 @@ class TeleopTest(unittest.TestCase):
             self.node._drive_watchdog()
             self.assertTrue(permission.call_args.args[0].data)
             self.assertIsNotNone(self.command('drive', linear_x=.4, deadman=True))
-            message.system_status = 8
-            message.header.stamp.sec = 101
-            self.node._state_cb(message)
+            remote.channels[4] = 2000
+            remote.header.stamp.sec = 101
+            self.node._rc_cb(remote)
             self.assertFalse(self.node._armed)
             self.assertFalse(permission.call_args.args[0].data)
             self.assertIsNotNone(self.command('arm'))
@@ -169,7 +164,8 @@ class TeleopTest(unittest.TestCase):
         self.command('drive', linear_x=.4, deadman=True)
         self.assertTrue(self.node._armed)
         with patch.object(self.node._probe_command_pub, 'publish') as probe, patch.object(self.node._sweep_enabled_pub, 'publish') as sweep:
-            self.node._rc_safety.samples['state'][1].system_status = 8
+            from test_rc_safety import rc
+            self.node._rc_cb(rc(2000000,pwm=2000))
             self.node._drive_watchdog()
             self.assertFalse(self.node._armed)
             self.output.assert_called_with(0.0, 0.0)
@@ -177,7 +173,7 @@ class TeleopTest(unittest.TestCase):
             for kind in ('arm', 'drive', 'probe_target', 'sweep_enabled', 'sweep_speed'):
                 self.assertIsNotNone(self.command(kind, deadman=True))
             self.assertTrue(all(command_dict(call.args[0])['action'] == 'stop' for call in probe.call_args_list))
-            self.node._rc_safety.samples['state'][1].system_status = 4
+            self.node._rc_cb(rc(3000000))
             self.node._drive_watchdog()
             self.assertTrue(self.node._armed)
             self.assertFalse(self.node._deadman)

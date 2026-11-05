@@ -145,7 +145,7 @@ function createServoSettings(role) {
     metric('arm-moving', typeof servo.moving === 'boolean' ? (servo.moving ? 'Yes' : 'No') : '—');
     metric('arm-power', `${number(servo.voltage, 1, ' V')} / ${number(servo.temperature_c, 0, ' °C')}`);
     metric('arm-model', `${servo.model ?? '—'} / ${servo.firmware ?? '—'}`);
-    $('arm-px4').textContent = state.safety?.servo_allowed ? 'Movement permitted (status 4)' : 'Movement blocked';
+    $('arm-px4').textContent = state.safety?.servo_allowed ? 'RC permits motion' : state.safety?.servo_reason || 'RC blocks motion';
     $('arm-calibration-stop').disabled = !owner;
     const selectionBlocked = !state.connected ? 'Connect to the dashboard first.'
       : !owner ? 'Take control to select a servo or record calibration. Motion permission comes from the RC.'
@@ -189,7 +189,7 @@ function createServoSettings(role) {
     const jogReason = !state.connected ? 'Dashboard disconnected'
       : !owner ? 'Take control first'
       : !servo.connected ? 'Servo not connected'
-      : !state.safety?.servo_allowed ? 'Blocked: PX4 must report status 4'
+      : !state.safety?.servo_allowed ? state.safety?.servo_reason || 'RC blocks motion'
       : armHoldTimer !== null ? 'Jog command held · release to stop'
       : role === 'probe' ? 'Ready · hold up to retract or down to extend' : 'Ready · hold left or right to move';
     $('arm-jog-status').textContent = jogReason;
@@ -235,7 +235,7 @@ function createServoSettings(role) {
     $('arm-select-id').onclick = () => {
       if ($('arm-servo-id').value !== '') armCommand('select', {servo_id: Number($('arm-servo-id').value)});
     };
-    $('arm-calibration-stop').onclick = () => { stopArmMove(); armCommand('stop'); send({type: 'estop'}); };
+    $('arm-calibration-stop').onclick = () => { stopArmMove(); armCommand('stop'); };
     function bindHold(button, action, values) {
       const start = () => {
         if (button.disabled) return;

@@ -231,8 +231,6 @@ class OperatorControl(Node):
             self._motion_speed = max(abs(v) for v in values) if all(math.isfinite(v) for v in values) else math.inf
             self._speed = twist.linear.x if math.isfinite(twist.linear.x) else None
             self._odometry_at = time.monotonic()
-            if self._pump_active and not self._stationary():
-                self._stop_motion_locked()
 
     def _stationary(self):
         return time.monotonic() - self._odometry_at < .5 and self._motion_speed <= self._probe_speed_limit
@@ -241,12 +239,9 @@ class OperatorControl(Node):
         probe = self._probe_state.get('probe', {})
         return bool(self._pump_active or probe.get('cycle_active') or (probe.get('depth_mm') or 0) > 2)
 
-    def _stowed_probe(self):
+    def _probe_active(self):
         probe = self._probe_state.get('probe', {})
-        depth = probe.get('depth_mm')
-        return (time.monotonic() - self._probe_state_at < .5 and probe.get('ready') is True
-                and type(depth) in (int, float) and math.isfinite(depth) and 0 <= depth <= 2
-                and not probe.get('cycle_active'))
+        return bool(probe.get('active') or probe.get('holding') or probe.get('cycle_active'))
 
     def _detector_state_cb(self, message):
         try:
@@ -377,8 +372,6 @@ class OperatorControl(Node):
                     self.release(client)
                     self._client_seen.pop(client, None)
             safety = self._enforce_safety_locked()
-            if self._pump_active and (not self._stationary() or not self._stowed_probe()):
-                self._stop_motion_locked()
             self._permission_pub.publish(Bool(data=bool(self._armed and safety['servo_allowed'] and self._lease is not None)))
             self._pump_pub.publish(Bool(data=self._pump_active))
         self._emit_cmd_vel()
@@ -398,8 +391,8 @@ class OperatorControl(Node):
         if payload.get('action') == 'select_role':
             self._selected_actuator = role
             return None
-        if role == 'arm' and payload.get('action') in ('jog', 'move', 'position', 'angle') and self._payload_blocks_drive():
-            return {'type': 'error', 'message': 'Stow the probe and finish marking before moving the arm.'}
+        if role == 'arm' and payload.get('action') in ('jog', 'move', 'position', 'angle') and (self._probe_active() or self._pump_active):
+            return {'type': 'error', 'message': 'Stop the active probe or marking operation before moving the arm.'}
         publisher = self._arm_command_pub if role == 'arm' else self._probe_command_pub
         publisher.publish(command_message({**payload, 'role':role}))
         return None
@@ -502,8 +495,6 @@ class OperatorControl(Node):
             elif message_type == 'probe_zero_contact':
                 self._probe_command_pub.publish(command_message(dict(action='zero_contact', request_id=payload.get('request_id'))))
             elif message_type == 'detector_calibrate':
-                if not self._stationary():
-                    return {'type': 'error', 'message': 'Fresh stationary odometry required for detector calibration.'}
                 if not self._detector_telemetry.snapshot()['fresh']:
                     return {'type': 'error', 'message': 'Fresh detector readings required for calibration.'}
                 command = {key: payload[key] for key in ('action', 'request_id', 'baseline_adc', 'full_response_adc', 'reference_voltage') if key in payload}
@@ -568,9 +559,7 @@ class OperatorControl(Node):
                 requested = float(payload.get('depth_mm', 80.0 if message_type != 'probe_target' else 0.0))
                 if not math.isfinite(requested):
                     return {'type': 'error', 'message': 'Probe extension must be finite'}
-                if not self._stationary():
-                    error = {'type': 'error', 'message': 'Probe motion requires fresh stationary odometry; stop the rover.'}
-                elif self._pump_active:
+                if self._pump_active:
                     error = {'type': 'error', 'message': 'Wait for ground marking to finish.'}
                 elif self._probe_fault:
                     error = {'type': 'error', 'message': 'Probe motion is blocked by a probe fault.'}
@@ -589,8 +578,8 @@ class OperatorControl(Node):
                     else:
                         self._probe_command_pub.publish(command_message(dict(action='target', depth_mm=requested, request_id=payload.get('request_id'))))
             elif message_type == 'sweep_enabled':
-                if payload.get('enabled') and self._payload_blocks_drive():
-                    return {'type': 'error', 'message': 'Stow the probe and finish marking before sweeping.'}
+                if payload.get('enabled') and (self._probe_active() or self._pump_active):
+                    return {'type': 'error', 'message': 'Stop the active probe or marking operation before sweeping.'}
                 if payload.get('enabled') and not self._rc_safety.simulation:
                     if time.monotonic() - self._arm_state_at >= 1 or not self._arm_state.get('connected'):
                         return {'type': 'error', 'message': 'Select a connected arm servo in Settings first.'}
@@ -606,10 +595,10 @@ class OperatorControl(Node):
                 speed = max(minimum, min(maximum, float(payload.get('deg_s', 60.0))))
                 self._sweep_speed_pub.publish(Float32(data=speed))
             elif message_type == 'align_probe':
-                if self._calibrating or not self._stationary():
-                    return {'type': 'error', 'message': 'Close settings and stop the rover before aligning.'}
-                if self._pump_active or not self._stowed_probe():
-                    return {'type': 'error', 'message': 'Stow the probe before aligning.'}
+                if self._calibrating:
+                    return {'type': 'error', 'message': 'Close settings before aligning.'}
+                if self._pump_active or self._probe_active():
+                    return {'type': 'error', 'message': 'Stop the active probe or marking operation before aligning.'}
                 if not self._rc_safety.simulation:
                     if time.monotonic() - self._arm_state_at >= 1 or not self._arm_state.get('connected'):
                         return {'type': 'error', 'message': 'Select a connected arm servo in Settings first.'}
@@ -618,21 +607,16 @@ class OperatorControl(Node):
                 angle = float(payload.get('angle_deg', 0.0))
                 if not math.isfinite(angle):
                     return {'type': 'error', 'message': 'Target angle must be finite'}
-                if self._probe_state.get('probe', {}).get('cycle_active') or (self._probe_state.get('probe', {}).get('depth_mm') or 0) > 2.0:
-                    return {'type': 'error', 'message': 'Cannot align arm while probe is deployed'}
                 self._permission_pub.publish(Bool(data=True))
                 self._arm_command_pub.publish(command_message(dict(action='angle', angle_deg=angle, request_id=payload.get('request_id'))))
             elif message_type == 'pump_mark':
                 duration = float(payload.get('duration_s', 2.0))
                 if not math.isfinite(duration) or duration <= 0 or duration > 10.0:
                     return {'type': 'error', 'message': 'Invalid pump mark duration.'}
-                if self._calibrating or not self._stationary():
-                    return {'type': 'error', 'message': 'Close settings; fresh stationary odometry is required to mark.'}
-                if not self._stowed_probe():
-                    return {'type': 'error', 'message': 'Home and stow the probe before dispensing a mark.'}
-                probe = self._probe_state.get('probe', {})
-                if probe.get('cycle_active') or (probe.get('depth_mm') or 0.0) > 2.0:
-                    return {'type': 'error', 'message': 'Stow probe before dispensing mark.'}
+                if self._calibrating:
+                    return {'type': 'error', 'message': 'Close settings before marking.'}
+                if self._probe_active():
+                    return {'type': 'error', 'message': 'Stop the active probe operation before marking.'}
                 if self._pump_active:
                     return {'type': 'error', 'message': 'Pump mark cycle already in progress.'}
                 self._pump_active = True

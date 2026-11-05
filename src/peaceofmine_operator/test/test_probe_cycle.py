@@ -47,7 +47,7 @@ class ProbeCycleTest(unittest.TestCase):
         self.probe.acceleration = 10
 
         self.probe.connected = lambda: True
-        self.probe.interlock = lambda: self.probe.speed <= self.probe.speed_limit and not self.probe.fault
+        self.probe.interlock = lambda: not self.probe.fault
         self.probe.start = MagicMock(side_effect=self._mock_start)
         self.probe.stop = MagicMock(side_effect=self._mock_stop)
 
@@ -68,18 +68,14 @@ class ProbeCycleTest(unittest.TestCase):
         self.probe.lifecycle = 'IDLE'
 
     def test_start_probe_cycle_validates_interlock(self):
-        # Rover moving (speed = 0.1 m/s > 0.03 limit)
-        self.probe.speed = 0.1
+        self.probe.fault=True
         with self.assertRaises(ValueError):
-            self.probe.start_probe_cycle(80.0)
-
-        # Rover stationary -> succeeds
-        self.probe.speed = 0.0
-        self.probe.start_probe_cycle(80.0)
+            self.probe.start_probe_cycle(80.)
+        self.probe.fault=False
+        self.probe.start_probe_cycle(80.)
         self.assertTrue(self.probe.cycle_active)
-        self.assertEqual(self.probe.cycle_phase, 'DESCENDING')
-        self.assertEqual(self.probe.cycle_target_depth, 80.0)
-        self.assertIsNotNone(self.probe.operation)
+        self.assertEqual(self.probe.cycle_phase,'DESCENDING')
+        self.assertEqual(self.probe.cycle_target_depth,80.)
 
     def test_cycle_rejects_stale_disabled_and_already_triggered_contact(self):
         for contact in (dict(enabled=False, fresh=False, detected=None),
@@ -163,18 +159,12 @@ class ProbeCycleTest(unittest.TestCase):
         self.assertFalse(self.probe.last_probe_result['contact'])
         self.assertEqual(self.probe.last_probe_result['target_depth_mm'], 80.0)
 
-    def test_probe_cycle_aborts_if_rover_moves_during_descent(self):
-        self.probe.start_probe_cycle(80.0)
-        self.assertEqual(self.probe.cycle_phase, 'DESCENDING')
-
-        # Vehicle starts moving
-        self.probe.speed = 0.08 # exceeds 0.03 m/s limit
+    def test_probe_cycle_aborts_if_rc_permission_is_lost(self):
+        self.probe.start_probe_cycle(80.)
+        self.probe.interlock=lambda:False
         self.probe.update_behavior()
-
-        # Cycle should immediately abort
         self.assertFalse(self.probe.cycle_active)
-        self.assertEqual(self.probe.last_probe_result['status'], 'ABORTED')
-
+        self.assertEqual(self.probe.last_probe_result['status'],'ABORTED')
 
     def test_one_mm_cycle_requires_encoder_descent_and_retraction(self):
         self.probe.start_probe_cycle(1.)
@@ -248,12 +238,11 @@ class OperatorControlProbeTest(unittest.TestCase):
         self.ctrl._probe_command_pub.publish.assert_called_once()
         self.assertEqual(self.ctrl._probe_command_pub.publish.call_args.args[0].depth_mm, 80.0)
 
-    def test_start_probe_cycle_blocked_when_moving(self):
-        self.ctrl._speed = 0.05 # > 0.03 m/s limit
-        res = self.ctrl.handle_command('client1', {'type': 'start_probe_cycle', 'depth_mm': 80.0, 'request_id': 'req1'})
-        self.assertIsNotNone(res)
-        self.assertIn('stationary', res['message'])
-        self.ctrl._probe_command_pub.publish.assert_not_called()
+    def test_probe_cycle_dispatch_does_not_depend_on_odometry(self):
+        self.ctrl._stationary=lambda:False
+        res=self.ctrl.handle_command('client1',dict(type='start_probe_cycle',depth_mm=80.))
+        self.assertIsNone(res)
+        self.ctrl._probe_command_pub.publish.assert_called_once()
 
     def test_drive_blocked_when_probe_cycle_active(self):
         self.ctrl._probe_state['probe']['cycle_active'] = True
@@ -268,19 +257,13 @@ class OperatorControlProbeTest(unittest.TestCase):
         self.ctrl._permission_pub.publish.assert_called_once()
         self.ctrl._arm_command_pub.publish.assert_called_once()
 
-    def test_align_probe_blocked_when_probe_deployed(self):
-        # Case 1: cycle_active is True
-        self.ctrl._probe_state['probe']['cycle_active'] = True
-        res = self.ctrl.handle_command('client1', {'type': 'align_probe', 'angle_deg': -15.0})
-        self.assertIsNotNone(res)
-        self.assertIn('Stow', res['message'])
-
-        # Case 2: depth > 2 mm
-        self.ctrl._probe_state['probe']['cycle_active'] = False
-        self.ctrl._probe_state['probe']['depth_mm'] = 20.0
-        res = self.ctrl.handle_command('client1', {'type': 'align_probe', 'angle_deg': -15.0})
-        self.assertIsNotNone(res)
-        self.assertIn('Stow', res['message'])
+    def test_alignment_blocks_active_probe_but_not_setup_or_parked_depth(self):
+        self.ctrl._probe_state['probe']['cycle_active']=True
+        res=self.ctrl.handle_command('client1',dict(type='align_probe',angle_deg=-15.))
+        self.assertIn('active probe',res['message'])
+        self.ctrl._probe_state={'probe':dict(ready=False,depth_mm=20.)}
+        self.ctrl._stationary=lambda:False
+        self.assertIsNone(self.ctrl.handle_command('client1',dict(type='align_probe',angle_deg=-15.)))
 
     def test_pump_mark_dispatches_when_stationary_and_stowed(self):
         res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
@@ -291,26 +274,19 @@ class OperatorControlProbeTest(unittest.TestCase):
         self.assertTrue(published_msg.data)
         self.ctrl.create_timer.assert_called_once_with(2.0, self.ctrl._pump_timeout_cb)
 
-    def test_pump_mark_blocked_when_moving(self):
-        self.ctrl._speed = 0.05
-        res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
-        self.assertIsNotNone(res)
-        self.assertIn('stationary', res['message'])
-        self.ctrl._pump_pub.publish.assert_not_called()
+    def test_mark_does_not_require_odometry_or_probe_telemetry(self):
+        self.ctrl._probe_state={}
+        self.ctrl._stationary=lambda:False
+        self.assertIsNone(self.ctrl.handle_command('client1',dict(type='pump_mark',duration_s=2.)))
+        self.assertTrue(self.ctrl._pump_active)
 
-    def test_pump_mark_blocked_when_probe_deployed(self):
-        # Case 1: cycle_active is True
-        self.ctrl._probe_state['probe']['cycle_active'] = True
-        res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
-        self.assertIsNotNone(res)
-        self.assertIn('stow', res['message'].lower())
-
-        # Case 2: depth > 2 mm
-        self.ctrl._probe_state['probe']['cycle_active'] = False
-        self.ctrl._probe_state['probe']['depth_mm'] = 15.0
-        res = self.ctrl.handle_command('client1', {'type': 'pump_mark', 'duration_s': 2.0})
-        self.assertIsNotNone(res)
-        self.assertIn('stow', res['message'].lower())
+    def test_mark_blocks_active_probe_operation(self):
+        for active in ('cycle_active','active','holding'):
+            self.ctrl._probe_state={'probe':{active:True}}
+            res=self.ctrl.handle_command('client1',dict(type='pump_mark',duration_s=2.))
+            self.assertIn('active probe',res['message'])
+        self.ctrl._probe_state={'probe':dict(depth_mm=15.,ready=False)}
+        self.assertIsNone(self.ctrl.handle_command('client1',dict(type='pump_mark',duration_s=2.)))
 
     def test_pump_mark_blocked_when_already_active(self):
         self.ctrl._pump_active = True

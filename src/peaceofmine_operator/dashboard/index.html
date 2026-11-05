@@ -63,9 +63,9 @@
           <small id="mode-align-help" class="safety-note"></small>
         </div>
         <div class="operation-action">
-        <button id="mode-probe-btn" type="button" class="mode-btn" disabled title="Probe ground for contact (rover must be stationary)">
+        <button id="mode-probe-btn" type="button" class="mode-btn" disabled title="Lower the probe until contact or the selected depth, then retract">
           <span class="mode-text">Start probing</span>
-          <span id="mode-probe-pill" class="badge neutral">STOP ROVER</span>
+          <span id="mode-probe-pill" class="badge neutral">SETUP REQUIRED</span>
         </button>
           <small id="mode-probe-help" class="safety-note"></small>
         </div>
@@ -443,7 +443,7 @@
             <input id="arm-position-slider" type="range" min="0" max="4095" step="1" value="0" disabled>
             <p id="arm-jog-status" class="arm-jog-status" role="status">Jogging disabled</p>
             <p class="dialog-help">Calibration uses the full EEPROM joint range. Check linkage clearance outside saved sweep limits.</p>
-            <p class="dialog-help">Support the arm: stopping releases torque. PX4 status must remain 4.</p>
+            <p class="dialog-help">Support the arm: stopping releases torque. Fresh RC permission is required; RC kill stops motion.</p>
             <details class="arm-help"><summary>Position units and calibration help</summary>
               <p>The angle is the servo shaft position, not its angle to the ground. 4096 raw ticks = 360°. Left decreases the angle; mounting may reverse physical direction.</p>
               <p>With clear space and the linkage supported, jog to a safe position, release, and record it below. Leave clearance from mechanical stops. Recording does not move the servo.</p>
@@ -527,7 +527,7 @@
             <input id="probe-servo-position-slider" type="range" min="0" max="4095" step="1" value="0" disabled>
             <p id="probe-servo-jog-status" class="arm-jog-status" role="status">Jogging disabled</p>
             <p class="dialog-help">Probe travel uses the servo’s configured position range, including multiple revolutions in multi-turn mode.</p>
-            <p class="dialog-help">Support the probe: stopping releases torque. PX4 status must remain 4.</p>
+            <p class="dialog-help">Support the probe: stopping releases torque. Fresh RC permission is required; RC kill stops motion.</p>
             <details class="arm-help"><summary>Position units and calibration help</summary>
               <p>The angle is the servo shaft position, not its angle to the ground. 4096 raw ticks = 360°. Up increases the angle (the former right button); down decreases it.</p>
               <p>With clear space and the linkage supported, jog to a safe position, release, and record it below. Leave clearance from mechanical stops. Recording does not move the servo.</p>

@@ -125,8 +125,6 @@
       <arg name="probe_servo_id" value="$(var probe_servo_id)"/>
       <arg name="probe_speed" value="$(var probe_speed)"/>
       <arg name="fixture_angle_offset_deg" value="$(var fixture_angle_offset_deg)"/>
-      <arg name="probe_velocity_topic" value="$(var probe_velocity_topic)"/>
-      <arg name="odometry_topic" value="$(var odometry_topic)"/>
       <arg name="calibration_file" value="$(var config_file)"/>
       <arg name="probe_minimum" value="$(var probe_minimum)"/>
       <arg name="probe_center" value="$(var probe_center)"/>
@@ -148,11 +146,9 @@
     <include if="$(var simulate_payload)" file="$(find-pkg-share peaceofmine_operator)/launch/arm_servo.launch.xml">
       <arg name="simulation" value="true"/>
       <arg name="config_file" value="$(var config_file)"/>
-      <arg name="odometry_topic" value="$(var odometry_topic)"/>
       <arg name="speed" value="$(var arm_speed)"/>
       <arg name="probe_speed" value="$(var probe_speed)"/>
       <arg name="fixture_angle_offset_deg" value="$(var fixture_angle_offset_deg)"/>
-      <arg name="probe_velocity_topic" value="$(var probe_velocity_topic)"/>
     </include>
     <node if="$(var simulate_payload)" pkg="peaceofmine_operator" exec="simulated_payload.py" name="simulated_payload" output="screen">
       <param name="odometry_topic" value="$(var odometry_topic)"/>
