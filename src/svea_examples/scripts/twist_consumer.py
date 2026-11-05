@@ -5,6 +5,7 @@ import math
 from svea_core import rosonic as rx
 from svea_core.interfaces import ActuationInterface
 from geometry_msgs.msg import Twist
+from std_msgs.msg import Bool
 
 
 class twist_consumer(rx.Node):
@@ -23,6 +24,7 @@ class twist_consumer(rx.Node):
 
     cmd_timeout  = rx.Parameter(0.6)     # [s]
     use_difflock = rx.Parameter(True)
+    pump_top     = rx.Parameter('actuation/pump')
 
     actuation = ActuationInterface()
 
@@ -50,8 +52,13 @@ class twist_consumer(rx.Node):
         return max(-self.max_steering, min(self.max_steering, delta))
 
     def on_shutdown(self):
+        self.actuation.send_xtr(xtr1=0.0)
         self.actuation.send_control(0.0, 0.0)
         self.actuation.loop()  # Publish neutral before ROS publishers are destroyed.
+
+    @rx.Subscriber(Bool, pump_top)
+    def pump_cb(self, msg: Bool):
+        self.actuation.send_xtr(xtr1=100.0 if msg.data else 0.0)
 
     @rx.Subscriber(twist_type, twist_top)
     def twist_cb(self, msg):

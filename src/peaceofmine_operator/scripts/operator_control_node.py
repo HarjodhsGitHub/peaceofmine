@@ -104,6 +104,10 @@ class OperatorControl(Node):
         self._timeout = float(self.get_parameter('command_timeout_s').value)
         self._probe_speed_limit = float(self.get_parameter('probe_motion_speed_limit_mps').value)
 
+        self._pump_active = False
+        self._pump_timer = None
+        self._pump_pub = self.create_publisher(Bool, 'actuation/pump', 1)
+
         self._cmd_pub = self.create_publisher(Twist, str(self.get_parameter('cmd_vel_topic').value), 10)
         self._sweep_enabled_pub = self.create_publisher(ActuatorCommand, 'arm/command', 1)
         self._sweep_speed_pub = self.create_publisher(Float32, str(self.get_parameter('fixture_sweep_speed_topic').value), 10)
@@ -152,6 +156,28 @@ class OperatorControl(Node):
         self._sweep_enabled_pub.publish(command_message(dict(action='sweep',enabled=False)))
         self._arm_command_pub.publish(command_message(dict(action='stop')))
         self._probe_command_pub.publish(command_message(dict(action='stop')))
+        if self._pump_active:
+            self._pump_active = False
+            if self._pump_timer is not None:
+                self._pump_timer.cancel()
+                try:
+                    self.destroy_timer(self._pump_timer)
+                except Exception:
+                    pass
+                self._pump_timer = None
+            self._pump_pub.publish(Bool(data=False))
+
+    def _pump_timeout_cb(self):
+        with self._lock:
+            if self._pump_timer is not None:
+                self._pump_timer.cancel()
+                try:
+                    self.destroy_timer(self._pump_timer)
+                except Exception:
+                    pass
+                self._pump_timer = None
+            self._pump_active = False
+            self._pump_pub.publish(Bool(data=False))
 
     def begin_shutdown(self):
         """Revoke control before closing transports or invalidating ROS publishers."""
@@ -183,6 +209,8 @@ class OperatorControl(Node):
         with self._lock:
             self._pose = {'x': message.pose.pose.position.x, 'y': message.pose.pose.position.y, 'yaw': yaw}
             self._speed = message.twist.twist.linear.x
+            if self._pump_active and abs(self._speed) > self._probe_speed_limit:
+                self._stop_motion_locked()
 
     def _detector_state_cb(self, message):
         try:
@@ -360,7 +388,9 @@ class OperatorControl(Node):
                     'control_owner_present': self._lease is not None,
                     'max_velocity_mps': self._max_velocity,
                     'max_yaw_rate_rad_s': self._max_yaw_rate,
+                    'pump_active': self._pump_active,
                 },
+                'pump_active': self._pump_active,
                 'robot': {**self._pose, 'speed_mps': self._speed},
 
             }
@@ -454,6 +484,10 @@ class OperatorControl(Node):
             elif self._calibrating and message_type in ('drive', 'probe_target', 'sweep_enabled', 'sweep_speed'):
                 return {'type': 'error', 'message': 'Vehicle and probe motion are blocked during arm calibration.'}
             elif message_type == 'drive':
+                if self._probe_state.get('probe', {}).get('cycle_active'):
+                    return {'type': 'error', 'message': 'Drive blocked while probe cycle is active. Stop probe first.'}
+                if self._pump_active:
+                    return {'type': 'error', 'message': 'Drive blocked while ground marking is active.'}
                 # A live ROS pad on the SVEA owns the sticks so the browser
                 # Gamepad API is not required on http://<lan-ip>.
                 if not self._joy_live(time.monotonic()):
@@ -474,8 +508,8 @@ class OperatorControl(Node):
                     self._publish_twist(0.0, 0.0)
                 command = {key: payload[key] for key in ('action', 'request_id', 'role', 'point', 'held', 'direction', 'position', 'speed_deg_s', 'hold_id', 'load_percent') if key in payload}
                 return self._actuator_command(command)
-            elif message_type == 'probe_target':
-                requested = float(payload.get('depth_mm', 0.0))
+            elif message_type in ('probe_target', 'start_probe_cycle', 'probe_cycle'):
+                requested = float(payload.get('depth_mm', 80.0 if message_type != 'probe_target' else 0.0))
                 if not math.isfinite(requested):
                     return {'type': 'error', 'message': 'Probe extension must be finite'}
                 if abs(self._speed) > self._probe_speed_limit:
@@ -490,7 +524,12 @@ class OperatorControl(Node):
                         return {'type': 'error', 'message': 'Stop arm sweep before moving the probe'}
                     if not 0 <= requested <= probe['max_depth_mm']:
                         return {'type': 'error', 'message': 'Target exceeds saved maximum extension'}
-                    self._probe_command_pub.publish(command_message(dict(action='target', depth_mm=requested, request_id=payload.get('request_id'))))
+                    if message_type in ('start_probe_cycle', 'probe_cycle'):
+                        if requested <= 0:
+                            return {'type': 'error', 'message': 'Probe cycle target depth must be greater than 0 mm'}
+                        self._probe_command_pub.publish(command_message(dict(action='probe_cycle', depth_mm=requested, target_depth_mm=requested, request_id=payload.get('request_id'))))
+                    else:
+                        self._probe_command_pub.publish(command_message(dict(action='target', depth_mm=requested, request_id=payload.get('request_id'))))
             elif message_type == 'sweep_enabled':
                 if payload.get('enabled') and not self._rc_safety.simulation:
                     if time.monotonic() - self._arm_state_at >= 1 or not self._arm_state.get('connected'):
@@ -506,6 +545,39 @@ class OperatorControl(Node):
                 minimum = .684 if self._arm_state.get('connected') else SWEEP_SPEED_MIN_DEG_S
                 speed = max(minimum, min(maximum, float(payload.get('deg_s', 60.0))))
                 self._sweep_speed_pub.publish(Float32(data=speed))
+            elif message_type == 'align_probe':
+                if not self._rc_safety.simulation:
+                    if time.monotonic() - self._arm_state_at >= 1 or not self._arm_state.get('connected'):
+                        return {'type': 'error', 'message': 'Select a connected arm servo in Settings first.'}
+                    if not self._arm_state.get('calibration'):
+                        return {'type': 'error', 'message': 'Record and apply arm limits in Settings before positioning arm.'}
+                angle = float(payload.get('angle_deg', 0.0))
+                if not math.isfinite(angle):
+                    return {'type': 'error', 'message': 'Target angle must be finite'}
+                if self._probe_state.get('probe', {}).get('cycle_active') or (self._probe_state.get('probe', {}).get('depth_mm') or 0) > 2.0:
+                    return {'type': 'error', 'message': 'Cannot align arm while probe is deployed'}
+                self._permission_pub.publish(Bool(data=True))
+                self._arm_command_pub.publish(command_message(dict(action='angle', angle_deg=angle, request_id=payload.get('request_id'))))
+            elif message_type == 'pump_mark':
+                duration = float(payload.get('duration_s', 2.0))
+                if not math.isfinite(duration) or duration <= 0 or duration > 10.0:
+                    return {'type': 'error', 'message': 'Invalid pump mark duration.'}
+                if abs(self._speed) > self._probe_speed_limit:
+                    return {'type': 'error', 'message': 'Rover must be stationary to dispense mark.'}
+                probe = self._probe_state.get('probe', {})
+                if probe.get('cycle_active') or (probe.get('depth_mm') or 0.0) > 2.0:
+                    return {'type': 'error', 'message': 'Stow probe before dispensing mark.'}
+                if self._pump_active:
+                    return {'type': 'error', 'message': 'Pump mark cycle already in progress.'}
+                self._pump_active = True
+                self._pump_pub.publish(Bool(data=True))
+                if self._pump_timer is not None:
+                    self._pump_timer.cancel()
+                    try:
+                        self.destroy_timer(self._pump_timer)
+                    except Exception:
+                        pass
+                self._pump_timer = self.create_timer(duration, self._pump_timeout_cb)
             else:
                 error = {'type': 'error', 'message': 'Unsupported operator command.'}
         if flush_drive:

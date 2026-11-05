@@ -10,7 +10,7 @@ from peaceofmine_operator.node_runner import run_node
 
 class ArmController(ActuatorController):
     role = 'arm'
-    supported_actions = ('sweep', 'position')
+    supported_actions = ('sweep', 'position', 'angle')
 
     def __init__(self, **kwargs):
         self.sweeping = False
@@ -70,6 +70,22 @@ class ArmController(ActuatorController):
             self.sweep_cb(Bool(data=command.get('enabled') is True))
             self.reply(command,not command.get('enabled') or self.sweeping)
             return True
+        if action == 'angle':
+            calibration = self.calibration()
+            if not calibration:
+                raise ValueError('Calibrate arm before positioning')
+            angle = float(command.get('angle_deg', 0.0))
+            if not math.isfinite(angle):
+                raise ValueError('Angle must be finite')
+            target = round(calibration['center'] + (angle - self.offset) * 4096 / 360)
+            if not calibration['minimum'] <= target <= calibration['maximum']:
+                raise ValueError('Angle outside calibrated arm range')
+            if self.sweeping:
+                self.stop('Stopping sweep to position arm')
+            self.start(target, calibration['minimum'], calibration['maximum'], speed=round(self.sweep_speed / .684))
+            self.auto_position, self.started = True, time.monotonic()
+            self.reply(command, True)
+            return True
         if action != 'configure_motion':
             return False
         if self.operation or self.telemetry.torque:
@@ -106,7 +122,8 @@ class ArmController(ActuatorController):
             if time.monotonic()-self.started > 60:
                 self.stop('Position timeout')
             elif self.telemetry.operation_id == self.operation.operation_id and abs(self.telemetry.position-self.operation.target) <= 3:
-                self.stop('Position reached', success=True)
+                self.auto_position = False
+                self.lifecycle, self.reason = 'HOLDING', 'Target position reached; holding position'
 
     def behavior_state(self):
         calibration = self.calibration()

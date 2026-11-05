@@ -50,8 +50,8 @@
   <arg name="probe_center" default="-1"/>
   <arg name="probe_maximum" default="-1"/>
 
-  <!-- Arduino detector -->
-  <arg name="use_sensor_serial" default="true"/>
+  <!-- Arduino / ESP32 detector serial (DEPRECATED: detector is now acquired directly over I2C via ads1115) -->
+  <arg name="use_sensor_serial" default="false"/>
   <arg name="sensor_serial_port" default="/dev/serial/by-id/usb-Arduino_Srl_Arduino_Uno_7543134333435170D1E2-if00"/>
   <arg name="sensor_baud_rate" default="115200"/>
   <arg name="sensor_baseline_adc" default="0.0"/>
@@ -174,6 +174,7 @@
     <node pkg="peaceofmine_operator" exec="detector_node.py" name="detector" output="screen">
       <param name="detector_threshold_ratio" value="$(var detector_threshold_ratio)"/>
       <param name="odometry_topic" value="$(var odometry_topic)"/>
+      <param name="config_file" value="$(var config_file)"/>
     </node>
     <node pkg="peaceofmine_operator" exec="power_node.py" name="operator_power" output="screen"/>
     <node pkg="peaceofmine_operator" exec="camera_registry_node.py" name="camera_registry" output="screen"/>

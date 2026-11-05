@@ -1087,7 +1087,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 @media (max-width: 720px) { .arm-workbench { grid-template-columns: 1fr; } .arm-table th, .arm-table td { padding: .5rem .3rem; } .arm-points-table button { padding: .5rem .3rem; font-size: .75rem; } }
 
 /* Map and measured power share the bottom row. */
-.lower-panels { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, .8fr); gap: .7rem; min-height: 0; }
+.lower-panels { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(260px, 1fr) minmax(230px, 0.8fr); gap: .7rem; min-height: 0; }
 .lower-panels .map-panel { grid-column: auto; grid-row: auto; }
 .power-panel { padding: .78rem; overflow: auto; font-variant-numeric: tabular-nums; }
 .power-summary { display: flex; justify-content: space-between; gap: 1rem; margin: .65rem 0 .35rem; }
@@ -1134,3 +1134,155 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 #camera-capture-settings fieldset {border:1px solid #34504f;border-radius:.5rem;padding:1rem}
 #camera-capture-settings label {display:grid;grid-template-columns:90px minmax(0,1fr);gap:.5rem;align-items:center;margin:.5rem 0}
 #camera-capture-settings input {min-width:0;padding:.65rem;background:#07191e;color:#e8f1ed;border:1px solid #34504f;border-radius:.4rem}
+
+/* Operational Modes Strip */
+.operation-modes-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 1.2rem;
+  background: #091a1e;
+  border-bottom: 1px solid #1c3b42;
+}
+.modes-label {
+  font-size: 0.65rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  color: #72d6b4;
+}
+.modes-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 6px;
+  background: #11262c;
+  border: 1px solid #234852;
+  color: #d8ede6;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.mode-btn:hover:not(:disabled) {
+  background: #193840;
+  border-color: #72d6b4;
+}
+.mode-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  border-color: #1e333a;
+}
+.mode-icon {
+  font-size: 0.9rem;
+}
+
+/* Probe cycle controls */
+.probe-cycle-card {
+  margin: 0.5rem 0;
+  padding: 0.6rem;
+  background: #09171a;
+  border: 1px solid #1e3d44;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.probe-cycle-input-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  color: #a9c3bb;
+}
+.probe-cycle-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.probe-cycle-input-wrap input {
+  width: 65px;
+  padding: 0.25rem 0.4rem;
+  background: #071316;
+  border: 1px solid #284c56;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.8rem;
+  text-align: right;
+}
+.probe-cycle-input-wrap .unit {
+  font-size: 0.7rem;
+  color: #8fa8a1;
+}
+.probe-cycle-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+.probe-cycle-alert {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  background: rgba(185, 71, 61, 0.2);
+  border: 1px solid #b9473d;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  color: #ffc9c4;
+}
+.probe-cycle-alert.hidden {
+  display: none;
+}
+
+/* Target verification log */
+.target-log-panel {
+  padding: 0.78rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-variant-numeric: tabular-nums;
+  min-height: 0;
+  overflow: auto;
+}
+.target-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.73rem;
+  text-align: left;
+}
+.target-table th {
+  color: #a9c3bb;
+  font-weight: 500;
+  padding: 0.4rem 0.45rem;
+  border-bottom: 1px solid #24404a;
+}
+.target-table td {
+  padding: 0.4rem 0.45rem;
+  border-bottom: 1px solid #162d33;
+  color: #e8f1ed;
+}
+.target-table tr.contact {
+  background: rgba(185, 71, 61, 0.15);
+}
+.target-table tr.clear {
+  background: rgba(34, 136, 90, 0.15);
+}
+.target-table tr.empty-row td {
+  text-align: center;
+  color: #7b968f;
+  padding: 1.2rem;
+}
+.target-log-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: auto;
+}
+.target-log-actions button {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.72rem;
+}
