@@ -93,7 +93,12 @@ class ActuatorTest(unittest.TestCase):
             result = self.command(self.probe, action='probe_cycle', depth_mm=1.)
             self.assertTrue(result['success'], result)
             operation_id = self.probe.operation.operation_id
-            self.spin(1.4)
+            deepest=0
+            deadline=time.monotonic()+3
+            while self.probe.cycle_active and time.monotonic()<deadline:
+                self.spin(.02)
+                deepest=max(deepest,self.probe.home_position-self.probe.telemetry.position)
+            self.assertGreater(deepest,0,'A shallow probe cycle must actually descend')
             self.assertFalse(self.probe.cycle_active)
             self.assertEqual(self.probe.last_probe_result['status'], 'CLEAR', self.probe.reason)
             self.assertIsNone(self.probe.operation)

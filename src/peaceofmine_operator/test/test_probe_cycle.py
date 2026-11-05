@@ -126,7 +126,7 @@ class ProbeCycleTest(unittest.TestCase):
         self.assertEqual(self.probe.operation.target, 4000)
 
         # While retracting, probe moves back to top
-        self.probe.telemetry.position = 3980 # depth <= 2 mm
+        self.probe.telemetry.position = 4000 # confirmed home encoder position
         self.probe.update_behavior()
 
         # Cycle completes with CONTACT
@@ -174,6 +174,30 @@ class ProbeCycleTest(unittest.TestCase):
         # Cycle should immediately abort
         self.assertFalse(self.probe.cycle_active)
         self.assertEqual(self.probe.last_probe_result['status'], 'ABORTED')
+
+
+    def test_one_mm_cycle_requires_encoder_descent_and_retraction(self):
+        self.probe.start_probe_cycle(1.)
+        self.probe.update_behavior()
+        self.assertEqual(self.probe.cycle_phase,'DESCENDING')
+        self.assertIsNone(self.probe.last_probe_result)
+        self.probe.telemetry.position=self.probe.operation.target
+        self.probe.telemetry.operation_id='old-operation'
+        self.probe.update_behavior()
+        self.assertEqual(self.probe.cycle_phase,'DESCENDING')
+        self.probe.telemetry.operation_id='op1'
+        self.probe.update_behavior()
+        self.assertEqual(self.probe.cycle_phase,'RETRACTING')
+        self.probe.update_behavior()
+        self.assertTrue(self.probe.cycle_active,'Depth below 2 mm alone does not establish retraction')
+        self.probe.telemetry.position=self.probe.home_position
+        self.probe.update_behavior()
+        self.assertEqual(self.probe.last_probe_result['status'],'CLEAR')
+
+    def test_sub_encoder_cycle_depth_is_rejected(self):
+        with self.assertRaisesRegex(ValueError,'encoder tick'):
+            self.probe.start_probe_cycle(.001)
+        self.probe.start.assert_not_called()
 
 
 spec_ctrl = importlib.util.spec_from_file_location(

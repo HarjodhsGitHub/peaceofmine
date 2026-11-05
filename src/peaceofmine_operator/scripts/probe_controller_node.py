@@ -155,6 +155,8 @@ class ProbeController(ActuatorController):
             raise ValueError(f"Target depth must be between 0 and {calibration['max_extension_mm']} mm")
         if not self.interlock():
             raise ValueError('Probe cycle requires stationary odometry and no fault')
+        if round(self.home_position-depth/calibration['max_extension_mm']*calibration['travel_ticks']) == self.home_position:
+            raise ValueError('Probe depth is smaller than one encoder tick')
         if self.cycle_active or self.operation:
             raise ValueError('Stop the current probe operation first')
         contact = self.contact.snapshot()
@@ -278,7 +280,9 @@ class ProbeController(ActuatorController):
                     self.target = 0.0
                     self.operation.target = self.home_position
                     return
-                elif abs(self.telemetry.position-self.operation.target) <= 3 or current_depth >= (self.cycle_target_depth - 1.0):
+                elif (self.telemetry.operation_id == self.operation.operation_id
+                      and self.telemetry.position < self.home_position
+                      and abs(self.telemetry.position-self.operation.target) <= 3):
                     self.contact_detected = False
                     self.contact_depth_mm = None
                     self.cycle_phase = 'RETRACTING'
@@ -288,7 +292,8 @@ class ProbeController(ActuatorController):
                     return
 
             elif self.cycle_phase == 'RETRACTING':
-                if abs(self.telemetry.position-self.operation.target) <= 3 or current_depth <= 2.0:
+                if (self.telemetry.operation_id == self.operation.operation_id
+                        and abs(self.telemetry.position-self.operation.target) <= 3):
                     status = 'CONTACT' if self.contact_detected else 'CLEAR'
                     self.last_probe_result = dict(
                         status=status,
