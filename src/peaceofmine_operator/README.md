@@ -71,7 +71,7 @@ example `fixture_angle_offset_deg:=10.0`.
 ## Metal detector I2C acquisition (legacy Arduino / ESP32 serial deprecated)
 
 The metal detector coil signal is now fed directly into the Raspberry Pi over I2C
-via the onboard ADS1115 ADC (channel AIN3 / MUX 7 by default) through `ads1115_node.py`
+via the onboard ADS1115 ADC (channel AIN2 / MUX 6 by default; probe contact uses AIN0 / MUX 4) through `ads1115_node.py`
 and `detector_node.py`.
 
 The legacy Arduino Uno and ESP32 USB-serial nodes (`sensor_serial_node.py` via
