@@ -72,7 +72,8 @@ flowchart LR
     Arduino[sensor_serial] -->|detector/state and signal_ratio| Detector[detector]
     Arm[arm_controller] -->|angle and typed state| Detector
     Odom[Localization / simulator] -->|odometry| Detector
-    Detector -->|detector/telemetry| Web
+    Detector -->|detector/telemetry: 5 Hz plots| Web
+    Detector -->|detector/control_state: 20 Hz peak and freshness| Control[operator_control]
     Devices[ADC / arm / probe / Arduino] -->|operator/settings/save service| Settings[operator_settings]
     Settings -->|atomic save| Config[operator_config.json]
     Config -->|read and apply| Devices
@@ -101,6 +102,7 @@ flowchart LR
 | `detector/state` | `std_msgs/String` calibration and device health | sensor serial | detector, control |
 | `detector/command` | `std_msgs/String` calibration request | control | sensor serial, detector |
 | `detector/telemetry` | `std_msgs/String` plot/detection aggregate | detector | web |
+| `detector/control_state` | `std_msgs/String` peak and freshness, no plot history | detector | control |
 | `cameras/state`, `power/state` | `std_msgs/String` UI aggregates | registry / power | web |
 | `simulation/probe_load_ratio` | `std_msgs/Float32` | simulated environment | simulated driver only |
 

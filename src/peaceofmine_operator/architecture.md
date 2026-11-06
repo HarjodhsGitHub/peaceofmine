@@ -33,6 +33,21 @@ See [the ROS graph](ros_graph.md) for interfaces and publisher/subscriber diagra
 actuator, ADC, contact, configuration and action contracts. Web-oriented aggregate
 telemetry and configuration documents retain JSON at the presentation boundary.
 
+## Browser transport
+
+Control readiness and gateway connectivity are separate. A missing or stale
+`operator/state` disables browser controls and sends `control_status` while the
+WebSocket stays open; fresh state recovers it. Only missing gateway messages or an
+actual socket failure reconnect the browser. Motion watchdogs retain their existing
+timeouts.
+
+Live status travels at 20 Hz. Full detector and probe plot histories travel at
+5 Hz, with history age, preserving every retained sample. Intermediate packets
+omit history and the browser keeps aging the previous array. Probe history has
+one canonical copy. Each viewer has at most one pending state send, so a slow
+viewer cannot queue old state or block other viewers. Inspection uses the small
+20 Hz `detector/control_state` topic instead of parsing full plot histories.
+
 ## Motor contract and timing
 
 The driver accepts a whole `ServoCommand`: target/profile, bounds, nonzero speed,
@@ -70,8 +85,11 @@ targets require the probe's own home and travel calibration; arm motion and mark
 do not depend on probe setup. Active probe and marking operations remain mutually
 exclusive.
 
-`arm/execute` supports `sweep` and `position`; `probe/execute` supports `home` and
-`target`. Actions expose feedback, cancellation and final success/failure. Homing
+`arm/execute` supports `sweep`, `position` and `angle`; `probe/execute` supports
+`home`, `target` and `probe_cycle`. Arm angle actions complete once the current goal is applied, the measured
+position is within the configured arm sweep endpoint tolerance, and measured
+speed is at most three MX speed units (the firmware's reversal-settled threshold).
+They then release torque. Results include contact and measured contact depth for probe cycles. Actions expose feedback, cancellation and final success/failure. Homing
 uses the generic driver protective load stop but only the probe controller assigns
 meaning to that stop and establishes a home reference. Visually verify the top:
 resistance alone cannot identify its physical cause.
@@ -90,6 +108,25 @@ Probe ADC contact consumes `adc/samples`, not a plot. Disabled, unavailable,
 configuration-mismatched or stale measurements produce unknown contact. Hysteresis
 and debounce avoid threshold chatter; plot routing never changes detection input.
 
+Confirmation uses a three-point median curve of raw voltage in one-degree angle bins.
+This symmetric smoothing avoids the time filter's opposite-direction lag. Peak
+prominence is measured above both local shoulders and must exceed three times
+the noise estimated from median raw-sample differences. A qualifying arc spans
+at least 3° at half prominence. Each opposed pass estimates its own baseline and
+amplitude. Their measured half-height intervals must have intersection-over-union
+of at least 50%, so broad matching arcs can tolerate more center variation than
+narrow arcs. The scan center is the mean of the two arc centers. Absolute Baseline/Mine settings still
+control the search meter and manual peak detection, not confirmation. Search
+sweeps default to 36°/s; confirmation uses the selected search sweep speed.
+
+The control node owns `InspectionWorkflow`: two opposed confirmation passes,
+then a sequential five-position probe scan. It uses the existing ROS action
+servers, waits for stopped/torque-off telemetry between operations, and cancels
+on permission/session loss or actuator failure. Detector/probe mounting geometry
+is applied before commanding arm angles. Browser state exposes phase, progress
+and the actual per-point results; a browser reconnect cannot replay old goals.
+The UI's normal probe depth/contact controls use the existing ADC settings owner.
+
 ## Persistence
 
 `operator_config.json` has `schema_version`, a document `revision`, and
@@ -98,7 +135,7 @@ The old `calibration.json` is imported only when the new file is missing, and re
 untouched. Atomic replace, file locking, ownership preservation and fsync protect
 saves. The settings service rejects stale revisions and preserves other sections.
 
-Persistent sections include arm/probe calibration, arm/probe motion limits, ADC
+Persistent sections include arm/probe calibration, arm/probe motion limits, probe direction, ADC
 hardware configuration/scaling, plot routing, probe ADC threshold, detector
 calibration and robot camera defaults. ADC simulation uses `adc_simulation`.
 Simulated actuator saves use `arm_simulation`, `probe_simulation`,

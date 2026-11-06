@@ -88,30 +88,31 @@ rover's left. The forward camera, the field map, and the two buried targets at
 
 ## Control
 
-Every connected browser receives the same telemetry. The header shows the
-viewer count and whether this browser holds the control lease. Any viewer can
+Every connected browser receives the same telemetry. Diagnostics shows the viewer count; the header shows whether this browser holds
+the control lease. Any viewer can
 take or steal control at any time; ownership transfers immediately, the
 previous owner becomes a spectator, and the gateway stops active motion.
 Only the owner can drive, sweep, move the probe, or change calibration.
-Take control, then click **Arm controls**. The physical RC still determines drive authority; motion requires the configured held input/deadman. **Disarm** stops outputs.
+Take control and let the physical RC permit motion. Select WASD, joystick or
+wheel above the camera. The header STOP stops outputs and releases control.
 
-### Operational Modes & Demining Workflow
+### Normal operating flow
 
-The dashboard provides a dedicated **Operational Modes** strip and integrated tools:
+1. **Search:** drive and sweep at 36°/s by default. In WASD mode, click the camera and hold Space to sweep.
+2. **Confirm arc:** stop the vehicle and request two passes across the saved arm range at the selected search speed. Each pass finds a broad arc above its local noise, independent of the absolute ADC baseline. The half-height arc footprints must overlap by at least 50% of their combined span before choosing the scan center.
+3. **Probe scan:** probe five positions at 5° spacing around that location, clipped to the saved arm limits. The established 45° detector/probe mounting offset is applied. Each point descends slowly until contact or maximum depth, records the result, retracts fully, then moves to the next point.
 
-1. **Start Sweeping**: Toggles the Dynamixel sweep arm across its calibrated arc. Operates while driving to scan lanes for metal anomalies.
-2. **Start Probing**: Automated soil penetration cycle down to an editable target depth (default 80 mm).
-   - **Stationary Safety Gate**: Probing is strictly disabled whenever the vehicle is moving (`speed > 0.03 m/s`). If the vehicle moves during a cycle, descent aborts immediately. Driving via the web interface is blocked while probing.
-   - **Spike Detection**: Soil resistance rises linearly; striking a hard buried object creates an analog FSR voltage spike ($\Delta V / \Delta t$).
-   - On contact spike: descent halts instantly, contact depth is recorded, probe auto-retracts to stow (0 mm), a 2-tone audio chime sounds, and visual alerts flash.
-   - On reaching target depth clear: probe auto-retracts to stow and reports clear.
-3. **Start Marking & Target Verification Log**:
-   - The operator can manually mark targets at any time (while driving or stopped).
-   - The **Target Verification Log** records target ID, coordinates $(X, Y)$, heading, metal detector %, contact depth, and verification status.
-   - Logged targets are plotted on both the Field Map and 3D camera overlay, and can be exported as CSV for mission reporting.
+Set **Max depth** and **Contact limit (V)** under **Probe controls**. Choose Above
+or Below for the contact condition and save it. Saved voltage thresholds,
+existing impact protection and independent servo load protection all remain
+active. Manual probing also stops extension on detected contact. Homing and
+travel calibration remain in Setup → Probe, initially using a 10% homing load.
+Hardware diagnostics and manual controls are under Diagnostics; session results
+and CSV export are under Mission log. A contact reading indicates an object, not
+proof of a mine. Failed or interrupted cycles are not recorded as clear.
 
 Plug the Xbox 360 (or another gamepad) into the computer that is showing this
-dashboard, then press any button if the Drive panel still says no controller
+dashboard, then press any button if the input toolbar still says no controller
 is connected. Chrome often ignores a pad until that first press.
 
 The default **Auto** mapping uses the browser `standard` layout when the pad
@@ -120,7 +121,7 @@ reverses. An Xbox 360 on Linux often
 reports an empty mapping and puts the triggers on axes; Auto then uses that
 Xbox 360 layout. Settings → **Controller mapping** can force Standard or
 Xbox 360 (Linux) if the steer/throttle meters do not follow the pad. For
-keyboard driving, choose **WASD keyboard** in Settings, click the forward
+keyboard driving, choose **WASD keyboard** above the camera, click the forward
 camera to focus it, then use WASD without Shift. Gamepad sticks map linearly (0.12 deadzone, no extra smoothing). WASD
 throttle and steering ramp progressively. Both send changed commands promptly,
 plus a 20 Hz keepalive while moving.
@@ -172,9 +173,10 @@ simulation. The real vehicle does not have this scaling.
 
 ## Client input settings and wheel setup
 
-Open **Settings** for the input lab. Opening it sends a stop and disarms this
-client's control lease; previews never drive the rover. Closing it requires
-arming again. Losing browser focus or hiding the page also stops and disarms.
+Open **Setup → Controls** for the input lab. Opening Setup stops motion and
+blocks driving while calibrating; previews never drive the rover. Closing it
+retains the control lease. Losing browser focus or hiding the page releases
+held input and sends a stop.
 
 Choose one of three schemes:
 
@@ -182,8 +184,8 @@ Choose one of three schemes:
   automatically; Settings can select a specific device and override the
   automatically detected `standard` or Xbox 360 mapping.
   Left stick steers, RT drives forward, LT reverses. RC controls drive authority.
-- **WASD keyboard**: focus the test button to preview keys, or close Settings
-  and focus the forward camera to drive with WASD.
+- **WASD keyboard**: use **Focus camera for WASD**, or close Settings and click
+  the forward camera. Set **WASD max throttle (%)** in Controls.
 - **Steering wheel**: select the wheel, inspect raw axes and buttons, then set
   steering, forward pedal, and reverse pedal indices. Invert axes as
   needed. Defaults are starting points, not a verified G27 mapping. Pedals
@@ -231,13 +233,22 @@ target for the virtual camera. Unavailable metadata is shown as a dash.
 Rotate changes the local view by 90° and saves the orientation independently for
 each slot; it does not modify the camera sensor or steering directions.
 
-WASD uses bundled Keydrown 1.3.0 for held-key input. While drive keys are held,
-throttle reaches full scale in about 0.63 seconds and steering in about 0.31
-seconds. Releasing WASD ramps throttle down and recenters steering. Releasing
-the drive keys, losing focus, disconnecting, or opening Settings bypasses the ramp and
-stops immediately. The Settings keyboard test previews the same ramp without
-sending motion. Xbox and wheel mappings are unchanged. Connection status and
+Choose WASD, joystick or wheel above the camera. In WASD mode, click the
+forward camera to capture keys. WASD drives; hold Space to sweep. Release Space
+to stop that sweep. Escape, clicking elsewhere, losing focus or opening Settings
+releases keyboard input and sends a stop without giving up dashboard control.
+WASD max throttle is set in Controls and saved in this browser; joystick and wheel
+throttle are unaffected. WASD reaches full input in about 0.63 seconds, steering
+in about 0.31 seconds, and releasing drive keys stops immediately. Connection status and
 retry remain in the main dashboard; the redundant Connection settings tab is removed.
+
+### ADC and detector calibration
+
+The ADC starts sampling with the node; there is no Start/Stop acquisition button.
+Defaults remain metal detector A2 and probe A0. In Settings → Metal detector,
+enter **Baseline (V)** and **Mine level (V)** and **Apply & save**. A 100 ms
+low-pass filter smooths the detector signal and plots, retaining ADC precision.
+Raw ADC topics/CSV and probe contact are unchanged.
 
 ### Arm servo and RC authority
 

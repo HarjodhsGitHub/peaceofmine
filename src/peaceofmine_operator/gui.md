@@ -10,6 +10,19 @@ Yes, this is meant to run on the **real car**. Simulation and hardware share
 that same `cmd_vel` path. Hardware replaces `sim_svea` with MAVROS → PX4.
 The physical RC transmitter remains the override.
 
+## Dashboard layout
+
+Choose drive input above the camera. Click the camera to capture WASD; Escape
+releases it. The task workbench groups Search, Confirm arc, Probe scan and
+Mark ground with one live status and inspection progress. Probe controls open
+for confirmed targets and active probe cycles, showing actual depth and whether
+the probe is descending or retracting. Configure maximum depth and contact
+voltage there; use Home / travel setup for calibration.
+
+Diagnostics below the workspace holds filtered detector/angle plots, controller,
+probe, map, power and detailed link telemetry. Mission log holds the session
+record and CSV export. Setup retains input, camera and hardware calibration.
+
 ## Architecture
 
 ```
@@ -136,7 +149,7 @@ If the Wi-Fi address changes, regenerate the certificate with the new address.
 1. Plug in the Xbox 360 and press a button.
 2. Open `https://<svea-ip>:8080` (same IP as in the certificate; use your chosen port).
 3. Accept the certificate warning.
-4. Confirm the Drive panel shows the pad and the graphic moves.
+4. Confirm the input toolbar shows the pad; its live graphic is under Diagnostics.
 5. **Take control** and select ROS authority on the physical RC.
 6. Use the RC to permit motion; there is no separate dashboard arm/disarm step. RT forward, LT reverse, left stick steer. Release the input deadman to stop driving. The header STOP releases dashboard control; click **Take control** before a new operation. Settings → Stop / release torque stops only the selected actuator and keeps dashboard control. Opening Settings stops motion and blocks driving while calibrating; jogging needs only RC permission and a held movement control.
 
@@ -222,13 +235,15 @@ request are required after reconnection.
 | Standard | Force LT/RT on buttons 6/7. |
 | Xbox 360 (Linux) | Force bipolar trigger axes. |
 
-WASD: Settings → keyboard, then click the forward camera. Shift is not required.
+Choose WASD above the camera, then click the forward camera to capture keys.
+Escape or clicking elsewhere releases them. Hold Space to sweep; release to stop.
+Set the keyboard-only maximum throttle in Settings → Controls. Shift is not required.
 
 The physical RC is authoritative. RC override blocks browser driving but permits
 the control owner to sweep the servo while PX4 is active and RC kill is clear.
 RC loss, kill, stale heartbeat, gateway permission timeout, or control-owner
 disconnect stops the arm. Settings jogging does not require saved limits;
-sweeping requires minimum, center and maximum calibration. The Drive panel shows
+sweeping requires minimum, center and maximum calibration. The input toolbar shows
 RC channel input in override mode. Visualization defaults to steering CH1 and
 throttle CH2; adjust `rc_steering_channel` and `rc_throttle_channel` in launch XML
 to match your transmitter. PWM visualization assumes 1000/1500/2000 endpoints.
@@ -272,12 +287,13 @@ Transport disconnects retry discovery in the background after a two-second
 backoff. Reconnection restores the selected role and session calibration but
 never resumes an old sweep or jog. RC kill keeps a healthy connection open.
 
-Metal detector calibration uses two ADC values: Zero and Mine trigger. Apply
-sets the trigger to the calibrated full response; detection starts at that
-value. Both levels are plotted and included in chart autoscaling. Zero now
-updates the baseline without changing an applied mine-trigger endpoint.
+Settings → Metal detector has editable **Baseline (V)** and **Mine level (V)**
+fields. **Apply & save** stores both on the vehicle, including fractional values.
+The filtered detector voltage and both saved levels share the same graph. You can
+enter levels without fresh readings; **Measure baseline** needs recent samples and
+updates only the baseline. The filter never estimates or changes these levels.
 
-Settings → Metal detector shows a 30-second raw ADC graph, receive rate, packet
+Setup → Metal detector shows a filtered voltage graph with selectable history, receive rate, packet
 log, rejected-line count, freshness and estimated peak voltage. Only the control
 owner can zero or apply calibration. Zero averages the available readings from
 the last 10 seconds; the mine trigger maps to 100%. The meter and sweep trace
@@ -303,6 +319,37 @@ better conversion accuracy. Simulated payloads do not provide raw ADC readings.
 - `launch/operator_sim.launch.py` — `sim_svea` + simulated payload
 - `gui_plan.md` — longer roadmap (cameras, map, payload, mission record)
 
+### Detector smoothing
+
+The metal detector uses a 100 ms first-order low-pass filter at the ADC sample
+timestamps. The detector trace and peak signal retain fractional ADC precision.
+Raw ADC topics, readings, exported CSV and probe contact remain unfiltered. The
+filter resets after a sample gap, restart or calibration/source change; smoothing
+adds approximately 100 ms of response lag.
+
+### Confirm and probe scan
+
+Search sweeping defaults to 36°/s. Use the main actions in order: Search, Confirm arc, Probe scan. Confirmation
+uses two full passes at the selected search speed. It compares a broad arc against each pass's
+local noise and compares their measured half-height footprints. At least 50%
+shared overlap is required; the probe scan covers the confirmed target in 5° steps
+over ±10°, clipped to the saved arm limits and corrected for the detector/probe
+mounting offset. Contact or maximum depth ends each descent; the probe retracts
+before the next angle. Stop inspection cancels the sequence while retaining the
+dashboard control lease. Global STOP and RC/session loss cancel outstanding goals.
+
+The Probe panel exposes maximum depth and the saved Above/Below contact limit in
+volts. This changes the configured probe input's threshold, not its raw samples.
+Existing spike/load protection stays active. Manual controls and technical motor
+readings remain available under their details sections.
+
+### Probe direction
+
+Settings → Probe → **Reverse probe direction** is saved on the vehicle. It reverses
+extend/retract jogging, homing and depth moves together. After changing it, home
+again before using depth targets. The shaft-position slider always uses raw encoder
+position. Simulation stores its direction separately from the car.
+
 ### Probe contact feedback
 
 Probe contact polling targets 20 Hz; voltage and temperature refresh at 1 Hz.
@@ -323,10 +370,11 @@ owns I2C acquisition, configuration persistence, and ADC contact detection. The
 register driver, acquisition worker, ROS node, gateway telemetry cache, and browser
 settings live in separate files. The gateway never opens the I2C bus.
 
-Open **Settings → ADS1115**, take control, configure the inputs, then select
-**Apply & save** and **Start acquisition**. Stop the standalone ADS1115 devtool
-before starting operator acquisition. Acquisition starts stopped on every node
-restart; saved settings and plot assignments are restored. Simulation uses labelled
+Acquisition starts automatically with the node and continues without a browser
+or control lease. Saved settings and signal assignments are restored before the
+bus opens. Hardware/configuration errors are reported; no dummy readings replace
+them. Stop the standalone ADS1115 devtool before launching the operator.
+To change inputs, open **Settings → ADS1115**, take control and **Apply & save**. Simulation uses labelled
 demo samples and a separate `adc_simulation` section in the shared
 `operator_config.json`; hardware uses the `adc` section. Override `config_file`
 in either launch with an absolute mounted path to choose a different shared file.
@@ -335,8 +383,8 @@ when the matching section is absent. `adc_settings_path` is retained only as an
 optional legacy import path; all new saves go to the shared configuration.
 
 Each single-ended or differential input can be assigned to the metal detector
-plot, probe plot, both, or neither. Defaults are **A0 → metal detector** and
-**A1 → probe**. Added traces use their own scaled-value axis. The ADS1115 panel
+plot, probe plot, both, or neither. Defaults are **A2 → metal detector** and
+**A0 → probe**. Added traces use their own scaled-value axis. The ADS1115 panel
 provides bus/address, PGA, conversion mode/rate, scan interval, per-input scaling,
 ALERT/RDY settings, raw/voltage/scaled plots, statistics, clipping status, register
 readback, CSV export, and JSON import/export. Import also accepts standalone bench
@@ -357,7 +405,7 @@ Relative ROS topics (under `/self/` with the default vehicle name):
 | `adc/{input}/raw` | `std_msgs/Int16` | Latest signed raw reading per input per publication tick. |
 | `adc/{input}/volts` | `std_msgs/Float64` | Latest voltage per input per publication tick. |
 | `adc/{input}/scaled` | `std_msgs/Float64` | Latest scaled value per input per publication tick. |
-| `adc/command` | `std_msgs/String` JSON | `{request_id, action: "run", running: true/false}` or `{request_id, action: "settings", settings: {config, routes, probe_trigger}}`. |
+| `adc/command` | `std_msgs/String` JSON | `{request_id, action: "settings", settings: {config, routes, probe_trigger}}`. Acquisition is always on; start/stop commands are rejected. |
 | `adc/command_result` | `std_msgs/String` JSON | Matching `request_id`, `ok`, and error `message` when rejected. A successful settings result means saved; `applied == revision` confirms device readback. |
 | `adc/samples` | `peaceofmine_interfaces/AdcSamples` | Timestamped batches for robot consumers; includes configuration revision and validity. |
 | `probe/contact` | `peaceofmine_interfaces/ContactState` | Probe-owned contact result. Invalid means unknown. Consumers must also enforce a receipt timeout. |
@@ -371,7 +419,7 @@ control lease; ROS command access follows the deployment's ROS access controls.
 
 Install the updated workspace requirements (`smbus2`) or rebuild the Docker image
 before hardware use, then rebuild `peaceofmine_operator`. The launching account
-needs I2C device access. No physical bus is opened until Start acquisition.
+needs I2C device access. The node opens the configured bus automatically at startup.
 
 
 ## ROS responsibilities and persistent configuration
@@ -417,8 +465,14 @@ actual odometry.
 
 The browser depth slider holds the requested depth until Stop, safety loss or the
 60-second limit. ROS `probe/execute` target actions instead finish and release torque
-at depth. ADC contact is an indication; it does not automatically retract the probe.
-Homing uses the separate motor-load threshold. Verify the physical top after homing.
+at depth. During a probe cycle, ADC contact records the hit depth and immediately
+starts retraction; the scan advances only after that return completes. Manual depth
+moves stop extending on contact. Completion requires the applied goal, matching
+operation and settled speed within the command tolerance, capped to one quarter of
+short strokes. A timeout reports the phase and remaining distance instead of
+claiming a completed return.
+Homing uses the separate motor-load threshold, initially 10%. Verify the physical
+top after homing.
 
 `operator_gateway.py` remains a compatibility entry point for the website server;
 `arm_servo.launch.xml` starts the driver and both controllers. The obsolete combined
