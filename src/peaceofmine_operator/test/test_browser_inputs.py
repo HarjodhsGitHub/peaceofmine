@@ -17,16 +17,34 @@ class BrowserInputs(unittest.TestCase):
         html = html.replace('<link rel="stylesheet" href="/assets/style.css">', '<style>' + (DASHBOARD / 'style.css').read_text() + '</style>')
         setup = '''
 window.requestAnimationFrame = () => 0;
-window.setInterval = () => 0;
+window.testIntervals = [];
+window.setInterval = (fn, ms) => testIntervals.push({fn, ms});
 window.sent = [];
-window.WebSocket = class { static OPEN = 1; readyState = 1;
-  send(data) { sent.push(JSON.parse(data)); } };
+window.WebSocket = class { static OPEN = 1; static CLOSING = 2; static CLOSED = 3; readyState = 1;
+  send(data) { sent.push(JSON.parse(data)); }
+  close() { this.readyState = 3; } };
 Object.defineProperty(document, 'hasFocus', {value: () => true});
 Object.defineProperty(document, 'hidden', {value: false});
 '''
         checks = '''
 const assert = (condition, label) => { if (!condition) throw Error(label); };
 const latestDrive = () => sent.filter(m => m.type === 'drive').at(-1);
+assert(!$('probe-diagnostics').open && !$('arm-diagnostics').open && !$('probe-servo-diagnostics').open,'technical diagnostics are collapsed by default');
+assert(!$('operator-diagnostics').open && !$('mission-record').open,'secondary regions are collapsed at startup');
+assert(document.querySelectorAll('#drive-control-source').length===1 && !document.querySelector('.operation-modes-strip'),'one input selector and no separate workflow strip');
+assert(document.querySelectorAll('.workflow-actions').length===1 && document.querySelector('.task-workbench').contains($('inspection-progress')),'workflow and progress share one workbench');
+assert($('probe-servo-home-load').value==='10','homing starts at the requested 10%');
+const cameraBounds=cameraPanel.getBoundingClientRect(), taskBounds=document.querySelector('.task-workbench').getBoundingClientRect();
+assert(cameraBounds.width>0 && cameraBounds.left>=0 && cameraBounds.right<=innerWidth,'camera fits the viewport');
+assert(taskBounds.left>=0 && taskBounds.right<=innerWidth && document.documentElement.scrollWidth<=innerWidth,'workbench has no horizontal overflow');
+if(innerWidth>850) assert(cameraBounds.width>taskBounds.width*1.5 && taskBounds.top<cameraBounds.bottom,'desktop camera dominates the side-by-side workspace');
+else {
+  const detectorBounds=document.querySelector('.detector-panel').getBoundingClientRect();
+  assert(taskBounds.top>=cameraBounds.bottom && detectorBounds.top>=taskBounds.bottom,'phone order is camera then workflow then detector graph');
+}
+assert($('search-task').open && !$('probe-task').open,'search settings start open, probe controls remain available by disclosure');
+$('operator-diagnostics').open=true;
+$('probe-diagnostics').open=$('arm-diagnostics').open=$('probe-servo-diagnostics').open=true;
 state.connected = true;
 state.robot.stationary = true;
 state.probe.ready = true;
@@ -77,7 +95,7 @@ assert(closeMessages.some(m => m.type === 'calibration_end'), 'closing settings 
 assert(!closeMessages.some(m => ['calibration_begin', 'estop'].includes(m.type)), 'closing settings preserves control and leaves calibration');
 const beforeBlur = sent.length;
 window.dispatchEvent(new Event('blur'));
-assert(sent.slice(beforeBlur).some(m => m.type === 'estop'), 'focus loss still revokes control');
+assert(!sent.slice(beforeBlur).some(m => m.type === 'estop') && latestDrive().linear_x === 0 && state.drive.you_control_owner, 'focus loss stops input without releasing control');
 preferences.input = 'controller'; lastDriveSent = -1000; inputLoop();
 assert(!latestDrive().deadman, 'unmapped wheel has no trigger drive');
 preferences.input = 'wheel';
@@ -190,8 +208,41 @@ assert(preferences.cameraRotation.forward === 0, 'rotation wraps at 360');
 preferences.cameras.auxiliary = 'off'; renderCameraSettings();
 assert($('auxiliary-preview-state').textContent === 'Off' && $('auxiliary-dimensions').textContent === '—', 'off camera has no invented stats');
 $('settings-dialog').close();
-preferences.input = 'keyboard'; cameraFocused = true;
-const keyEvent = (type, code, keyCode) => document.dispatchEvent(new KeyboardEvent(type, {code, keyCode, bubbles: true}));
+await new Promise(resolve => setTimeout(resolve, 0));
+$('drive-control-source').value = 'keyboard';
+$('drive-control-source').dispatchEvent(new Event('change'));
+assert(preferences.input === 'keyboard' && !$('control-source') && $('drive-control-source').value==='keyboard', 'main drive selector is the sole saved input selector');
+assert(!$('sweep-toggle') && document.querySelectorAll('#mode-sweep-btn').length===1,'search sweep has one canonical toggle');
+assert(!$('adc-trigger-level') && !$('adc-trigger-direction'),'contact voltage and direction have one editor on main Probe');
+preferences.cameras.forward = 'virtual'; await startCamera('forward', 'virtual');
+forward.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true}));
+assert(keyboardCaptured(), 'clicking actual camera captures WASD');
+const keyEvent = (type, code, keyCode, options = {}) => {
+  const event = new KeyboardEvent(type, {code, keyCode, bubbles:true, cancelable:true, ...options});
+  document.dispatchEvent(event); return event;
+};
+// The stable camera region owns keyboard focus, independent of media or readiness.
+assert(document.activeElement===cameraPanel && cameraPanel.tabIndex===0 && forward.tabIndex<0,'camera panel is the single keyboard focus target');
+const authorityState={drive:{...state.drive},safety:state.safety};
+preferences.cameras.forward='raspberry:front'; await startCamera('forward','raspberry:front');
+const imagePress=new PointerEvent('pointerdown',{bubbles:true,cancelable:true});
+$('forward-network-camera').dispatchEvent(imagePress);
+assert(imagePress.defaultPrevented && keyboardCaptured() && document.activeElement===cameraPanel && !$('forward-network-camera').draggable,'camera image click suppresses native drag/focus changes and captures the region');
+state.drive.you_control_owner=false;state.drive.armed=false;state.safety={allowed:false,servo_allowed:false,mode:'kill'};
+keys.add('KeyW');updateHud();updateHud();
+assert(keyboardCaptured() && cameraFocused && keys.size===0 && lastInput.linear===0,'status updates clear unauthorized input while preserving camera lock');
+const deniedSpace=keyEvent('keydown','Space',32);updateHud();
+const deniedSpaceUp=keyEvent('keyup','Space',32);
+assert(deniedSpace.defaultPrevented && deniedSpaceUp.defaultPrevented && keyboardCaptured(),'captured Space never scrolls even when sweeping is unavailable or held keys were cleared');
+Object.assign(state.drive,authorityState.drive);state.safety=authorityState.safety;
+preferences.cameras.forward='virtual';await startCamera('forward','virtual');
+const labelPress=new PointerEvent('pointerdown',{bubbles:true,cancelable:true});
+$('forward-camera-label').dispatchEvent(labelPress);
+assert(keyboardCaptured() && labelPress.defaultPrevented,'clicking a camera overlay remains inside the capture region');
+keyEvent('keydown','KeyA',65);
+let stationarySteering=readKeyboard();resetKeyboardRamp(0);rampKeyboard(stationarySteering,50);
+assert(stationarySteering.linear===0 && stationarySteering.angular>0 && stationarySteering.deadman,'A steers without W or forward throttle');
+keyEvent('keyup','KeyA',65);
 keyEvent('keydown', 'KeyW', 87); keyEvent('keydown', 'KeyA', 65);
 assert(keys.has('KeyW') && keys.has('KeyA') && !keys.has('ShiftLeft'), 'WASD works without Shift');
 resetKeyboardRamp(0);
@@ -203,12 +254,114 @@ assert(Math.abs(at30.linear - at60.linear) < .00001 && Math.abs(at30.angular - a
 keyEvent('keyup', 'KeyW', 87); keyEvent('keyup', 'KeyA', 65);
 ramped = readKeyboard(); rampKeyboard(ramped, 516);
 assert(ramped.linear === 0 && ramped.angular === 0, 'releasing WASD stops without a separate deadman');
+$('keyboard-max-throttle').value = '50';
+$('keyboard-max-throttle').dispatchEvent(new Event('change'));
+assert(preferences.keyboardMaxThrottle === 50 && JSON.parse(localStorage.getItem('peaceofmine.operator.preferences')).keyboardMaxThrottle === 50, 'WASD throttle cap persists');
+forward.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true}));
+keyEvent('keydown','KeyW',87);
+assert(readKeyboard().linear === .4, 'WASD cap applies before smoothing');
+resetKeyboardRamp(0); let capped;
+for(let i=1;i<=90;i++) { capped=readKeyboard(); rampKeyboard(capped,i*16); }
+assert(capped.linear <= .4 && capped.linear > .39, 'ramped WASD respects cap');
+const beforeOutside=sent.length;
+document.querySelector('h1').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+assert(!cameraFocused && !keys.size && latestDrive().linear_x === 0, 'outside click releases keys and stops');
+assert(!sent.slice(beforeOutside).some(m=>m.type==='estop'), 'outside click preserves ownership');
+forward.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+assert(keyboardCaptured(), 'reclicking still-focused camera recaptures');
+keyEvent('keydown','KeyW',87,{repeat:true});
+assert(!keys.has('KeyW'),'held key repeat cannot resume after recapture');
+keyEvent('keyup','KeyW',87); keyEvent('keydown','KeyW',87);
+assert(keys.has('KeyW'),'fresh key press works after recapture');
+keyEvent('keydown','Escape',27);
+assert(!cameraFocused && !keys.size && state.drive.you_control_owner, 'Escape releases only keyboard capture');
+const ignored=keyEvent('keydown','KeyW',87);
+assert(!ignored.defaultPrevented && !keys.size, 'uncaptured WASD does not interfere with site');
+
+const sweepFixture={probe:state.probe,actuators:state.actuators,safety:state.safety,sweeping:state.detector.sweep_enabled};
+state.probe={ready:false,active:false,holding:false,cycle_active:false};
+state.actuators={arm:{connected:true,calibration:{minimum:0,center:100,maximum:200}}};
+state.safety={allowed:false,servo_allowed:true,mode:'override'};
+state.drive.calibrating=false; state.drive.armed=true; state.drive.you_control_owner=true;
+state.detector.sweep_enabled=false;
+forward.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+const spaceStart=sent.length;
+const spaceDown=keyEvent('keydown','Space',32);
+keyEvent('keydown','Space',32,{repeat:true});
+assert(spaceDown.defaultPrevented && sent.slice(spaceStart).filter(m=>m.type==='sweep_enabled'&&m.enabled).length === 1, 'held Space starts one sweep in RC override');
+keyEvent('keyup','Space',32);
+assert(sent.at(-1).type==='arm_servo' && sent.at(-1).role==='arm' && sent.at(-1).action==='stop','Space release stops owned arm sweep');
+state.detector.sweep_enabled=true;
+const manualSweep=sent.length;
+keyEvent('keydown','Space',32); keyEvent('keyup','Space',32);
+assert(sent.length===manualSweep,'Space never stops a preexisting manual sweep');
+state.detector.sweep_enabled=false;
+keyEvent('keydown','Space',32);
+releaseKeyboardCapture();
+assert(!keyboardSweep && sent.some(m=>m.type==='arm_servo'&&m.action==='stop'),'capture loss stops owned sweep');
+state.probe=sweepFixture.probe; state.actuators=sweepFixture.actuators; state.safety=sweepFixture.safety; state.detector.sweep_enabled=sweepFixture.sweeping;
+preferences.keyboardMaxThrottle=100; savePreferences();
+$('settings').click();
+const handedOff=new Promise(resolve=>$('settings-dialog').addEventListener('close',resolve,{once:true}));
+$('keyboard-test').click(); await handedOff;
+await new Promise(resolve=>setTimeout(resolve,0));
+assert(keyboardCaptured(),'Settings focus button captures after dialog close cleanup: '+JSON.stringify({active:document.activeElement.id,cameraFocused,mode:preferences.input,open:$('settings-dialog').open,hidden:document.hidden,hasFocus:document.hasFocus()}));
+releaseKeyboardCapture();
+
+
+// The camera stream recovers from startup, metadata changes and outages without a page refresh.
+const cameraFixture={cameras:state.cameras,source:preferences.cameras.forward,now:performance.now,setTimeout:window.setTimeout,clearTimeout:window.clearTimeout};
+const scheduledCameras=new Map(); let cameraClock=10000, cameraTimer=100000;
+performance.now=()=>cameraClock;
+window.setTimeout=(fn,ms)=>{const id=++cameraTimer;scheduledCameras.set(id,{fn,ms});return id;};
+window.clearTimeout=id=>scheduledCameras.delete(id);
+const cameraImage=$('forward-network-camera');
+Object.defineProperty(cameraImage,'naturalWidth',{configurable:true,value:0});
+state.cameras={recovery:{label:'Test camera',topic:'/camera/image/camera_info',frame_age_ms:0,fps:30}};
+state.connected=true; lastTelemetryAt=cameraClock;
+preferences.cameras.forward='raspberry:recovery';
+await startCamera('forward',preferences.cameras.forward,true);
+let generation=cameraGeneration.forward;
+const oldCameraError=cameraImage.onerror;
+const startupWatch=scheduledCameras.get(cameraWatchdogs.forward).fn;
+cameraClock+=5001;lastTelemetryAt=cameraClock;startupWatch();
+assert(cameraErrors.forward.includes('NO CAMERA FRAMES') && scheduledCameras.get(cameraRetries.forward).ms===1500,'missing first frame schedules automatic retry');
+const startupRetry=scheduledCameras.get(cameraRetries.forward).fn;startupRetry();
+assert(cameraGeneration.forward>generation,'camera retry creates fresh request');
+generation=cameraGeneration.forward;oldCameraError();
+assert(cameraGeneration.forward===generation && !cameraErrors.forward,'old stream error cannot affect new camera generation');
+Object.defineProperty(cameraImage,'naturalWidth',{configurable:true,value:640});
+cameraClock+=6000;lastTelemetryAt=cameraClock;
+scheduledCameras.get(cameraWatchdogs.forward).fn();
+assert(cameraGeneration.forward===generation && cameraRetries.forward===null,'healthy feed is not periodically reloaded');
+state.cameras.recovery.frame_age_ms=6000;
+scheduledCameras.get(cameraWatchdogs.forward).fn();
+assert(cameraErrors.forward.includes('SOURCE STALE'),'stale source triggers automatic recovery');
+state.cameras.recovery.frame_age_ms=0;
+recoverNetworkCameras();
+assert(cameraGeneration.forward>generation,'failed feed restarts after source recovers');
+generation=cameraGeneration.forward;
+state.cameras.recovery.topic='/replacement/camera_info'; updateNetworkCameraOptions();
+assert(cameraGeneration.forward>generation && cameraTopics.forward==='/replacement/camera_info','same camera ID with changed topic restarts');
+generation=cameraGeneration.forward;
+state.cameras.recovery.label='Renamed';updateNetworkCameraOptions();
+assert(cameraGeneration.forward===generation,'label-only discovery does not restart healthy stream');
+updateNetworkCameraOptions(true);
+assert(cameraGeneration.forward>generation,'gateway reconnect restarts selected stream');
+generation=cameraGeneration.forward;
+window.dispatchEvent(new Event('offline'));window.dispatchEvent(new Event('online'));
+assert(cameraGeneration.forward>generation,'network reconnection restarts selected stream');
+preferences.cameras.forward='virtual'; await startCamera('forward','virtual');
+assert(cameraWatchdogs.forward===null && cameraRetries.forward===null,'switching source clears camera timers');
+delete cameraImage.naturalWidth;
+performance.now=cameraFixture.now;window.setTimeout=cameraFixture.setTimeout;window.clearTimeout=cameraFixture.clearTimeout;
+state.cameras=cameraFixture.cameras; lastTelemetryAt=performance.now();
 
 state.safety = {allowed: false, mode: 'kill', reason: 'PX4 kill'};
 state.connected = true; state.drive.you_control_owner = true; state.drive.armed = false;
 updateHud();
 assert($('rc-safety').textContent === 'RC KILL', 'physical safety indicator');
-assert(!$('arm') && !$('estop') && $('probe-slider').disabled && $('sweep-toggle').disabled && $('sweep-speed').disabled, 'RC kill gates actuation without UI arm buttons');
+assert(!$('arm') && !$('estop') && $('probe-slider').disabled && $('mode-sweep-btn').disabled && $('sweep-speed').disabled, 'RC kill gates actuation without UI arm buttons');
 state.arm_servo = {connected: true, servo_id: 2, discovered_servos: [1, 2], serial_port: '/dev/serial/by-id/arm', position: 2000, torque: false,
   calibration: {minimum: 1500, center: 2000, maximum: 2500}};
 updateArmSettings();
@@ -285,10 +438,28 @@ updateArmSettings();
 assert(!$('probe-servo-home').disabled, 'probe home requires calibration permission');
 $('probe-servo-home').onkeydown({key: ' ', repeat: false, preventDefault() {}});
 assert(sent.at(-1).action === 'home' && sent.at(-1).role === 'probe' && sent.at(-1).held
-  && sent.at(-1).hold_id && sent.at(-1).load_percent === 30, 'home sends load threshold and unique deadman hold');
+  && sent.at(-1).hold_id && sent.at(-1).load_percent === 10, 'home sends load threshold and unique deadman hold');
 $('probe-servo-home').onkeyup({key: ' '});
 assert(sent.at(-1).action === 'stop', 'home release sends stop');
 assert($('probe-servo-home-travel').textContent.includes('8.8°'), 'probe travel uses top reference');
+state.arm_servo.last_command={request_id:sent.at(-1).request_id,success:true,message:'Stopped'};
+state.arm_servo.reverse=false; updateArmSettings();
+const reverseControl=$('probe-servo-reverse');
+assert(!reverseControl.disabled && !reverseControl.checked,'probe reverse is a stopped persistent setting');
+reverseControl.checked=true; reverseControl.dispatchEvent(new Event('change'));
+const directionRequest=sent.at(-1);
+assert(directionRequest.action==='configure_direction' && directionRequest.enabled===true && directionRequest.role==='probe','probe reverse sends boolean through actuator command');
+updateArmSettings();
+assert(reverseControl.checked && reverseControl.disabled,'pending direction preserves selected value');
+state.arm_servo={...state.arm_servo,reverse:true,home_position:2000,position:2100,last_command:{request_id:directionRequest.request_id,success:true,message:'Saved'}};
+updateArmSettings(); updateArmSettings();
+assert(reverseControl.checked && !$('probe-servo-save-extension').disabled && $('probe-servo-home-travel').textContent.includes('8.8°'),'reversed travel and calibration stay positive');
+reverseControl.checked=false; reverseControl.dispatchEvent(new Event('change'));
+state.arm_servo.last_command={request_id:sent.at(-1).request_id,success:false,message:'Save failed'};
+updateArmSettings(); updateArmSettings();
+assert(reverseControl.checked && $('probe-servo-feedback').textContent==='Save failed','failed save restores actual direction and reports error');
+state.arm_servo={...state.arm_servo,reverse:false,home_position:2100,position:2000};
+
 state.safety.servo_allowed = false; updateArmSettings();
 assert($('probe-servo-home').disabled, 'RC kill blocks homing');
 state.safety.servo_allowed = true;
@@ -337,7 +508,7 @@ state.safety = {allowed: false, servo_allowed: true, mode: 'override'};
 state.actuators = {arm: {connected: true, calibration: {minimum: 1000, center: 2000, maximum: 3000}}};
 state.drive.rc = {fresh: true, steering: .5, throttle: -.7, channels: [1750, 1150, 1500, 1500, 1500], steering_channel: 1, throttle_channel: 2};
 updateHud();
-assert(!$('sweep-toggle').disabled, 'RC override permits sweep without website arming');
+assert(!$('mode-sweep-btn').disabled, 'RC override permits sweep without website arming');
 delete state.actuators;
 assert($('controller').textContent === 'Physical RC transmitter' && $('pad-raw').textContent.includes('1750'), 'RC inputs visualized');
 for (const [minimum, maximum] of [[-20, 80], [-120, 220], [-1, 2]]) {
@@ -359,29 +530,32 @@ for (const [minimum, maximum] of [[-20, 80], [-120, 220], [-1, 2]]) {
 assert(Math.abs(Math.cos(beamScreenAngle(0))) < 1e-10 && Math.sin(beamScreenAngle(0)) === -1, 'calibrated center points straight ahead');
 state.detector.sensor = {available: true, fresh: true, packet: {v: 1, seq: 2, uptime_ms: 100, amplitude_adc: 20},
   baseline_adc: 20, full_response_adc: 150, reference_voltage: 5, rate_hz: 20, age_ms: 10,
-  history: [{age_s: 1, adc: 20}, {age_s: .05, adc: 150}]};
+  history: [{age_s: 1, adc: 20, filtered_adc: 22.125}, {age_s: .05, adc: 150, filtered_adc: 145.625}]};
 state.robot.speed_mps = 0;
 updateHud();
-assert($('detector-raw').textContent === '20 ADC', 'main detector panel shows raw ADC');
+assert($('detector-raw').textContent === '20.000 ADC', 'main detector panel shows raw ADC');
 state.detector.sensor.fresh = false;
 updateHud();
 assert($('detector-raw').textContent === '-- ADC', 'main detector panel hides stale ADC');
 state.detector.sensor.fresh = true;
 document.querySelector('[data-settings-tab="detector"]').click();
 updateMetalSettings();
-assert($('metal-voltage').textContent === '0.392 V', 'ADC peak converted to volts');
+assert(Math.abs(parseFloat($('metal-voltage').textContent)-20*5/255)<1e-6,'ADC reading shown with full voltage precision');
 assert(!$('metal-zero').disabled && !$('settings-detector').hidden, 'detector tab and zero available');
-assert($('metal-full').value === '150.00', 'mine trigger shown as raw ADC');
+assert(Math.abs(Number($('metal-full').value)-150*5/255)<1e-6,'saved mine level shown in volts');
 state.arm_servo = {...state.arm_servo, connected: true, active_role: 'arm'};
 state.detector.fixture_angle_deg = -15;
 recordDetectorAngle(1000);
 state.detector.fixture_angle_deg = 25;
 recordDetectorAngle(1200);
+detectorHistoryAt = 1200;
 drawDetectorHistory(1200);
-assert(detectorChart.data.datasets[0].data.length === 2, 'panel charts raw readings');
-assert(detectorChart.data.datasets[1].data.at(-1).y === 25, 'panel charts actual arm angle');
-assert(detectorChart.data.datasets[1].yAxisID === 'angle', 'angle has independent axis');
-assert(detectorChart.data.datasets[2].data[0].y === 20 && detectorChart.data.datasets[3].data[0].y === 150, 'panel includes calibration lines');
+assert(detectorChart.data.datasets.length===1 && detectorChart.data.datasets[0].label==='Filtered voltage (V)' && Math.abs(detectorChart.data.datasets[0].data[0].y-22.125*5/255)<1e-12,'primary detector graph is one precise filtered voltage trace');
+drawDetectorDiagnostics(1200);
+assert(detectorDiagnosticsChart.data.datasets[0].data.length === 2 && detectorDiagnosticsChart.data.datasets[0].data[0].y===22.125 && detectorDiagnosticsChart.data.datasets[0].label==='Filtered ADC', 'main detector charts precise filtered readings');
+assert(detectorDiagnosticsChart.data.datasets[1].data.at(-1).y === 25, 'panel charts actual arm angle');
+assert(detectorDiagnosticsChart.data.datasets[1].yAxisID === 'angle', 'angle has independent axis');
+assert(detectorDiagnosticsChart.data.datasets[2].data[0].y === 20 && detectorDiagnosticsChart.data.datasets[3].data[0].y === 150, 'panel includes calibration lines');
 assert($('sweep-status').parentElement.classList.contains('panel-heading'), 'sweep status moved to title');
 const panelPixels = $('detector-history').getContext('2d').getImageData(0, 0, $('detector-history').width, $('detector-history').height).data;
 assert(panelPixels.some((v, i) => i % 4 === 3 && v > 0), 'panel chart renders nonblank');
@@ -389,26 +563,27 @@ state.arm_servo.connected = false;
 state.safety.simulated = false;
 recordDetectorAngle(1400);
 assert(detectorAngles.at(-1).angle === null, 'missing servo leaves gap');
-drawDetectorHistory(32000);
+drawDetectorDiagnostics(32000);
 assert(detectorAngles.length === 0, 'angle history expires after 30 seconds');
 assert(!$('metal-reference'), 'ADC reference is not a dashboard input');
 assert(detectorColor(0) === 'hsl(120 78% 55%)', 'zero is green');
 assert(detectorColor(state.detector.threshold_ratio / 2) === 'hsl(60 78% 55%)', 'halfway to trigger is yellow');
 assert(detectorColor(state.detector.threshold_ratio) === 'hsl(0 78% 55%)', 'trigger is red');
 assert(detectorColor(2) === 'hsl(0 78% 55%)', 'above trigger stays red');
-assert(metalChart.data.datasets[1].data[0].y === 20, 'zero line shown');
-assert(metalChart.data.datasets[2].data[0].y === 150, 'trigger line shown');
-assert(metalChart.scales.y.max >= 150, 'autoscale includes trigger');
+assert(Math.abs(metalChart.data.datasets[1].data[0].y-20*5/255)<1e-12,'baseline line shown in volts');
+assert(Math.abs(metalChart.data.datasets[2].data[0].y-150*5/255)<1e-12,'mine line shown in volts');
+assert(metalChart.scales.y.max >= 150*5/255,'voltage autoscale includes mine level');
 assert($('metal-launch').value.includes('detector_threshold_ratio'), 'threshold included in launch export');
 assert(metalChart.scales.x.min === -30 && metalChart.scales.x.max === 0, 'default full 30 second axis');
-state.detector.sensor.history = [{age_s: 119, adc: 10}, {age_s: 29.9, adc: 0}, {age_s: .1, adc: 255}];
+detectorHistoryAt = performance.now();
+state.detector.sensor.history = [{age_s: 119, adc: 10, filtered_adc:10}, {age_s: 29.9, adc: 0, filtered_adc:0}, {age_s: .1, adc: 255, filtered_adc:255}];
 drawMetalHistory();
 assert(metalChart.data.datasets[0].data.length === 2, 'default filters older history');
 $('metal-time-range').value = '120';
 $('metal-time-range').dispatchEvent(new Event('change'));
 assert(metalChart.scales.x.min === -120 && metalChart.scales.x.max === 0, 'expanded full axis');
 assert(metalChart.data.datasets[0].data.length === 3, 'expanded range includes retained history');
-assert(metalChart.scales.y.min === 0 && metalChart.scales.y.max === 255, 'ADC endpoints visible');
+assert(metalChart.scales.y.min === 0 && metalChart.scales.y.max === 5,'voltage endpoints visible');
 const area = metalChart.chartArea;
 assert(area.left > 0 && area.right < metalChart.width && area.bottom < metalChart.height, 'axes fit inside canvas');
 assert(metalChart.scales.x.getPixelForValue(-120) === area.left, 'oldest time uses left plot edge');
@@ -417,14 +592,25 @@ const chartContainer = $('metal-history').parentElement;
 chartContainer.style.width = '280px'; drawMetalHistory();
 assert(metalChart.width <= 280 && metalChart.chartArea.right < metalChart.width, 'narrow chart fits container');
 chartContainer.style.width = ''; drawMetalHistory();
-state.detector.sensor.history = [{age_s: .1, adc: 42}]; drawMetalHistory();
-assert(metalChart.scales.y.min < 42 && metalChart.scales.y.max > 42, 'flat signal has vertical padding');
+state.detector.sensor.history = [{age_s: .1, adc: 42, filtered_adc:42}]; drawMetalHistory();
+assert(metalChart.scales.y.min < 42*5/255 && metalChart.scales.y.max > 42*5/255,'flat voltage has vertical padding');
 state.detector.sensor.history = []; drawMetalHistory();
 assert($('metal-range').textContent.includes('120 seconds'), 'empty state follows selected range');
 $('metal-autoscale').checked = false; drawMetalHistory();
-assert(metalChart.scales.y.min === 0 && metalChart.scales.y.max === 255, 'manual ADC scale');
+assert(metalChart.scales.y.min === 0 && metalChart.scales.y.max === 5,'manual voltage scale');
 $('metal-zero').click();
 assert(sent.at(-1).type === 'detector_calibrate' && sent.at(-1).action === 'zero', 'zero reaches gateway');
+metalPending=null;
+state.detector.sensor.fresh=false; state.safety.servo_allowed=false;
+updateMetalSettings();
+assert(!$('metal-apply').disabled && $('metal-zero').disabled,'manual calibration needs no RC or fresh reading; measuring does');
+$('metal-baseline').value='2.465750'; $('metal-full').value='2.478250';
+updateMetalSettings();
+assert($('metal-baseline').value==='2.465750','telemetry preserves manual voltage draft');
+$('metal-apply').click();
+assert(sent.at(-1).type==='detector_calibrate' && sent.at(-1).action==='apply' && Math.abs(sent.at(-1).baseline_adc-2.465750*255/5)<1e-10 && Math.abs(sent.at(-1).full_response_adc-2.478250*255/5)<1e-10,'manual fractional volts convert precisely to persistent calibration counts');
+metalPending=null; state.detector.sensor.fresh=true; state.safety.servo_allowed=true;
+
 metalPending = null;
 state.drive.you_control_owner = false; updateMetalSettings();
 assert($('metal-zero').disabled && $('metal-apply').disabled, 'spectator cannot calibrate');
@@ -469,7 +655,7 @@ $('probe-servo-save-extension').click();
 assert(sent.at(-1).action === 'save_probe_extension' && sent.at(-1).max_extension_mm === 90, 'save maximum extension reaches driver');
 state.drive.calibrating = false;
 state.probe.ready = false; state.probe.reason = 'Stopped; torque released'; updateHud();
-assert($('probe-slider').disabled && $('probe-status').textContent === 'SETUP REQUIRED' && $('probe-cycle-help').textContent.includes('Home and calibrate the probe in Settings') && !$('probe-cycle-help').textContent.includes('torque released'), 'unready probe shows setup action instead of unrelated lifecycle reason');
+assert($('probe-slider').disabled && $('probe-status').textContent === 'SETUP REQUIRED' && $('start-probing').title.includes('Home and calibrate the probe in Settings') && !$('start-probing').title.includes('torque released'), 'unready probe shows setup action instead of unrelated lifecycle reason');
 state.probe.ready = true; state.probe.depth_mm = 25; state.probe.max_depth_mm = 90; state.probe.target_mm = 50; updateHud();
 assert(!$('probe-slider').disabled && Number($('probe-slider').max) === 90, 'main probe uses saved extension limit');
 assert($('probe-depth').textContent === '25 mm', 'main probe shows actual calibrated travel');
@@ -521,18 +707,18 @@ assert(displayDetectorAngle(1200) === state.detector.fixture_angle_deg, 'radar n
 detectorAngles.splice(0, detectorAngles.length, ...savedAngles);
 // Display frames between telemetry updates reuse layout and scroll measured
 // data without adding fabricated samples or sending motion commands.
-const oldDraw = detectorChart.draw.bind(detectorChart);
+const oldDraw = detectorDiagnosticsChart.draw.bind(detectorDiagnosticsChart);
 let frameDraws = 0;
-detectorChart.draw = () => { frameDraws++; oldDraw(); };
-const measuredCount = detectorChart.data.datasets[1].data.length;
+detectorDiagnosticsChart.draw = () => { frameDraws++; oldDraw(); };
+const measuredCount = detectorDiagnosticsChart.data.datasets[1].data.length;
 const commandCount = sent.length;
-assert(scrollTimeChart(detectorChart, 1000) === false, 'new telemetry layout bucket');
-assert(scrollTimeChart(detectorChart, 1016) === true, 'first 60 Hz frame renders');
-assert(scrollTimeChart(detectorChart, 1033) === true, 'second 60 Hz frame renders');
-assert(frameDraws === 2 && detectorChart.$scrollPixels > 0, 'chart scrolls between measurements');
-assert(detectorChart.data.datasets[1].data.length === measuredCount, 'rendering does not invent angle samples');
+assert(scrollTimeChart(detectorDiagnosticsChart, 1000) === false, 'new telemetry layout bucket');
+assert(scrollTimeChart(detectorDiagnosticsChart, 1016) === true, 'first 60 Hz frame renders');
+assert(scrollTimeChart(detectorDiagnosticsChart, 1033) === true, 'second 60 Hz frame renders');
+assert(frameDraws === 2 && detectorDiagnosticsChart.$scrollPixels > 0, 'chart scrolls between measurements');
+assert(detectorDiagnosticsChart.data.datasets[1].data.length === measuredCount, 'rendering does not invent angle samples');
 assert(sent.length === commandCount, 'rendering never renews motion permission');
-detectorChart.draw = oldDraw;
+detectorDiagnosticsChart.draw = oldDraw;
 
 state.connected = true; state.drive.you_control_owner = true; state.drive.armed = true; state.drive.calibrating = false;
 state.safety = {allowed: true, servo_allowed: true, mode: 'simulation'};
@@ -545,14 +731,14 @@ state.detector.fresh = true;
 state.detector.latest_peak = {angle_deg: 20, signal: .9, fresh: true};
 state.detector.beam_min_angle_deg = -45; state.detector.beam_max_angle_deg = 45;
 updateHud();
-assert($('environment-label').textContent.includes('simulation'), 'environment label uses live mode');
+assert($('environment-label').textContent==='Simulation', 'environment label uses live mode');
 assert(Number($('probe-cycle-target').max) === 65, 'cycle target uses calibrated maximum');
-assert(!$('mode-align-btn').disabled, 'fresh reachable peak enables alignment');
+assert(!$('detector-align-probe').disabled, 'fresh reachable peak enables alignment');
 state.safety.servo_allowed = false;
 state.safety.reason = 'UI servo controls available when permitted';
 state.safety.servo_reason = 'PX4 is not active. Enable motion on the RC.';
 updateHud();
-assert($('mode-sweep-help').textContent.includes('PX4 is not active') && $('probe-cycle-help').textContent.includes('PX4 is not active'), 'servo gates show actual servo reason rather than permissive drive reason');
+assert($('operation-help').textContent.includes('PX4 is not active'), 'servo gates show actual servo reason rather than permissive drive reason');
 state.safety.servo_allowed = true;
 state.robot.pose_fresh = false; updateHud();
 assert($('mark-target-btn').disabled && $('position').textContent.includes('Position unavailable'), 'missing localization is explicit and cannot log pose');
@@ -564,32 +750,32 @@ state.robot.pose_fresh = true; updateHud();
 assert(!$('mark-target-btn').disabled && $('position').textContent.includes('X 1.0'), 'fresh localization restores measured pose and logging');
 
 state.actuators.arm.connected = false; state.actuators.arm.reason = 'Arm driver disconnected'; updateHud();
-assert($('mode-align-btn').disabled && $('mode-align-help').textContent.includes('disconnected'), 'alignment explains disconnected arm');
+assert($('detector-align-probe').disabled && $('mode-align-btn').title.includes('disconnected'), 'alignment explains disconnected arm');
 state.actuators.arm.connected = true; state.actuators.arm.calibration = null; updateHud();
-assert($('detector-align-probe').disabled && $('mode-align-help').textContent.includes('Calibrate'), 'alignment requires calibrated arm');
+assert($('detector-align-probe').disabled && $('mode-align-btn').title.includes('Calibrate'), 'alignment requires calibrated arm');
 state.actuators.arm.calibration = {minimum: 1000, center: 2000, maximum: 3000};
 state.probe.active = state.probe.holding = true; updateHud();
-assert($('start-probing').disabled && $('probe-cycle-help').textContent.includes('Stop probe'), 'manual holding requires stop before cycle');
+assert($('start-probing').disabled && $('start-probing').title.includes('Stop probe'), 'manual holding requires stop before cycle');
 assert(!$('probe-slider').disabled, 'manual target remains adjustable while holding');
 state.probe.active = state.probe.holding = false; updateHud();
 
 state.detector.latest_peak.fresh = false; updateHud();
-assert($('mode-align-btn').disabled && $('align-probe-hint').textContent.includes('fresh'), 'stale peak cannot fall back to stored detections');
+assert($('detector-align-probe').disabled && $('align-probe-hint').textContent.includes('fresh'), 'stale peak cannot fall back to stored detections');
 state.detector.latest_peak.fresh = true;
 state.robot.stationary = false; updateHud();
-assert(!$('start-probing').disabled && !$('probe-slider').disabled && !$('mode-mark-btn').disabled && !$('mode-align-btn').disabled, 'RC permits search actions without stationary odometry');
+assert(!$('start-probing').disabled && !$('probe-slider').disabled && !$('mode-mark-btn').disabled && !$('detector-align-probe').disabled, 'RC permits search actions without stationary odometry');
 state.robot.stationary = true; state.probe.depth_mm = null; updateHud();
-assert(!$('mode-mark-btn').disabled && !$('mode-align-btn').disabled && !$('sweep-toggle').disabled && $('start-probing').disabled, 'unrelated probe setup does not block arm or marking actions');
+assert(!$('mode-mark-btn').disabled && !$('detector-align-probe').disabled && !$('mode-sweep-btn').disabled && $('start-probing').disabled, 'unrelated probe setup does not block arm or marking actions');
 const probeSetup = {...state.probe};
 state.probe.ready = false; state.probe.max_depth_mm = null; state.probe.fault = true;
 state.robot.stationary = false; state.robot.odometry_fresh = false;
 updateHud();
-assert(!$('sweep-toggle').disabled && !$('mode-align-btn').disabled && !$('mode-mark-btn').disabled && $('probe-slider').disabled, 'sweep align and mark are independent of probe calibration fault and odometry');
+assert(!$('mode-sweep-btn').disabled && !$('detector-align-probe').disabled && !$('mode-mark-btn').disabled && $('probe-slider').disabled, 'sweep align and mark are independent of probe calibration fault and odometry');
 state.safety.servo_allowed = false; state.safety.servo_reason = 'RC input stale'; updateHud();
-assert($('sweep-toggle').disabled && $('mode-align-btn').disabled && $('mode-mark-btn').disabled && $('mode-mark-help').textContent.includes('RC input stale'), 'RC link loss still blocks all motion');
+assert($('mode-sweep-btn').disabled && $('detector-align-probe').disabled && $('mode-mark-btn').disabled && $('operation-help').textContent.includes('RC input stale'), 'RC link loss still blocks all motion');
 state.safety.servo_allowed = true; state.probe = probeSetup; state.robot.odometry_fresh = true;
 state.probe.depth_mm = 0; state.probe.adc_contact_state.fresh = false; updateHud();
-assert($('start-probing').disabled && $('probe-cycle-help').textContent.includes('fresh contact'), 'stale contact explains blocked cycle');
+assert($('start-probing').disabled && $('start-probing').title.includes('fresh reading'), 'stale contact explains blocked cycle');
 state.probe.adc_contact_state.fresh = true; updateHud();
 $('probe-cycle-target').value = '60';
 const beforeCycle = sent.length; startProbeCycle();
@@ -612,7 +798,7 @@ assert($('probe-cycle-alert-text').textContent.includes('Retracting'), 'active c
 state.probe.cycle_active = false;
 for (const [status, timestamp] of [['ABORTED', 111], ['TIMEOUT', 112]]) {
   state.probe.last_result = {status, timestamp, reason: 'Interlock lost'}; checkProbeCycleState();
-  assert(!$('probe-cycle-alert-text').textContent.includes('Retracting') && $('probe-cycle-alert-text').textContent.includes('Cycle stopped'), 'stopped cycle never claims continued retraction: ' + status);
+  assert(!$('probe-cycle-alert-text').textContent.includes('Retracting') && $('probe-cycle-alert-text').textContent.includes('Return stopped') && $('probe-cycle-alert-text').textContent.includes('Contact'), 'stopped return preserves contact without claiming continued retraction: ' + status);
 }
 state.probe.last_result = {status: 'CLEAR', timestamp: 113, target_depth_mm: 20};
 state.probe.contact_detected = false; checkProbeCycleState();
@@ -639,10 +825,100 @@ inputTab.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles:
 assert(document.querySelector('[data-settings-tab="cameras"]').getAttribute('aria-selected') === 'true', 'settings tabs support arrow keys');
 assert($('settings-dialog').getAttribute('aria-labelledby') === 'settings-title', 'settings dialog has accessible name');
 showNotice('Motor unavailable. Reconnect in Settings → Arm.');
-assert($('notice').parentElement.tagName === 'MAIN' && getComputedStyle($('notice')).position === 'static', 'errors are visible outside camera');
+assert(document.querySelector('.task-workbench').contains($('notice')) && !cameraPanel.contains($('notice')) && getComputedStyle($('notice')).position === 'static', 'errors stay in the task workbench outside camera and collapsed details');
 
 socket.onmessage({data: JSON.stringify({type: 'error', message: 'Motor unavailable. Reconnect in Settings → Arm.'})});
 assert(noticeExpiry === Infinity && $('notice').textContent.includes('Motor unavailable'), 'server errors remain visible until replaced');
+state.connected=true;state.drive.you_control_owner=true;state.drive.armed=true;state.drive.calibrating=false;
+state.safety={allowed:true,servo_allowed:true,mode:'simulation'};
+state.actuators={arm:{connected:true,calibration:{minimum:0,center:2048,maximum:4095}}};
+state.detector.fresh=true;state.detector.latest_peak=null;state.detector.sweep_enabled=false;
+state.probe={ready:false,active:false,holding:false,cycle_active:false,depth_mm:null,max_depth_mm:120};
+state.pump_active=state.drive.pump_active=false;
+state.inspection={phase:'IDLE',active:false,completed:0,total:0,confirmed_angle_deg:null,points:[]};
+updateHud();
+assert(!$('mode-align-btn').disabled && $('mode-probe-btn').disabled,'confirmation needs no previous peak or probe setup');
+$('mode-align-btn').click();
+assert(sent.at(-1).type==='inspection' && sent.at(-1).action==='confirm','primary confirmation runs the ROS workflow');
+state.inspection={phase:'CONFIRMING',active:true,completed:0,total:2,progress:null,message:'Moving to sweep start',points:[]};updateHud();
+assert(!$('inspection-progress').hasAttribute('value') && $('inspection-progress').getAttribute('aria-valuetext').includes('Moving'),'confirmation preparation shows native indeterminate progress');
+assert($('mode-align-pill').textContent==='RUNNING' && $('mode-align-btn').disabled,'active confirmation is running rather than labelled blocked');
+state.inspection.progress=.25;updateHud();
+assert($('inspection-progress').value===.25 && $('inspection-progress').max===2,'confirmation bar advances before a whole pass finishes');
+state.inspection.completed=1;state.inspection.progress=1.5;updateHud();
+assert($('inspection-progress').value===1.5 && $('inspection-progress').getAttribute('aria-valuetext').includes('2'),'return pass shows measured partial progress and pass number');
+state.inspection={phase:'CONFIRMED',active:false,confirmed_angle_deg:45,probe_reachable:true,completed:2,total:2,points:[]};
+state.probe={ready:true,fault:false,active:false,holding:false,cycle_active:false,depth_mm:0,max_depth_mm:120,adc_contact_state:{enabled:true,fresh:true,detected:false}};
+updateHud();$('probe-cycle-target').value='80';
+assert(!$('mode-probe-btn').disabled,'confirmed reachable target and ready contact enable probe scan');
+$('mode-probe-btn').click();
+assert(sent.at(-1).type==='inspection' && sent.at(-1).action==='probe_scan' && sent.at(-1).depth_mm===80,'probe scan sends entered max depth');
+state.inspection.probe_reachable=false;updateHud();
+assert($('mode-probe-btn').disabled && $('mode-probe-help').textContent.includes('outside probe reach'),'unreachable physical mounting offset has explicit recovery');
+state.inspection={phase:'PROBING',active:true,confirmed_angle_deg:45,completed:1,total:5,message:'Probing position 2 of 5',points:[{angle_deg:35,status:'CONTACT',contact_depth_mm:12.3}]};
+updateHud();
+assert($('mode-align-btn').disabled && $('mode-probe-btn').disabled && !$('inspection-stop').disabled,'active inspection exposes stop and excludes conflicting starts');
+assert($('mode-probe-pill').textContent==='RUNNING','active probe scan is labelled running');
+assert($('inspection-points').textContent.includes('12.3 mm') && $('inspection-progress').value===1,'actual per-point contact depth and progress are visible');
+state.probe={...state.probe,cycle_active:true,cycle_phase:'RETRACTING',depth_mm:19.3,contact_detected:true,contact_depth_mm:19.3};updateHud();
+assert($('operation-help').textContent.includes('Position 2 of 5: Retracting') && $('operation-help').textContent.includes('19.3 mm') && !$('operation-help').textContent.includes(': probing'),'live retraction/depth replaces stale probing message while retaining position context');
+assert($('probe-task').open && $('mode-probe-btn').textContent.includes('Retracting'),'current probe controls open and action shows the actual phase');
+assert(['probe-contact-volts','probe-contact-direction','probe-cycle-target'].every(id=>{const bounds=$(id).getBoundingClientRect();return bounds.width>0&&bounds.left>=0&&bounds.right<=innerWidth;}),'current probe inputs remain visible and fit the viewport');
+$('probe-task').open=false;updateHud();
+assert(!$('probe-task').open,'repeated telemetry does not thrash a manually closed task section');
+$('probe-task').open=true;
+state.probe.cycle_active=false;state.probe.last_result={status:'TIMEOUT',reason:'Retracting probe did not settle:1.4 mm remains',timestamp:999};updateHud();
+assert($('probe-cycle-alert-text').textContent.includes('Contact at 19.3 mm') && $('probe-cycle-alert-text').textContent.includes('Return stopped') && !$('probe-cycle-alert-text').textContent.includes('Probe retracted'),'failed return preserves known contact without claiming successful retraction');
+state.probe.last_result=null;
+
+$('inspection-stop').click();
+assert(sent.at(-1).type==='inspection' && sent.at(-1).action==='stop' && state.drive.you_control_owner,'stop inspection preserves control session');
+
+// A ROS timing gap is distinct from losing the gateway socket.
+$('settings-dialog').close();await new Promise(resolve=>setTimeout(resolve,0));
+preferences.input='keyboard';cameraPanel.focus();activateKeyboardInput();
+const receive = packet => socket.onmessage({data: JSON.stringify(packet)});
+const gatewayWatchdog = testIntervals.find(timer => timer.ms === 500).fn;
+let forcedCloses = 0; socket.close = () => { forcedCloses++; };
+const cameraRefresh = updateNetworkCameraOptions;
+const cameraRefreshFlags = [];
+updateNetworkCameraOptions = force => cameraRefreshFlags.push(force);
+receive({type:'state',drive:{...state.drive},detector:{...state.detector}});
+cameraRefreshFlags.length=0;
+state.drive.you_control_owner = state.drive.armed = state.drive.deadman = true;
+keys.add('KeyW'); cameraFocused = true;
+const previousNotice = $('notice').textContent;
+receive({type:'control_status',available:false});
+assert(forcedCloses === 0 && !state.connected && !state.drive.you_control_owner && !state.drive.armed && keys.size === 0 && cameraFocused && keyboardCaptured(),'ROS outage clears stale input without dropping camera capture or closing gateway');
+assert($('connection-title').textContent === 'Control node unavailable' && $('notice').textContent === previousNotice,'ROS outage has accurate status without persistent error spam');
+lastTelemetryAt = performance.now()-5000;
+const oldTelemetryAt = lastTelemetryAt;
+receive({type:'latency_pong',probe_id:-1}); gatewayWatchdog();
+assert(forcedCloses === 0 && lastTelemetryAt === oldTelemetryAt,'gateway pong prevents reconnect without making robot telemetry fresh');
+const liveDrive = {...state.drive,armed:false,you_control_owner:false};
+const sampleHistory = [{age_s:0,adc:125.753,filtered_adc:125.71}];
+receive({type:'state',drive:liveDrive,detector:{...state.detector,sensor:{...state.detector.sensor,history:sampleHistory,history_age_s:.125}}});
+assert(state.connected && $('connection-overlay').classList.contains('hidden') && keys.size===0,'fresh state recovers the existing socket without restoring held keys');
+assert(cameraRefreshFlags.length===1 && cameraRefreshFlags[0]===false,'ROS-only recovery preserves the healthy camera stream');
+const historyReference = state.detector.sensor.history, historyClock = detectorHistoryAt;
+assert(Number.isFinite(historyClock) && Math.abs(historyClock-(lastTelemetryAt-125))<1,'history clock includes backend snapshot age');
+const metadata = {...state.detector.sensor}; delete metadata.history; delete metadata.history_age_s;
+receive({type:'state',drive:liveDrive,detector:{...state.detector,sensor:metadata}});
+assert(state.detector.sensor.history === historyReference && detectorHistoryAt === historyClock && historyReference[0].adc===125.753,'live metadata preserves raw history and its timestamp');
+receive({type:'state',drive:liveDrive,detector:{...state.detector,sensor:{fresh:false,history:[]}}});
+assert(state.detector.sensor.history.length===0 && Number.isFinite(detectorHistoryAt),'explicit stale history clears samples with a finite clock');
+receive({type:'state',drive:liveDrive,probe:{...state.probe,contact_samples:[{x:-.5,load:2,current:3}],history_age_s:.2}});
+const probeSamples=state.probe.contact_samples, probeClock=pressureReceivedAt;
+assert(pressureSource===probeSamples && Math.abs(probeClock-(lastTelemetryAt-200))<1,'probe history clock starts at receipt even with diagnostics hidden');
+const probeMetadata={...state.probe};delete probeMetadata.contact_samples;delete probeMetadata.history_age_s;
+receive({type:'state',drive:liveDrive,probe:probeMetadata});
+assert(state.probe.contact_samples===probeSamples && pressureReceivedAt===probeClock,'fast probe metadata preserves raw samples and receipt clock');
+receive({type:'state',drive:liveDrive,probe:{...state.probe,contact_samples:[]}});
+assert(state.probe.contact_samples.length===0 && Number.isFinite(pressureReceivedAt),'explicit empty probe history clears without a missing-age NaN');
+lastServerMessageAt = performance.now()-GATEWAY_TIMEOUT_MS-1; gatewayWatchdog();
+assert(forcedCloses === 1 && $('connection-title').textContent === 'Gateway connection lost','only absent gateway messages trigger reconnect');
+updateNetworkCameraOptions=cameraRefresh;
+document.body.dataset.viewport = innerWidth;
 document.body.textContent = 'BROWSER TESTS PASSED';
 '''
         import json
@@ -653,10 +929,15 @@ document.body.textContent = 'BROWSER TESTS PASSED';
         with tempfile.TemporaryDirectory() as tmp:
             page = pathlib.Path(tmp) / 'test.html'
             page.write_text(html)
-            result = subprocess.run(['chromium', '--headless', '--no-sandbox', '--disable-gpu',
-                                     '--user-data-dir=' + tmp + '/profile', '--dump-dom', page.as_uri()],
-                                    capture_output=True, text=True, timeout=60)
-        self.assertIn('BROWSER TESTS PASSED</body>', result.stdout, result.stdout + result.stderr[-2000:])
+            # macOS Chrome enforces a 500px minimum; this covers the phone CSS branch.
+            for width in (1440, 500):
+                with self.subTest(viewport=width):
+                    result = subprocess.run(['chromium', '--headless', '--no-sandbox', '--disable-gpu',
+                                             '--window-size='+str(width)+',1000', '--force-device-scale-factor=1',
+                                             '--user-data-dir=' + tmp + '/profile-'+str(width), '--virtual-time-budget=2000', '--dump-dom', page.as_uri()],
+                                            capture_output=True, text=True, timeout=60)
+                    self.assertIn('BROWSER TESTS PASSED</body>', result.stdout, result.stdout + result.stderr[-2000:])
+                    self.assertIn('data-viewport="'+str(width)+'"', result.stdout, 'Browser viewport did not match requested fixture width')
 
 
 if __name__ == '__main__':

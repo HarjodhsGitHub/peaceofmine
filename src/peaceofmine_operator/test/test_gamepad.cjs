@@ -3,7 +3,7 @@ function runTests(source) {
   const inputFunctions = source.slice(source.indexOf('function buttonValue('),
     source.indexOf('function readKeyboard('));
   const check = new Function(`${inputFunctions}
-    const preferences = {mapping: 'auto', sensitivity: 100};
+    const preferences = {mapping: 'auto', sensitivity: 100, keyboardMaxThrottle: 0};
     const triggerSeen = {lt: false, rt: false};
     let lastPadId = null;
     const MAX_LINEAR_MPS = 0.8;

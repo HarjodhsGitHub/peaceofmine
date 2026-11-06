@@ -66,8 +66,8 @@ function createServoSettings(role) {
     const payload = {type: 'arm_servo', action, role, ...values};
     if (feedback) {
       payload.request_id = `${Date.now()}-${++servoRequestSequence}`;
-      armPending = {id: payload.request_id, at: performance.now()};
-      setArmFeedback(({select: 'Selecting servo…', capture: 'Recording position…', configure: 'Applying limits…', stop: 'Stopping…', jog: 'Starting jog…', position: 'Moving to slider target…', move: 'Starting movement…'})[action] || 'Sending command…');
+      armPending = {id: payload.request_id, action, at: performance.now()};
+      setArmFeedback(({select: 'Selecting servo…', capture: 'Recording position…', configure: 'Applying limits…', configure_direction: 'Saving probe direction…', stop: 'Stopping…', jog: 'Starting jog…', position: 'Moving to slider target…', move: 'Starting movement…'})[action] || 'Sending command…');
     }
     send(payload);
   }
@@ -105,6 +105,7 @@ function createServoSettings(role) {
       servoSelect.dataset.discovery = signature;
     }
     const owner = state.connected && state.drive.you_control_owner;
+    const directionPending = armPending?.action === 'configure_direction';
     $('arm-reconnect').disabled = !owner || Boolean(live.scanning || live.torque || live.sweeping) || armHoldTimer !== null;
     if (armPending) {
       const acknowledgement = live.last_command;
@@ -117,7 +118,7 @@ function createServoSettings(role) {
         setArmFeedback('No confirmation received. Check the driver connection and retry.', 'error'); armPending = null;
       }
     }
-    const ready = owner && state.drive.armed && state.safety?.servo_allowed && servo.connected;
+    const ready = owner && state.drive.armed && state.safety?.servo_allowed && servo.connected && !(role === 'probe' && directionPending);
     const slider = $('arm-position-slider');
     if (servo.connected) {
       slider.min = servo.position_minimum ?? servo.eeprom_minimum ?? 0;
@@ -132,7 +133,7 @@ function createServoSettings(role) {
 
     $('arm-servo-status').textContent = servo.reason || 'Servo driver not running';
     $('arm-servo-position').textContent = servo.connected ? `${armAngle(servo.position)} (${servo.position ?? '—'} ticks)` : servo.serial_connected ? 'Adapter connected · no servo selected' : 'Disconnected';
-    $('arm-servo-details').textContent = servo.connected ? `Servo ${servo.servo_id} · ${servo.serial_port || 'serial adapter'}` : servo.serial_connected ? `Select the ID of the ${role} servo, then click Select servo.` : servo.serial_port ? `Servo bus: ${servo.serial_port}` : 'Start hardware launch with use_arm_servo:=true and arm_serial_port:=<adapter path>.';
+    $('arm-servo-details').textContent = servo.connected ? `Servo ${servo.servo_id} · ${servo.serial_port || 'serial adapter'}` : servo.serial_connected ? `Select the ID of the ${role} servo, then click Select servo.` : servo.serial_port ? `Servo bus: ${servo.serial_port}` : 'Servo bus unavailable. Check the hardware connection.';
     const number = (value, digits = 1, unit = '') => Number.isFinite(value) ? `${value.toFixed(digits)}${unit}` : '—';
     const metric = (id, value) => { $(id).textContent = servo.connected ? value : '—'; };
     metric('arm-goal', armAngle(servo.goal_position));
@@ -148,10 +149,10 @@ function createServoSettings(role) {
     $('arm-px4').textContent = state.safety?.servo_allowed ? 'RC permits motion' : state.safety?.servo_reason || 'RC blocks motion';
     $('arm-calibration-stop').disabled = !owner;
     const selectionBlocked = !state.connected ? 'Connect to the dashboard first.'
-      : !owner ? 'Take control to select a servo or record calibration. Motion permission comes from the RC.'
+      : !owner ? 'Take control to configure the servo.'
       : live.torque ? 'Stop the active servo before changing the servo ID.'
       : !servo.serial_connected ? 'Waiting for the servo serial adapter.' : '';
-    $('arm-calibration-access').textContent = owner && active && state.drive.calibrating ? 'Hold a jog button to move. Release it, then record the position.' : selectionBlocked || 'Ready to select a servo and record positions.';
+    $('arm-calibration-access').textContent = owner && active && state.drive.calibrating ? role === 'probe' ? 'Home, extend, then save measured travel.' : 'Jog, release, then record the limits.' : selectionBlocked || 'Select a servo to configure it.';
     $('arm-take-control').hidden = owner;
     $('arm-take-control').disabled = !state.connected;
     $('arm-select-id').disabled = Boolean(selectionBlocked) || servoSelect.value === '';
@@ -159,7 +160,11 @@ function createServoSettings(role) {
     const canRecord = owner && servo.connected && !servo.torque && armHoldTimer === null;
     if (role === 'probe') {
       const probe = live.probe || {};
-      $('arm-save-extension').disabled = !canRecord || !Number.isFinite(servo.home_position) || servo.home_position - servo.position <= 3;
+      const travel = (servo.reverse ? 1 : -1) * (servo.position - servo.home_position);
+      const reverse = $('arm-reverse');
+      reverse.disabled = !canRecord || Boolean(servo.moving || probe.active || probe.holding || probe.cycle_active || armPending) || typeof servo.reverse !== 'boolean';
+      if (!directionPending) reverse.checked = servo.reverse === true;
+      $('arm-save-extension').disabled = !canRecord || directionPending || !Number.isFinite(servo.home_position) || !Number.isFinite(travel) || travel <= 3;
       $('arm-extension-status').textContent = probe.calibrated
         ? `Saved maximum: ${probe.max_depth_mm} mm · retained after restart` : 'Maximum extension not calibrated';
       if ($('arm-max-extension').dataset.saved !== String(probe.max_depth_mm)) {
@@ -173,7 +178,7 @@ function createServoSettings(role) {
       $('arm-home-load').disabled = armHoldTimer !== null;
       $('arm-home-status').textContent = servo.connected ? servo.home_status || 'Not homed' : 'Not homed · connect probe';
       $('arm-home-travel').textContent = servo.connected && Number.isFinite(servo.home_position)
-        ? `${((servo.home_position - servo.position) * 360 / 4096).toFixed(1)}° from top (shaft)` : 'Home required';
+        ? `${(travel * 360 / 4096).toFixed(1)}° from top (shaft)` : 'Home required';
     }
     {
       $('arm-apply-motion').disabled = !canRecord;
@@ -221,6 +226,10 @@ function createServoSettings(role) {
       armCommand('save_probe_extension', {max_extension_mm: Number($('arm-max-extension').value)});
     };
     if (role === 'probe') $('arm-home-load').oninput = updateArmSettings;
+    if (role === 'probe') $('arm-reverse').onchange = () => {
+      armCommand('configure_direction', {enabled: $('arm-reverse').checked});
+      updateArmSettings();
+    };
     if (role === 'probe') $('arm-enable-multiturn').onclick = () => armCommand('enable_multiturn');
     {
       $('arm-apply-motion').onclick = () => {
