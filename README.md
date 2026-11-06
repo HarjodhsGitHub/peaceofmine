@@ -1,4 +1,36 @@
-# SVEA Starter Suite
+# PeaceOfMine
+
+## Start on the real car
+
+With Docker installed, run these commands **on the car's onboard computer**:
+
+```bash
+git clone https://github.com/HarjodhsGitHub/PeaceOfMine.git
+cd PeaceOfMine
+util/build
+util/run
+```
+
+Then **inside the container**, start the hardware stack:
+
+```bash
+ros2 launch peaceofmine_operator operator.launch.xml is_sim:=false
+```
+
+The image builds the workspace and sources it automatically when you enter
+the container. No separate build or `source` command is needed for this setup.
+
+On your laptop, connect to the car's Tailscale network and open
+**[svea-mine.tailead4c5.ts.net:8080](http://svea-mine.tailead4c5.ts.net:8080)**.
+Click **Take control**; driving requires ROS authority and PX4 arming through
+the physical RC. A gamepad plugged into the laptop additionally requires HTTPS;
+see the [operator guide](src/peaceofmine_operator/gui.md) for certificate setup.
+
+Keep the wheels clear and the physical RC ready for the first launch. Verify the
+saved calibration before moving the arm or probe. Stop with the physical RC,
+then press `Ctrl+C` in the launch terminal.
+
+## SVEA Starter Suite
 
 ROS 2 Jazzy workspace for Small Vehicles for Autonomy (SVEA), with Python
 interfaces, vehicle simulation and example controllers.
