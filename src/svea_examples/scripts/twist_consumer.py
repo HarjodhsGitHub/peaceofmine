@@ -38,6 +38,9 @@ class twist_consumer(rx.Node):
                                    "geometry_msgs/msg/TwistStamped"):
             raise TypeError(f'Invalid message type for {self.twist_top}: {self.twist_type}')
 
+        if not math.isfinite(self.min_speed_for_steering) or self.min_speed_for_steering <= 0:
+            raise ValueError('min_speed_for_steering must be finite and positive')
+
         if self.use_difflock:
             self.actuation.enable_difflock()
 
@@ -46,10 +49,9 @@ class twist_consumer(rx.Node):
             f'twist_consumer listening on "{self.twist_top}" ({self.twist_type})')
 
     def _omega_to_steering(self, v, w):
-        """Ackermann inverse kinematics: delta = atan(L * omega / v)."""
-        if abs(v) < self.min_speed_for_steering:
-            return 0.0
-        delta = math.atan(self.wheelbase * w / abs(v))
+        """Ackermann steering with a speed floor so steering also works at rest."""
+        speed = max(abs(v), self.min_speed_for_steering)
+        delta = math.atan(self.wheelbase * w / speed)
         return max(-self.max_steering, min(self.max_steering, delta))
 
     def on_shutdown(self):
