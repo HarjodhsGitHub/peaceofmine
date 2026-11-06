@@ -10,6 +10,24 @@ from test_arm_node import module
 
 
 class SettingsServiceTest(unittest.TestCase):
+    def test_detector_accepts_fractional_calibration_span(self):
+        rclpy.init()
+        with tempfile.TemporaryDirectory() as tmp:
+            path=str(Path(tmp)/'operator_config.json')
+            node=module('operator_settings_node').OperatorSettings(parameter_overrides=[Parameter('config_file',value=path)])
+            try:
+                request=SaveSettings.Request(section='metal_detector',value_json=json.dumps(dict(
+                    baseline_adc=125.7,full_response_adc=126.2,reference_voltage=5.)),expected_revision=0)
+                result=node.save(request,SaveSettings.Response())
+                self.assertTrue(result.success,result.message)
+                self.assertEqual(configuration.load(path)['metal_detector']['full_response_adc'],126.2)
+                request.value_json=json.dumps(dict(baseline_adc=125.7,full_response_adc=125.7,reference_voltage=5.))
+                request.expected_revision=result.revision
+                self.assertFalse(node.save(request,SaveSettings.Response()).success)
+            finally:
+                node.destroy_node()
+                rclpy.shutdown()
+
     def test_revision_conflicts_and_invalid_documents_preserve_saved_settings(self):
         rclpy.init()
         with tempfile.TemporaryDirectory() as tmp:

@@ -80,7 +80,7 @@ def actuator_settings(path, simulation=False):
     data=load(path)
     if simulation:
         data=dict(data)
-        for section in ('arm','probe','arm_motion','probe_motion'):
+        for section in ('arm','probe','arm_motion','probe_motion','probe_direction'):
             if section+'_simulation' in data:
                 data[section]=data[section+'_simulation']
     return data

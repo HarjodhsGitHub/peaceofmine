@@ -73,7 +73,7 @@ class ActuatorController(Node):
     def reload_settings(self):
         try:
             saved=configuration.actuator_settings(self.config_file,self.simulation)
-            keys=(self.role,self.role+'_motion')
+            keys=(self.role,self.role+'_motion',self.role+'_direction')
             if any(saved.get(k)!=self.saved.get(k) for k in keys):
                 self.stop('Configuration changed; start again')
                 previous=self.ident
@@ -174,7 +174,7 @@ class ActuatorController(Node):
             if ok:
                 self.saved = configuration.actuator_settings(self.config_file,self.simulation)
                 applied()
-            self.reason = message if not ok else 'Saved; driver applies limits on its next configuration update'
+            self.reason = message if not ok else 'Saved'
             self.reply(command, ok)
         self.settings.save(section, value, complete)
 
@@ -384,7 +384,7 @@ class ActuatorController(Node):
                 handle.succeed()
             else:
                 handle.abort()
-            return ActuatorOperation.Result(success=success, message=message)
+            return self.action_result(success, message)
         except Exception as exc:
             self.stop(str(exc))
             handle.abort()
@@ -392,6 +392,9 @@ class ActuatorController(Node):
         finally:
             self.action_handle = self.action_done = None
             self.action_reserved = False
+
+    def action_result(self, success, message):
+        return ActuatorOperation.Result(success=success, message=message)
 
     def destroy_node(self):
         self.stop('Controller shutdown')

@@ -144,7 +144,7 @@ class OperatorWebBridge(Node):
             if self._shutting_down or ws not in self._connected_sockets:
                 return dict(type='error', message='Operator connection is closed.')
             if not self._state or time.monotonic() - self._state_at >= .5:
-                return dict(type='error', message='Operator control ROS node unavailable.')
+                return dict(type='control_status', available=False, message='Control node unavailable. Waiting for ROS telemetry.')
             payload = dict(payload)
             kind = payload.get('type')
             if kind in ('probe_target', 'probe_zero_contact', 'start_probe_cycle', 'probe_cycle', 'align_probe'):
@@ -163,34 +163,49 @@ class OperatorWebBridge(Node):
             self._replies.clear()
             return values
 
-    def has_control_state(self):
-        with self._lock:
-            return self._state is not None
-
-    def snapshot(self):
+    def snapshot(self, include_history=True):
         with self._lock:
             if self._state is None or time.monotonic() - self._state_at >= .5:
                 return None
             value = copy.deepcopy(self._state)
             value.pop('control_owner', None)
             if time.monotonic()-self._detector_at < .5:
-                value.update(copy.deepcopy(self._detector))
+                detector = self._detector
+                if not include_history:
+                    live = detector['detector']
+                    detector = {**detector, 'detector': {**live, 'sensor': {
+                        k: v for k, v in live.get('sensor', {}).items() if k != 'history'}}}
+                value.update(copy.deepcopy(detector))
+                if include_history:
+                    value['detector']['sensor']['history_age_s'] = max(0., time.monotonic()-self._detector_at)
             else:
-                value.update(detector={'fresh': False, 'sensor': {'fresh': False}, 'beam': [], 'signal_ratio': 0, 'threshold_ratio': 1, 'fixture_angle_deg': 0, 'sweep_enabled': False, 'sweep_speed_deg_s': 0, 'sweep_speed_min': .684, 'sweep_speed_max': 180, 'beam_min_angle_deg': -45, 'beam_max_angle_deg': 45, 'beam_half_angle_deg': 45}, detections=[])
+                value.update(detector={'fresh': False, 'sensor': {'fresh': False, 'history': []}, 'beam': [], 'signal_ratio': 0, 'threshold_ratio': 1, 'fixture_angle_deg': 0, 'sweep_enabled': False, 'sweep_speed_deg_s': 36, 'sweep_speed_min': .684, 'sweep_speed_max': 180, 'beam_min_angle_deg': -45, 'beam_max_angle_deg': 45, 'beam_half_angle_deg': 45}, detections=[])
             selected = value.pop('selected_actuator', 'arm')
-            actuators = {role: copy.deepcopy(self._actuators.get(role, {}))
-                         if time.monotonic()-self._actuator_times.get(role, 0) < .5
-                         else {'connected': False, 'reason': role.title() + ' controller unavailable'}
-                         for role in ('arm', 'probe')}
+            actuators = {}
+            for role in ('arm', 'probe'):
+                if time.monotonic()-self._actuator_times.get(role, 0) >= .5:
+                    actuators[role] = {'connected': False, 'reason': role.title() + ' controller unavailable'}
+                    continue
+                source = self._actuators.get(role, {})
+                if role == 'probe' and 'probe' in source:
+                    # Plot samples travel once in the top-level probe, not in every actuator copy.
+                    source = {**source, 'probe': {k: v for k, v in source['probe'].items()
+                                                if k not in ('contact_samples', 'pressure_samples', 'pressure_history')}}
+                actuators[role] = copy.deepcopy(source)
             value['actuators'] = actuators
             value['arm_servo'] = {**actuators[selected], 'active_role': selected,
                 'role_ids': {role: state.get('servo_id') for role, state in actuators.items()},
                 'arm_calibration': actuators['arm'].get('arm_calibration'),
                 'probe': actuators['probe'].get('probe', {'ready': False})}
             if 'probe' in actuators['probe']:
-                value['probe'] = copy.deepcopy(actuators['probe']['probe'])
+                probe = self._actuators['probe']['probe']
+                value['probe'] = copy.deepcopy({k: v for k, v in probe.items()
+                    if (k != 'contact_samples' or include_history)
+                    and (k not in ('pressure_samples', 'pressure_history') or 'contact_samples' not in probe)})
+                if include_history:
+                    value['probe']['history_age_s'] = max(0., time.monotonic()-self._actuator_times['probe'])
             else:
-                value['probe'] = {'depth_mm': None, 'target_mm': 0, 'max_depth_mm': None, 'pressure_ratio': None, 'pressure_history': [], 'pressure_window_s': 30, 'fault': False, **value.get('probe', {}), 'ready': False,
+                value['probe'] = {'depth_mm': None, 'target_mm': 0, 'max_depth_mm': None, 'pressure_ratio': None, 'pressure_history': [], 'contact_samples': [], 'pressure_window_s': 30, 'fault': False, **value.get('probe', {}), 'ready': False,
                     'reason': actuators['probe'].get('reason', 'Probe unavailable')}
 
             value['cameras'] = copy.deepcopy(self._camera_frames) if time.monotonic()-self._cameras_at < 1 else {}

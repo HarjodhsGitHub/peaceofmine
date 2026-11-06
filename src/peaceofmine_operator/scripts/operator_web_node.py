@@ -178,32 +178,47 @@ def build_app(node: OperatorGateway) -> web.Application:
 
 
 async def broadcast_telemetry(node: OperatorGateway) -> None:
-    """Build one snapshot per tick and fan it out to every connected client."""
-    while True:
-        await asyncio.sleep(TELEMETRY_PERIOD_S)
-        sockets = node.connected_sockets()
-        if not sockets:
-            continue
-        for ws, reply in node.replies():
-            if not ws.closed:
-                with contextlib.suppress(ConnectionError, RuntimeError):
-                    await ws.send_json(reply)
-        shared = node.snapshot()
-        if shared is None:
-            if not node.has_control_state():
+    """Keep one pending state per viewer; graph history travels at 5 Hz."""
+    writers = {}
+    history_at = 0.
+
+    async def send_state(ws, packet):
+        with contextlib.suppress(ConnectionError, RuntimeError):
+            await ws.send_str(packet)
+
+    try:
+        while True:
+            await asyncio.sleep(TELEMETRY_PERIOD_S)
+            sockets = node.connected_sockets()
+            for ws, task in list(writers.items()):
+                if ws not in sockets or ws.closed:
+                    task.cancel()
+                if task.done() or ws not in sockets or ws.closed:
+                    writers.pop(ws)
+            if not sockets:
                 continue
+            for ws, reply in node.replies():
+                if not ws.closed:
+                    with contextlib.suppress(ConnectionError, RuntimeError, asyncio.TimeoutError):
+                        await asyncio.wait_for(ws.send_json(reply), timeout=.5)
+            now = time.monotonic()
+            include_history = now-history_at >= .2
+            if include_history:
+                history_at = now
+            shared = node.snapshot(include_history=include_history)
+            if shared is None:
+                shared = dict(type='control_status', available=False,
+                              message='Control node unavailable. Waiting for ROS telemetry.')
             for ws in sockets:
-                await ws.close(code=1013, message=b'Operator control ROS node unavailable')
-            continue
-        drive = shared['drive']
-        for ws in sockets:
-            if ws.closed:
-                continue
-            drive['you_control_owner'] = node.owns_lease(ws)
-            try:
-                await ws.send_str(json.dumps(shared, separators=(',', ':')))
-            except (ConnectionResetError, RuntimeError):
-                pass
+                if ws.closed or ws in writers:
+                    continue
+                if shared.get('type') == 'state':
+                    shared['drive']['you_control_owner'] = node.owns_lease(ws)
+                writers[ws] = asyncio.create_task(send_state(ws, json.dumps(shared, separators=(',', ':'), allow_nan=False)))
+    finally:
+        for task in writers.values():
+            task.cancel()
+        await asyncio.gather(*writers.values(), return_exceptions=True)
 
 
 async def start_server(node: OperatorGateway, stop: threading.Event) -> None:

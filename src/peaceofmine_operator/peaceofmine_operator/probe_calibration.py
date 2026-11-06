@@ -12,6 +12,12 @@ def validate(value):
     return dict(servo_id=ident, max_extension_mm=float(distance), travel_ticks=ticks)
 
 
+def validate_direction(value):
+    if not isinstance(value, dict) or set(value) != {'reverse'} or type(value['reverse']) is not bool:
+        raise ValueError('Probe reverse direction must be a boolean')
+    return dict(reverse=value['reverse'])
+
+
 def load(path, simulation=False):
     from . import configuration as calibration
     value = calibration.actuator_settings(path, simulation).get('probe')

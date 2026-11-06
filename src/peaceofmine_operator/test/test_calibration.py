@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from peaceofmine_operator import calibration, probe_calibration
+from peaceofmine_operator import calibration, configuration, probe_calibration
 
 
 class CalibrationTest(unittest.TestCase):
@@ -29,6 +29,19 @@ class CalibrationTest(unittest.TestCase):
             self.assertEqual(source.stat().st_mode & 0o777, 0o644)
             self.assertEqual(calibration.load(str(source))['arm'], dict(servo_id=1))
             self.assertEqual(probe_calibration.load(str(source))['max_extension_mm'], 120)
+
+    def test_probe_direction_is_boolean_persistent_and_separate_for_simulation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=str(Path(directory)/'operator_config.json')
+            for invalid in ({'reverse':1},{'reverse':'false'},{},{'reverse':False,'extra':1}):
+                with self.assertRaises(ValueError):
+                    probe_calibration.validate_direction(invalid)
+            value=probe_calibration.validate_direction(dict(reverse=True))
+            calibration.save_section(path,'probe_direction',value)
+            self.assertTrue(configuration.actuator_settings(path)['probe_direction']['reverse'])
+            calibration.save_section(path,'probe_direction_simulation',dict(reverse=False))
+            self.assertFalse(configuration.actuator_settings(path,True)['probe_direction']['reverse'])
+            self.assertTrue(configuration.actuator_settings(path)['probe_direction']['reverse'])
 
     def test_concurrent_nodes_preserve_sections(self):
         with tempfile.TemporaryDirectory() as directory:

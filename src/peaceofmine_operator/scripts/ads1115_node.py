@@ -33,9 +33,7 @@ class ADS1115Node(Node):
             config, routes, trigger = OperatorADC.validate(value)
             legacy_value = dict(config=config,routes=routes,probe_trigger=trigger)
             # Legacy file is read-only; persist through the settings service on the next save.
-        self.adc = OperatorADC(config_file, demo=demo)
-        if legacy_value:
-            self.adc.command(dict(action='settings',settings=legacy_value),persist=False)
+        self.adc = OperatorADC(config_file, demo=demo, initial_settings=legacy_value)
         self.legacy_value = legacy_value
         self.settings = SettingsClient(self, config_file)
         self.config_file = config_file

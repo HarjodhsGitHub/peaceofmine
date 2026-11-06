@@ -4,6 +4,7 @@ import math
 import time
 from std_msgs.msg import Bool, Float32
 from peaceofmine_interfaces.msg import AdcSamples, ContactState
+from peaceofmine_interfaces.action import ActuatorOperation
 from peaceofmine_operator.actuator_controller import ActuatorController
 from peaceofmine_operator.adc_contact import AdcContact
 from peaceofmine_operator.probe_contact import ProbeContact
@@ -16,6 +17,8 @@ class ProbeController(ActuatorController):
     supported_actions = ('home', 'target', 'probe_cycle')
 
     def __init__(self, **kwargs):
+        self.reverse = False
+        self.extension_sign = -1
         self.home_position = None
         self.home_status = 'Not homed'
         self.motion = None
@@ -24,6 +27,8 @@ class ProbeController(ActuatorController):
         self.started = 0.
         self.fault = False
         self.history = []
+        self.cycle_timeout = 60.
+        self.action_probe_cycle = False
         self.cycle_active = False
         self.cycle_phase = 'IDLE'
         self.cycle_target_depth = 80.0
@@ -32,6 +37,7 @@ class ProbeController(ActuatorController):
         self.last_probe_result = None
         super().__init__(**kwargs)
         self.extension = probe_calibration.load(self.config_file,self.simulation)
+        self.apply_direction(self.saved.get('probe_direction', dict(reverse=False)))
         self.apply_probe_motion(self.saved.get('probe_motion',dict(max_speed_deg_s=self.motion_speed*.684,acceleration_deg_s2=34.332)))
         self.contact = AdcContact()
         self.load_contact = ProbeContact()
@@ -52,7 +58,16 @@ class ProbeController(ActuatorController):
         self.motion_speed=max(1,math.floor(speed/.684+1e-9))
         self.acceleration=max(1,math.floor(acceleration/8.583+1e-9))
 
+    def apply_direction(self, value):
+        reverse = probe_calibration.validate_direction(value)['reverse']
+        if reverse != self.reverse:
+            self.on_disconnect()
+            self.home_status = 'Direction changed; home again'
+        self.reverse = reverse
+        self.extension_sign = 1 if reverse else -1
+
     def apply_saved_settings(self):
+        self.apply_direction(self.saved.get('probe_direction', dict(reverse=False)))
         self.extension=probe_calibration.load(self.config_file,self.simulation)
         if 'probe_motion' in self.saved:
             self.apply_probe_motion(self.saved['probe_motion'])
@@ -116,12 +131,14 @@ class ProbeController(ActuatorController):
             return
         if type(threshold) not in (int,float) or not math.isfinite(threshold) or not 10 <= threshold <= 60:
             raise ValueError('Home load threshold must be 10..60 percent')
-        self.start(self.telemetry.maximum, self.telemetry.minimum, self.telemetry.maximum, load=threshold)
+        target = self.telemetry.minimum if self.reverse else self.telemetry.maximum
+        self.start(target, self.telemetry.minimum, self.telemetry.maximum, load=threshold)
         self.home_hold, self.home_position = hold, None
         self.motion, self.started = 'home', time.monotonic()
         self.home_status, self.lifecycle = 'Seeking top; release to stop', 'HOMING'
 
     def start_probe_cycle(self, depth):
+        self.reload_contact()
         calibration = self.extension
         if self.home_position is None or not calibration or calibration['servo_id'] != self.ident:
             raise ValueError('Home and calibrate probe before probing cycle')
@@ -129,7 +146,7 @@ class ProbeController(ActuatorController):
             raise ValueError(f"Target depth must be between 0 and {calibration['max_extension_mm']} mm")
         if not self.interlock():
             raise ValueError('Probe cycle requires RC permission, a connected probe and no fault')
-        if round(self.home_position-depth/calibration['max_extension_mm']*calibration['travel_ticks']) == self.home_position:
+        if round(self.home_position+self.extension_sign*depth/calibration['max_extension_mm']*calibration['travel_ticks']) == self.home_position:
             raise ValueError('Probe depth is smaller than one encoder tick')
         if self.cycle_active or self.operation:
             raise ValueError('Stop the current probe operation first')
@@ -144,6 +161,7 @@ class ProbeController(ActuatorController):
         self.cycle_target_depth = float(depth)
         self.contact_detected = False
         self.contact_depth_mm = None
+        self.cycle_timeout = max(60., 10+2*abs(self.operation.target-self.telemetry.position)*360/(4096*self.operation.speed*.684))
 
     def start_target(self, depth, hold=True):
         calibration = self.extension
@@ -151,13 +169,20 @@ class ProbeController(ActuatorController):
             raise ValueError('Home and calibrate probe before extension')
         if type(depth) not in (int,float) or not math.isfinite(depth) or not 0 <= depth <= calibration['max_extension_mm']:
             raise ValueError('Probe depth outside calibrated range')
-        low, high = self.home_position-calibration['travel_ticks'], self.home_position
+        low, high = sorted((self.home_position, self.home_position+self.extension_sign*calibration['travel_ticks']))
         if not self.telemetry.minimum <= low < high <= self.telemetry.maximum:
             raise ValueError('Probe travel exceeds encoder range')
-        target = round(high-depth/calibration['max_extension_mm']*calibration['travel_ticks'])
+        target = round(self.home_position+self.extension_sign*depth/calibration['max_extension_mm']*calibration['travel_ticks'])
         self.start(target, low, high)
+        self.arrival_tolerance = max(1, min(self.operation.tolerance, abs(target-self.telemetry.position)//4))
         self.target, self.motion, self.started = depth, 'target', time.monotonic()
         self.hold_target = hold
+
+    def target_reached(self):
+        return (self.telemetry.operation_id == self.operation.operation_id
+                and self.telemetry.goal == self.operation.target
+                and abs(self.telemetry.position-self.operation.target) <= self.arrival_tolerance
+                and abs(self.telemetry.speed_deg_s) <= 3*.684)
 
     def special_command(self, action, command):
         if action == 'home':
@@ -176,7 +201,7 @@ class ProbeController(ActuatorController):
             if self.operation or self.telemetry.torque or self.home_position is None:
                 raise ValueError('Home and stop before saving maximum extension')
             value = probe_calibration.validate(dict(servo_id=self.ident, max_extension_mm=command.get('max_extension_mm'),
-                travel_ticks=self.home_position-self.telemetry.position))
+                travel_ticks=self.extension_sign*(self.telemetry.position-self.home_position)))
             self.save(command, 'probe', value, lambda:setattr(self,'extension',value))
             return True
         elif action == 'zero_contact':
@@ -184,6 +209,16 @@ class ProbeController(ActuatorController):
                 raise ValueError('Contact zero requires RC permission and a connected probe')
             self.load_contact.zero(time.monotonic())
             self.reason = 'Motor contact baseline zeroed for this session'
+        elif action == 'configure_direction':
+            if self.operation or self.telemetry.torque:
+                raise ValueError('Stop the probe before reversing direction')
+            value = probe_calibration.validate_direction(dict(reverse=command.get('enabled')))
+            self.save(command, 'probe_direction', value, lambda:self.apply_direction(value))
+            return True
+        elif action == 'jog':
+            if self.reverse and command.get('direction') in (-1, 1):
+                command['direction'] = -command['direction']
+            return False
         elif action == 'configure_motion':
             if self.operation or self.telemetry.torque:
                 raise ValueError('Stop before changing probe limits')
@@ -201,6 +236,9 @@ class ProbeController(ActuatorController):
         return True
 
     def start_action(self, request):
+        self.action_probe_cycle = request.operation == 'probe_cycle'
+        if not math.isfinite(request.speed) or request.speed < 0:
+            raise ValueError('Probe action speed must be finite and nonnegative')
         if request.operation == 'probe_cycle':
             self.start_probe_cycle(request.target)
         elif request.operation == 'home':
@@ -208,6 +246,17 @@ class ProbeController(ActuatorController):
             self.start_home(uuid.uuid4().hex, request.load_percent)
         else:
             self.start_target(request.target, hold=False)
+        if request.operation != 'home' and request.speed:
+            degrees_per_mm = self.extension['travel_ticks']*360/(self.extension['max_extension_mm']*4096)
+            self.operation.speed = max(1, min(self.motion_speed, round(request.speed*degrees_per_mm/.684)))
+            if self.cycle_active:
+                self.cycle_timeout = max(60., 10+2*abs(self.operation.target-self.telemetry.position)*360/(4096*self.operation.speed*.684))
+
+    def action_result(self, success, message):
+        result = self.last_probe_result if self.action_probe_cycle and success else None
+        return ActuatorOperation.Result(success=success, message=message,
+            contact=bool(result and result['contact']),
+            contact_depth_mm=float(result['contact_depth_mm'] if result and result['contact'] else 0.))
 
     def operation_finished(self, outcome, message):
         if self.motion == 'home' and outcome == 'load_stop':
@@ -220,12 +269,16 @@ class ProbeController(ActuatorController):
     def update_behavior(self):
         if not self.operation:
             return
-        if self.motion and time.monotonic()-self.started >= 60:
+        if self.motion and time.monotonic()-self.started >= (self.cycle_timeout if self.cycle_active else 60):
+            error_mm = abs(self.telemetry.position-self.operation.target)*self.extension['max_extension_mm']/self.extension['travel_ticks'] if self.extension else None
+            reason = f'Probe {self.cycle_phase.lower() if self.cycle_active else self.motion} timed out'
+            if error_mm is not None:
+                reason += f': {error_mm:.1f} mm from target. Check travel and home calibration.'
             if self.cycle_active:
                 self.cycle_active = False
                 self.cycle_phase = 'IDLE'
-                self.last_probe_result = dict(status='TIMEOUT', reason='Probe cycle timed out', timestamp=time.time())
-            self.stop('Probe operation timed out')
+                self.last_probe_result = dict(status='TIMEOUT', reason=reason, timestamp=time.time())
+            self.stop(reason)
             return
 
         if self.cycle_active:
@@ -238,36 +291,29 @@ class ProbeController(ActuatorController):
                 return
 
             ready = bool(self.connected() and self.extension and self.extension['servo_id']==self.ident and self.home_position is not None)
-            current_depth = (self.home_position-self.telemetry.position)*self.extension['max_extension_mm']/self.extension['travel_ticks'] if ready else 0.0
+            current_depth = self.extension_sign*(self.telemetry.position-self.home_position)*self.extension['max_extension_mm']/self.extension['travel_ticks'] if ready else 0.0
 
             if self.cycle_phase == 'DESCENDING':
                 contact = self.contact.snapshot()
                 if not contact['enabled'] or not contact['fresh']:
                     self.stop('Contact input lost; probe result unknown')
                     return
-                spike = contact['detected'] is True
-                if spike:
-                    self.contact_detected = True
-                    self.contact_depth_mm = round(max(0.0, current_depth), 1)
+                detected = contact['detected'] is True
+                if detected or (self.target_reached()
+                                and self.extension_sign*(self.telemetry.position-self.home_position) > 0):
+                    self.contact_detected = detected
+                    self.contact_depth_mm = round(max(0.0, current_depth), 1) if detected else None
                     self.cycle_phase = 'RETRACTING'
-                    self.reason = f'Contact spike detected at {self.contact_depth_mm:.1f} mm; retracting'
+                    self.reason = (f'Contact at {self.contact_depth_mm:.1f} mm; retracting' if detected
+                                   else f'Target {self.cycle_target_depth:.0f} mm reached without contact; retracting')
                     self.target = 0.0
-                    self.operation.target = self.home_position
-                    return
-                elif (self.telemetry.operation_id == self.operation.operation_id
-                      and self.telemetry.position < self.home_position
-                      and abs(self.telemetry.position-self.operation.target) <= 3):
-                    self.contact_detected = False
-                    self.contact_depth_mm = None
-                    self.cycle_phase = 'RETRACTING'
-                    self.reason = f'Target {self.cycle_target_depth:.0f} mm reached without contact; retracting'
-                    self.target = 0.0
+                    # Keep short return strokes precise; use the command's tolerance for full travel.
+                    self.arrival_tolerance = max(1, min(self.operation.tolerance, abs(self.home_position-self.telemetry.position)//4))
                     self.operation.target = self.home_position
                     return
 
             elif self.cycle_phase == 'RETRACTING':
-                if (self.telemetry.operation_id == self.operation.operation_id
-                        and abs(self.telemetry.position-self.operation.target) <= 3):
+                if self.target_reached():
                     status = 'CONTACT' if self.contact_detected else 'CLEAR'
                     self.last_probe_result = dict(
                         status=status,
@@ -281,9 +327,19 @@ class ProbeController(ActuatorController):
                     self.stop(f'Probe cycle complete: {status}', success=True)
                     return
 
+        elif (self.contact.snapshot()['enabled'] and not self.contact.snapshot()['fresh']
+                and self.extension_sign*(self.operation.target-self.telemetry.position) > 3):
+            self.stop('Probe contact reading lost; extension stopped')
+            return
+
+        elif (self.contact.snapshot()['detected'] is True
+                and self.extension_sign*(self.operation.target-self.telemetry.position) > 3):
+            self.stop('Probe contact detected; extension stopped')
+            return
+
         elif self.motion == 'target':
             self.command_at = time.monotonic()
-            if self.telemetry.operation_id == self.operation.operation_id and abs(self.telemetry.position-self.operation.target) <= 3:
+            if self.target_reached():
                 if self.hold_target:
                     self.lifecycle, self.reason = 'HOLDING', 'Holding requested depth; stop releases torque'
                 else:
@@ -291,13 +347,13 @@ class ProbeController(ActuatorController):
         elif self.motion == 'home':
             if self.action_handle:
                 self.command_at = time.monotonic()
-            if self.telemetry.position >= self.telemetry.maximum-3:
+            if abs(self.telemetry.position-self.operation.target) <= 3:
                 self.stop('Encoder limit reached without confirmed home contact')
 
     def behavior_state(self):
         now = time.monotonic()
         ready = bool(self.connected() and self.extension and self.extension['servo_id']==self.ident and self.home_position is not None)
-        depth = (self.home_position-self.telemetry.position)*self.extension['max_extension_mm']/self.extension['travel_ticks'] if ready else None
+        depth = self.extension_sign*(self.telemetry.position-self.home_position)*self.extension['max_extension_mm']/self.extension['travel_ticks'] if ready else None
         if depth is not None:
             self.depth_pub.publish(Float32(data=depth))
         ratio = min(1., abs(self.telemetry.load_percent)/100) if self.connected() else None
@@ -316,7 +372,7 @@ class ProbeController(ActuatorController):
             load_percent=self.telemetry.load_percent if self.telemetry else None, current_a=self.telemetry.current_a if self.telemetry else None,
             position=self.telemetry.position if self.telemetry else None, goal_position=self.telemetry.goal if self.telemetry else None,
             torque=bool(self.telemetry and self.telemetry.torque), probe=dict(holding=self.lifecycle=='HOLDING')), now)
-        return dict(sweep_acceleration_deg_s2=self.acceleration*8.583, home_position=self.home_position, home_status=self.home_status, homing=self.motion=='home',
+        return dict(reverse=self.reverse, sweep_acceleration_deg_s2=self.acceleration*8.583, home_position=self.home_position, home_status=self.home_status, homing=self.motion=='home',
             probe=dict(ready=ready, homed=self.home_position is not None, calibrated=bool(self.extension),
                 max_depth_mm=self.extension['max_extension_mm'] if self.extension else None,
                 depth_mm=depth, target_mm=self.target, active=self.motion=='target', moving=self.motion=='target' and self.lifecycle!='HOLDING', holding=self.lifecycle=='HOLDING',

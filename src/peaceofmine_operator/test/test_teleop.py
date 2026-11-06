@@ -57,6 +57,13 @@ class TeleopTest(unittest.TestCase):
             self.assertIsNone(self.command('detector_calibrate', **command))
             self.assertEqual(json.loads(publish.call_args.args[0].data), command)
 
+    def test_manual_detector_calibration_needs_no_fresh_reading(self):
+        self.command('take_control')
+        with patch.object(self.node._detector_telemetry,'snapshot',return_value={'fresh':False}), patch.object(self.node._detector_command_pub,'publish') as publish:
+            self.assertIsNone(self.command('detector_calibrate',action='apply',baseline_adc=125.7,full_response_adc=126.2))
+            self.assertEqual(json.loads(publish.call_args.args[0].data)['full_response_adc'],126.2)
+            self.assertIsNotNone(self.command('detector_calibrate',action='zero'))
+
     def test_typed_cycle_state_blocks_both_input_paths_and_watchdog(self):
         from peaceofmine_interfaces.msg import ActuatorStatus
         self.arm()
@@ -215,6 +222,32 @@ class TeleopTest(unittest.TestCase):
         self.command('take_control')
         self.assertTrue(self.node._armed)
         self.assertFalse(self.node._deadman)
+
+    def test_probe_reverse_boolean_survives_browser_dispatch(self):
+        self.command('take_control')
+        with patch.object(self.node._probe_command_pub,'publish') as publish:
+            for reverse in (False,True):
+                self.assertIsNone(self.command('arm_servo',role='probe',action='configure_direction',enabled=reverse))
+                command=command_dict(publish.call_args.args[0])
+                self.assertIs(command['enabled'],reverse)
+                self.assertEqual(command['action'],'configure_direction')
+
+    def test_confirmation_uses_arm_without_probe_setup_and_blocks_driving(self):
+        from unittest.mock import Mock
+        self.command('take_control')
+        self.node._arm_state=dict(connected=True,torque=False,calibration=dict(minimum=1000,center=1500,maximum=2000))
+        self.node._arm_state_at=100.
+        self.node._probe_state={}
+        self.node._inspection_detector=dict(fresh=True,latest_peak=None)
+        self.node._inspection_detector_at=100.
+        self.node._inspection_clients={'arm':Mock(),'probe':Mock()}
+        self.assertIsNone(self.command('inspection',action='confirm'))
+        self.assertTrue(self.node._inspection.active)
+        self.assertTrue(self.node._payload_blocks_drive())
+        self.assertIsNotNone(self.command('drive',linear_x=.5,deadman=True))
+        self.assertIsNone(self.command('inspection',action='stop'))
+        self.assertFalse(self.node._inspection.active)
+        self.assertEqual(self.node._lease,self.owner)
 
     def test_manual_servo_enters_calibration_without_arm_command(self):
         self.command('take_control')

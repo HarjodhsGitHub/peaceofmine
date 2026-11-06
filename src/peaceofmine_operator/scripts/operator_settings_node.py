@@ -6,7 +6,7 @@ import math
 from peaceofmine_interfaces.srv import SaveSettings
 from peaceofmine_operator.adc_acquisition import OperatorADC
 from peaceofmine_operator.servo_motor import limits
-from peaceofmine_operator.probe_calibration import validate as validate_probe
+from peaceofmine_operator.probe_calibration import validate as validate_probe, validate_direction
 from rclpy.node import Node
 from std_msgs.msg import String
 from peaceofmine_operator import configuration, camera_settings
@@ -34,13 +34,15 @@ class OperatorSettings(Node):
             if not isinstance(value,dict):
                 raise ValueError('Expected settings object')
             storage_section=request.section
-            simulation=storage_section in ('arm_simulation','probe_simulation','arm_motion_simulation','probe_motion_simulation')
+            simulation=storage_section in ('arm_simulation','probe_simulation','arm_motion_simulation','probe_motion_simulation','probe_direction_simulation')
             section=storage_section.removesuffix('_simulation') if simulation else storage_section
             if section == 'cameras':
                 value = camera_settings.validate(value)
             elif section in ('adc', 'adc_simulation'):
                 config, routes, trigger = OperatorADC.validate(value)
                 value = dict(config=config, routes=routes, probe_trigger=trigger)
+            elif section == 'probe_direction':
+                value = validate_direction(value)
             elif section == 'probe':
                 value = validate_probe(value)
             elif section == 'arm':
@@ -55,7 +57,7 @@ class OperatorSettings(Node):
                 value = dict(max_speed_deg_s=speed, acceleration_deg_s2=acceleration)
             elif section == 'metal_detector':
                 baseline, full, reference = (value.get(k) for k in ('baseline_adc','full_response_adc','reference_voltage'))
-                if not all(type(v) in (int,float) and math.isfinite(v) for v in (baseline,full,reference)) or not (0 <= baseline <= 255 and 0 <= full <= 255 and abs(full-baseline) >= 1) or not 0 < reference <= 5.5:
+                if not all(type(v) in (int,float) and math.isfinite(v) for v in (baseline,full,reference)) or not (0 <= baseline <= 255 and 0 <= full <= 255 and full != baseline) or not 0 < reference <= 5.5:
                     raise ValueError('Invalid detector calibration')
             else:
                 raise ValueError('Unknown settings section')

@@ -14,9 +14,10 @@ class ArmController(ActuatorController):
 
     def __init__(self, **kwargs):
         self.sweeping = False
-        self.sweep_speed = 5.
+        self.sweep_speed = 36.
         self.auto_position = False
         self.started = 0.
+        self.position_timeout = 60.
         super().__init__(**kwargs)
         self.tolerance_deg = self.declare_parameter('sweep_endpoint_tolerance_deg', 2.).value
         self.offset = self.declare_parameter('fixture_angle_offset_deg', 0.).value
@@ -84,6 +85,7 @@ class ArmController(ActuatorController):
                 self.stop('Stopping sweep to position arm')
             self.start(target, calibration['minimum'], calibration['maximum'], speed=round(self.sweep_speed / .684))
             self.auto_position, self.started = True, time.monotonic()
+            self.position_timeout = 10+abs(target-self.telemetry.position)*360/(4096*self.operation.speed*.684)
             self.reply(command, True)
             return True
         if action != 'configure_motion':
@@ -109,21 +111,33 @@ class ArmController(ActuatorController):
             calibration = self.calibration()
             if not calibration or not math.isfinite(request.target):
                 raise ValueError('Calibrated position required')
-            target = round(request.target)
+            target = round(calibration['center']+(request.target-self.offset)*4096/360) if request.operation == 'angle' else round(request.target)
             if not calibration['minimum'] <= target <= calibration['maximum']:
                 raise ValueError('Target outside calibrated arm range')
-            self.start(target, calibration['minimum'], calibration['maximum'])
+            if not math.isfinite(request.speed) or request.speed < 0:
+                raise ValueError('Arm action speed must be finite and nonnegative')
+            speed = max(1, min(self.motion_speed, round(request.speed/.684))) if request.speed else self.motion_speed
+            self.start(target, calibration['minimum'], calibration['maximum'], speed=speed)
             self.auto_position, self.started = True, time.monotonic()
+            self.position_timeout = 10+abs(target-self.telemetry.position)*360/(4096*speed*.684)
 
     def update_behavior(self):
         if self.sweeping or self.auto_position:
             self.command_at = time.monotonic()
         if self.auto_position and self.operation:
-            if time.monotonic()-self.started > 60:
-                self.stop('Position timeout')
-            elif self.telemetry.operation_id == self.operation.operation_id and abs(self.telemetry.position-self.operation.target) <= 3:
-                self.auto_position = False
-                self.lifecycle, self.reason = 'HOLDING', 'Target position reached; holding position'
+            error_ticks = abs(self.telemetry.position-self.operation.target)
+            tolerance_ticks = max(1, math.ceil(self.tolerance_deg*4096/360))
+            if time.monotonic()-self.started > self.position_timeout:
+                self.stop(f'Arm position timed out: {error_ticks*360/4096:.1f}° error; allowed {self.tolerance_deg:g}°')
+            elif (self.telemetry.operation_id == self.operation.operation_id
+                  and self.telemetry.goal == self.operation.target
+                  and error_ticks <= tolerance_ticks
+                  and abs(self.telemetry.speed_deg_s) <= 3*.684):
+                if self.action_handle:
+                    self.stop('Arm target reached; torque released', success=True)
+                else:
+                    self.auto_position = False
+                    self.lifecycle, self.reason = 'HOLDING', 'Target position reached; holding position'
 
     def behavior_state(self):
         calibration = self.calibration()

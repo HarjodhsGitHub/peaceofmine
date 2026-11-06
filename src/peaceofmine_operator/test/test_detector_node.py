@@ -61,6 +61,18 @@ class DetectorTest(unittest.TestCase):
         self.node.odometry_cb(odom)
         self.assertIsNone(self.node.latest_peak)
 
+    def test_peak_keeps_tracking_above_saturated_meter(self):
+        self.node.angle_cb(Float32(data=1.))
+        self.node.signal_cb(Float32(data=1.2))
+        self.node.angle_cb(Float32(data=2.))
+        self.node.signal_cb(Float32(data=1.5))
+        self.assertEqual(self.node.signal,1.)
+        self.assertEqual(self.node.latest_peak['angle_deg'],2.)
+        self.assertEqual(self.node.latest_peak['signal'],1.5)
+        self.node.angle_cb(Float32(data=3.))
+        self.node.signal_cb(Float32(data=1.4))
+        self.assertEqual(self.node.latest_peak['angle_deg'],2.)
+
     def test_threshold_hit_requires_fresh_position(self):
         self.node.signal_cb(Float32(data=1.))
         self.assertEqual(self.node.hits, [])

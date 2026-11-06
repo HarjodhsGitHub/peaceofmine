@@ -15,7 +15,7 @@ from std_msgs.msg import Bool, Float32, String, UInt16
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TwistWithCovarianceStamped
 from rclpy.qos import qos_profile_sensor_data
-from peaceofmine_operator.detector import DetectorTelemetry
+from peaceofmine_operator.detector import DetectorTelemetry, DetectorLowPass
 from peaceofmine_interfaces.msg import ActuatorStatus, AdcSamples
 from peaceofmine_operator import configuration
 from peaceofmine_operator.actuator_protocol import status_dict
@@ -39,6 +39,7 @@ class DetectorNode(Node):
 
         # Calibration parameters
         self.settings = SettingsClient(self, self.config_file)
+        self.filter = DetectorLowPass()
         self.baseline = 0.0
         self.full_response = 255.0
         self.reference_voltage = 5.0
@@ -52,7 +53,7 @@ class DetectorNode(Node):
         self.lower, self.upper = -45.0, 45.0
         self.beam = [0.0] * 91
         self.sweep = False
-        self.sweep_speed = 60.0
+        self.sweep_speed = 36.0
         self.arm = {}
         self.arm_at = 0.0
         self.pose = dict(x=0., y=0., yaw=0.)
@@ -65,6 +66,7 @@ class DetectorNode(Node):
         # Sample tracking for zeroing and rate statistics
         self.recent_samples = deque(maxlen=200)
         self.last_raw_adc = 0.0
+        self.last_filtered_adc = 0.0
         self.seq = 0
         self.start_time = time.monotonic()
         self.sample_times = deque(maxlen=50)
@@ -76,6 +78,7 @@ class DetectorNode(Node):
         self.fresh_pub = self.create_publisher(Bool, 'detector/fresh', 10)
         self.raw_pub = self.create_publisher(UInt16, 'detector/amplitude_adc', 10)
         self.state_pub = self.create_publisher(String, 'detector/state', 10)
+        self.control_pub = self.create_publisher(String, 'detector/control_state', 1)
 
         # Direct I2C ADC subscriptions
         if self.use_adc:
@@ -96,7 +99,8 @@ class DetectorNode(Node):
         if velocity_topic:
             self.create_subscription(TwistWithCovarianceStamped, velocity_topic, self.velocity_cb, qos_profile_sensor_data)
 
-        self.create_timer(0.05, self.publish)
+        self.create_timer(.05, self.publish_control_state)
+        self.create_timer(.2, self.publish)
         self.create_timer(1.0, self.reload_calibration)
 
     def load_calibration(self):
@@ -105,7 +109,7 @@ class DetectorNode(Node):
         value = saved.get('metal_detector', dict(baseline_adc=0., full_response_adc=255., reference_voltage=5.))
         base, full, ref = (value[k] for k in ('baseline_adc', 'full_response_adc', 'reference_voltage'))
         if (not all(type(v) in (int, float) and math.isfinite(v) for v in (base, full, ref))
-                or not (0 <= base <= 255 and 0 <= full <= 255 and abs(full-base) >= 1 and 0 < ref <= 5.5)):
+                or not (0 <= base <= 255 and 0 <= full <= 255 and full != base and 0 < ref <= 5.5)):
             raise ValueError('Invalid saved detector calibration')
         self.baseline, self.full_response, self.reference_voltage = float(base), float(full), float(ref)
         adc = saved.get('adc', {})
@@ -123,6 +127,8 @@ class DetectorNode(Node):
             self.signal_at = 0.
             self.detected = False
             self.recent_samples.clear()
+            self.filter.reset()
+            self.sensor.history.clear()
             self.beam = [0.] * len(self.beam)
 
     def reload_calibration(self):
@@ -135,6 +141,7 @@ class DetectorNode(Node):
 
     def adc_samples_cb(self, msg: AdcSamples):
         if not msg.valid:
+            self.filter.reset()
             self.signal_at = 0.
             self.detected = False
             return
@@ -144,16 +151,18 @@ class DetectorNode(Node):
             return
         if msg.session != self.adc_session:
             self.adc_session, self.adc_sequence = msg.session, -1
+            self.filter.reset()
         for sample in msg.samples:
-            age = time.time() - (sample.stamp.sec + sample.stamp.nanosec / 1e9)
+            timestamp = sample.stamp.sec + sample.stamp.nanosec / 1e9
+            age = time.time() - timestamp
             if sample.channel != self.adc_channel or not 0 <= age < .5 or sample.sequence <= self.adc_sequence:
                 continue
-            if not math.isfinite(sample.volts):
+            if not math.isfinite(sample.volts) or (self.filter.timestamp is not None and timestamp <= self.filter.timestamp):
                 continue
             self.adc_sequence = sample.sequence
-            self.process_adc_sample(sample.volts, sample.sequence)
+            self.process_adc_sample(sample.volts, sample.sequence, timestamp)
 
-    def process_adc_sample(self, volts, seq):
+    def process_adc_sample(self, volts, seq, timestamp=None):
         now = time.monotonic()
         self.seq = seq
         self.sample_times.append(now)
@@ -162,20 +171,21 @@ class DetectorNode(Node):
         self.last_raw_adc = raw_count
         self.recent_samples.append((now, raw_count))
 
-        ratio = (raw_count-self.baseline)/(self.full_response-self.baseline)
+        self.last_filtered_adc = self.filter.update(raw_count, time.time() if timestamp is None else timestamp)
+        ratio = (self.last_filtered_adc-self.baseline)/(self.full_response-self.baseline)
         normalized = max(0., min(1., ratio))
         int_adc = int(round(raw_count))
         self.sensor.update(dict(
             fresh=True,
             age_ms=0,
-            packet=dict(seq=self.seq, uptime_ms=int((now - self.start_time) * 1000), amplitude_adc=int_adc)
+            packet=dict(seq=self.seq, uptime_ms=int((now - self.start_time) * 1000), amplitude_adc=int_adc, precise_adc=raw_count, filtered_adc=self.last_filtered_adc)
         ))
 
         self.raw_pub.publish(UInt16(data=min(65535, max(0, int_adc))))
         self.ratio_pub.publish(Float32(data=normalized))
         self.fresh_pub.publish(Bool(data=True))
 
-        self._update_signal(normalized, now)
+        self._update_signal(ratio, now)
 
     def command_cb(self, msg):
         request_id = None
@@ -186,6 +196,12 @@ class DetectorNode(Node):
             request_id = value.get('request_id')
             action = value.get('action')
 
+            if action == 'clear_peak':
+                self.latest_peak = None
+                self.beam = [0.] * len(self.beam)
+                self.command_result = dict(request_id=request_id, ok=True, message='Peak cleared')
+                self._publish_detector_state()
+                return
             if action == 'zero':
                 now = time.monotonic()
                 recent = [val for t, val in self.recent_samples if now - t <= 5.0]
@@ -195,7 +211,7 @@ class DetectorNode(Node):
 
                 def on_saved(ok, message):
                     if ok:
-                        self.baseline = float(new_baseline)
+                        self.reload_calibration()
                     self.command_result = dict(request_id=request_id, ok=ok, message=message)
                     self._publish_detector_state()
 
@@ -216,7 +232,7 @@ class DetectorNode(Node):
 
                 def on_saved(ok, message):
                     if ok:
-                        self.baseline, self.full_response, self.reference_voltage = float(base), float(full), float(ref)
+                        self.reload_calibration()
                         self.threshold = 1.0
                     self.command_result = dict(request_id=request_id, ok=ok, message=message)
                     self._publish_detector_state()
@@ -233,7 +249,7 @@ class DetectorNode(Node):
 
                 def on_saved(ok, message):
                     if ok:
-                        self.baseline, self.full_response, self.reference_voltage = float(base), float(full), float(ref)
+                        self.reload_calibration()
                     self.command_result = dict(request_id=request_id, ok=ok, message=message)
                     self._publish_detector_state()
 
@@ -314,10 +330,12 @@ class DetectorNode(Node):
                 self.beam[idx] = self.signal
         detected = self.signal >= self.threshold
         if detected and now - self.angle_at < .5:
-            if not self.latest_peak or self.signal > self.latest_peak.get('signal', 0.0) or (now - self.latest_peak.get('timestamp', 0) > 30.0):
+            # Keep peak strength unclipped so 100% saturation does not pin its angle.
+            strength = max(0., float(value))
+            if not self.latest_peak or strength > self.latest_peak.get('signal', 0.0) or (now - self.latest_peak.get('timestamp', 0) > 30.0):
                 self.latest_peak = dict(
                     angle_deg=round(self.angle, 1),
-                    signal=round(self.signal, 3),
+                    signal=strength,
                     timestamp=now, pose=dict(self.pose)
                 )
         if detected and not self.detected and now - self.pose_at < 0.5:
@@ -337,7 +355,7 @@ class DetectorNode(Node):
         now = time.monotonic()
         recent = [t for t in self.sample_times if now - t <= 2.0]
         rate = (len(recent) - 1) / (recent[-1] - recent[0]) if len(recent) > 1 and recent[-1] > recent[0] else 0.0
-        fresh = (now - self.signal_at < 0.5) if self.signal_at else False
+        fresh = bool(self.signal_at and now-self.signal_at < .5 and not self.configuration_error)
 
         channel_name = f'AIN{self.adc_channel - 4}' if self.adc_channel >= 4 else f'MUX{self.adc_channel}'
         state_data = dict(
@@ -352,21 +370,44 @@ class DetectorNode(Node):
             packet=dict(
                 seq=self.seq,
                 uptime_ms=int((now - self.start_time) * 1000),
-                amplitude_adc=int(round(self.last_raw_adc))
+                amplitude_adc=int(round(self.last_raw_adc)),
+                precise_adc=self.last_raw_adc, filtered_adc=self.last_filtered_adc
             ),
+            filter_tau_s=self.filter.time_constant,
             baseline_adc=self.baseline,
             full_response_adc=self.full_response,
-            error=self.configuration_error or (None if fresh else 'No fresh ADC samples; start acquisition and check A2 wiring'),
+            error=self.configuration_error or (None if fresh else 'No fresh ADC samples; check ADS1115 status and detector wiring'),
             reference_voltage=self.reference_voltage,
             command_result=self.command_result
         )
         self.state_pub.publish(String(data=json.dumps(state_data, allow_nan=False)))
 
+    def publish_control_state(self):
+        self._publish_detector_state()
+        now = time.monotonic()
+        fresh = bool(self.signal_at and now-self.signal_at < .5 and not self.configuration_error)
+        raw, filtered, stamp = self.last_raw_adc, self.last_filtered_adc, self.signal_at
+        if not self.use_adc:
+            packet = self.sensor.state.get('packet')
+            if not isinstance(packet, dict):
+                packet = {}
+            raw = packet.get('precise_adc', packet.get('amplitude_adc'))
+            filtered = packet.get('filtered_adc', raw)
+            stamp = self.sensor.updated
+            fresh = fresh and self.sensor.state.get('fresh') is True
+        valid = all(type(v) in (int, float) and math.isfinite(v) for v in (raw, filtered, stamp))
+        fresh = bool(fresh and valid)
+        peak = {**self.latest_peak, 'fresh': fresh and now-self.latest_peak['timestamp'] <= 30} if self.latest_peak else None
+        self.control_pub.publish(String(data=json.dumps(dict(fresh=fresh, latest_peak=peak,
+            angle_fresh=now-self.angle_at < .5, angle_deg=self.angle, sample_time=stamp,
+            sweep_speed_deg_s=self.sweep_speed,
+            volts=raw*self.reference_voltage/255 if valid else None,
+            filtered_volts=filtered*self.reference_voltage/255 if valid else None,
+            response_direction=1 if self.full_response > self.baseline else -1), allow_nan=False)))
+
     def publish(self):
         arm = self.arm if time.monotonic() - self.arm_at < 0.5 else {}
         fresh = self.signal_at > 0 and time.monotonic() - self.signal_at < 0.5 and not self.configuration_error
-        self._publish_detector_state()
-
         now = time.monotonic()
         recent = [t for t in self.sample_times if now - t <= 2.0]
         rate_hz = round((len(recent) - 1) / (recent[-1] - recent[0]), 1) if len(recent) > 1 and recent[-1] > recent[0] else 0.0
@@ -380,16 +421,18 @@ class DetectorNode(Node):
             rate_hz=rate_hz,
             received=self.seq,
             invalid_lines=0,
+            filter_tau_s=self.filter.time_constant,
             baseline_adc=self.baseline,
             full_response_adc=self.full_response,
             reference_voltage=self.reference_voltage,
             packet=dict(
                 seq=self.seq,
                 uptime_ms=int((now - self.start_time) * 1000),
-                amplitude_adc=int(round(self.last_raw_adc))
+                amplitude_adc=int(round(self.last_raw_adc)),
+                precise_adc=self.last_raw_adc, filtered_adc=self.last_filtered_adc
             ),
             history=self.sensor.snapshot().get('history', []),
-            command_result=self.command_result, error=self.configuration_error or (None if fresh else 'No fresh ADC samples; start acquisition and check wiring')
+            command_result=self.command_result, error=self.configuration_error or (None if fresh else 'No fresh ADC samples; check ADS1115 status and wiring')
         )
         if not self.use_adc:
             sensor_info = self.sensor.snapshot()

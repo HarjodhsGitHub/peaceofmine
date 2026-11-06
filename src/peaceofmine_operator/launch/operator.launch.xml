@@ -161,6 +161,7 @@
     </node>
     <node pkg="peaceofmine_operator" exec="operator_control_node.py" name="operator_control" output="screen">
       <param name="safety_simulation" value="$(var is_sim)" />
+      <param name="fixture_angle_offset_deg" value="$(var fixture_angle_offset_deg)"/>
       <param name="rc_steering_channel" value="$(var rc_steering_channel)" type="int" />
       <param name="rc_throttle_channel" value="$(var rc_throttle_channel)" type="int" />
       <param name="cmd_vel_topic" value="cmd_vel" />

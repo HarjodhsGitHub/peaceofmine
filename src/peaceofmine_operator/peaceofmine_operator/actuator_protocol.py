@@ -42,6 +42,7 @@ def status_dict(message):
         return json.loads(message.data)
     calibration = dict(minimum=message.minimum,center=message.center,maximum=message.maximum) if message.calibrated else None
     return dict(connected=message.connected,reason=message.reason,sweeping=message.sweeping,
+        torque=message.telemetry.torque, position=message.telemetry.position, lifecycle=message.lifecycle,
         calibration=calibration,arm_calibration=calibration,
         **({'motion_speed_limit': message.motion_speed_limit} if message.motion_speed_limit else {}),
         probe=dict(ready=message.probe_ready,homed=message.homed,active=message.probe_active,

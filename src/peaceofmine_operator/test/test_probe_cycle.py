@@ -16,12 +16,16 @@ class ProbeCycleTest(unittest.TestCase):
         # Create an instance without calling full ROS Node __init__
         self.probe = ProbeController.__new__(ProbeController)
 
+        self.probe.reverse = False
+        self.probe.extension_sign = -1
+        self.probe.home_hold = None
         self.probe.ident = 2
         self.probe.home_position = 4000
         self.probe.telemetry = MagicMock()
         self.probe.telemetry.position = 4000
         self.probe.telemetry.minimum = 0
         self.probe.telemetry.maximum = 4095
+        self.probe.telemetry.speed_deg_s = 0.
         self.probe.telemetry.operation_id = 'op1'
         self.probe.extension = {'servo_id': 2, 'max_extension_mm': 120.0, 'travel_ticks': 3000}
         self.probe.contact = MagicMock()
@@ -46,6 +50,7 @@ class ProbeCycleTest(unittest.TestCase):
         self.probe.motion_speed = 100
         self.probe.acceleration = 10
 
+        self.probe.reload_contact = MagicMock()
         self.probe.connected = lambda: True
         self.probe.interlock = lambda: not self.probe.fault
         self.probe.start = MagicMock(side_effect=self._mock_start)
@@ -55,6 +60,9 @@ class ProbeCycleTest(unittest.TestCase):
         self.probe.operation = MagicMock()
         self.probe.operation.target = target
         self.probe.operation.operation_id = 'op1'
+        self.probe.operation.speed = self.probe.motion_speed
+        self.probe.operation.tolerance = 23
+        self.probe.telemetry.goal = target
         self.probe.lifecycle = 'MOVING'
 
     def _mock_stop(self, reason='Stopped', success=False):
@@ -122,6 +130,7 @@ class ProbeCycleTest(unittest.TestCase):
         self.assertEqual(self.probe.operation.target, 4000)
 
         # While retracting, probe moves back to top
+        self.probe.telemetry.goal = self.probe.home_position
         self.probe.telemetry.position = 4000 # confirmed home encoder position
         self.probe.update_behavior()
 
@@ -151,6 +160,7 @@ class ProbeCycleTest(unittest.TestCase):
 
         # Returns to stow
         self.probe.telemetry.position = 4000
+        self.probe.telemetry.goal = self.probe.home_position
         self.probe.update_behavior()
 
         # Cycle completes with CLEAR
@@ -181,8 +191,64 @@ class ProbeCycleTest(unittest.TestCase):
         self.probe.update_behavior()
         self.assertTrue(self.probe.cycle_active,'Depth below 2 mm alone does not establish retraction')
         self.probe.telemetry.position=self.probe.home_position
+        self.probe.telemetry.goal=self.probe.home_position
         self.probe.update_behavior()
         self.assertEqual(self.probe.last_probe_result['status'],'CLEAR')
+
+    def test_reversed_probe_uses_opposite_encoder_direction(self):
+        self.probe.apply_direction(dict(reverse=True))
+        self.assertIsNone(self.probe.home_position)
+        self.probe.start_home('reverse-home',20.)
+        self.assertEqual(self.probe.start.call_args.args[0],self.probe.telemetry.minimum)
+        self.probe.home_position=1000
+        self.probe.operation=None
+        self.probe.start_target(20.)
+        self.assertEqual(self.probe.operation.target,1500)
+        self.assertEqual(self.probe.start.call_args.args[1:],(1000,4000))
+        self.probe.operation=None
+        self.probe.motion=None
+        command=dict(direction=-1)
+        self.assertFalse(self.probe.special_command('jog',command))
+        self.assertEqual(command['direction'],1)
+        self.probe.telemetry.position=1500
+        self.probe.telemetry.torque=False
+        self.probe.save=MagicMock()
+        self.probe.special_command('save_probe_extension',dict(max_extension_mm=20.))
+        self.assertEqual(self.probe.save.call_args.args[2]['travel_ticks'],500)
+
+    def test_reversed_cycle_descends_and_returns_home(self):
+        self.probe.apply_direction(dict(reverse=True))
+        self.probe.home_position=1000
+        self.probe.start_probe_cycle(1.)
+        self.assertEqual(self.probe.operation.target,1025)
+        self.probe.update_behavior()
+        self.assertEqual(self.probe.cycle_phase,'DESCENDING')
+        self.probe.telemetry.position=1025
+        self.probe.update_behavior()
+        self.assertEqual(self.probe.cycle_phase,'RETRACTING')
+        self.probe.update_behavior()
+        self.assertTrue(self.probe.cycle_active)
+        self.probe.telemetry.position=1000
+        self.probe.telemetry.goal=self.probe.home_position
+        self.probe.update_behavior()
+        self.assertEqual(self.probe.last_probe_result['status'],'CLEAR')
+
+    def test_manual_extension_stops_on_contact_but_retraction_is_allowed(self):
+        self.probe.start_target(20.)
+        self.probe.telemetry.position=3900
+        self.probe.contact.detected=True
+        self.probe.update_behavior()
+        self.assertIsNone(self.probe.operation)
+        self.assertIn('contact',self.probe.stop.call_args.args[0].lower())
+        self.probe.start_target(0.)
+        self.probe.update_behavior()
+        self.assertIsNotNone(self.probe.operation)
+
+    def test_cycle_action_converts_slow_mm_per_second(self):
+        from types import SimpleNamespace
+        self.probe.start_action(SimpleNamespace(operation='probe_cycle',target=1.,speed=5.))
+        self.assertEqual(self.probe.operation.speed,16)
+        self.assertTrue(self.probe.action_probe_cycle)
 
     def test_sub_encoder_cycle_depth_is_rejected(self):
         with self.assertRaisesRegex(ValueError,'encoder tick'):
@@ -204,6 +270,8 @@ class OperatorControlProbeTest(unittest.TestCase):
         self.ctrl._lock.__enter__ = lambda s: None
         self.ctrl._lock.__exit__ = lambda s, *a: None
         self.ctrl._shutting_down = False
+        from peaceofmine_operator.inspection import InspectionWorkflow
+        self.ctrl._inspection = InspectionWorkflow(MagicMock(),MagicMock(),MagicMock())
         self.ctrl._lease = 'client1'
         self.ctrl._armed = True
         self.ctrl._calibrating = False
@@ -340,11 +408,18 @@ class ArmControllerAngleTest(unittest.TestCase):
         self.arm.sweeping = False
         self.arm.auto_position = False
         self.arm.started = 0.0
+        self.arm.position_timeout = 60.
+        self.arm.tolerance_deg = 4.
+        self.arm.motion_speed = 116
+        self.arm.action_handle = None
         self.arm.lifecycle = 'IDLE'
         self.arm.reason = 'Idle'
         self.arm.operation = None
         self.arm.telemetry = MagicMock()
         self.arm.telemetry.operation_id = 'op_angle'
+        self.arm.telemetry.position = 2048
+        self.arm.telemetry.goal = 2048
+        self.arm.telemetry.speed_deg_s = 0.
         self.arm.calibration = lambda: {'minimum': 1024, 'center': 2048, 'maximum': 3072}
         self.arm.reply = MagicMock()
         self.arm.start = MagicMock(side_effect=self._mock_start)
@@ -354,6 +429,8 @@ class ArmControllerAngleTest(unittest.TestCase):
         self.arm.operation = MagicMock()
         self.arm.operation.target = target
         self.arm.operation.operation_id = 'op_angle'
+        self.arm.operation.speed = speed or self.arm.motion_speed
+        self.arm.telemetry.goal = target
         self.arm.lifecycle = 'MOVING'
 
     def _mock_stop(self, reason='Stopped', success=False):

@@ -144,7 +144,7 @@ class Acquisition:
 
 
 class OperatorADC:
-    def __init__(self, path, demo=False):
+    def __init__(self, path, demo=False, initial_settings=None):
         self.path = Path(path).expanduser()
         self.probe_trigger = dict(enabled=False, mux=4, level=1.0, direction='above')
         self.routes = ['none'] * 8
@@ -157,7 +157,7 @@ class OperatorADC:
         try:
             saved = configuration.load(str(self.path))
             section = 'adc_simulation' if demo else 'adc'
-            value = saved.get(section)
+            value = saved.get(section, initial_settings)
             if value is not None:
                 config, self.routes, self.probe_trigger = self.validate(value)
         except FileNotFoundError:
@@ -165,6 +165,7 @@ class OperatorADC:
         except (ValueError, TypeError, OSError) as exc:
             self.load_error = f'Saved ADC settings could not be loaded: {exc}'
         self.acquisition = Acquisition(demo, config)
+        self.acquisition.run(self.load_error is None)
         self.acquisition.thread.start()
 
     @staticmethod
@@ -203,10 +204,9 @@ class OperatorADC:
                 self.routes = routes
                 self.probe_trigger = trigger
                 self.load_error = None
+                self.acquisition.run(True)
         elif payload.get('action') == 'run':
-            if self.load_error:
-                raise ValueError(self.load_error)
-            self.acquisition.run(payload.get('running'))
+            raise ValueError('ADC acquisition runs automatically; start/stop commands are not supported')
         else:
             raise ValueError('Unknown ADC action')
 

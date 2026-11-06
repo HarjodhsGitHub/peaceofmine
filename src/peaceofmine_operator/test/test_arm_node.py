@@ -106,6 +106,24 @@ class ActuatorTest(unittest.TestCase):
         finally:
             self.observer.destroy_timer(timer)
 
+    def test_probe_reverse_is_saved_and_restored_after_restart(self):
+        self.probe.home_position=2000
+        self.command(self.probe,action='configure_direction',enabled=True)
+        self.spin(.3)
+        self.assertTrue(self.probe.last_command['success'],self.probe.last_command)
+        self.assertTrue(self.probe.reverse)
+        self.assertIsNone(self.probe.home_position)
+        saved=configuration.load(self.path)
+        self.assertEqual(saved['probe_direction_simulation'],dict(reverse=True))
+        self.assertNotIn('probe_direction',saved)
+        restored=module('probe_controller_node').ProbeController(parameter_overrides=[
+            Parameter('config_file',value=self.path),Parameter('simulation',value=True)])
+        try:
+            self.assertTrue(restored.reverse)
+            self.assertEqual(restored.extension_sign,1)
+        finally:
+            restored.destroy_node()
+
     def test_configured_speed_limit_survives_typed_status(self):
         from peaceofmine_interfaces.msg import ActuatorStatus
         from peaceofmine_operator.actuator_protocol import status_dict
@@ -192,6 +210,35 @@ class ActuatorTest(unittest.TestCase):
         self.spin(.1)
         self.assertIsNotNone(self.driver.runtime.active,self.probe.reason)
         self.command(self.probe,action='stop')
+
+    def test_slow_arm_angle_action_completes_instead_of_holding_forever(self):
+        from rclpy.action import ActionClient
+        from peaceofmine_interfaces.action import ActuatorOperation
+        client=ActionClient(self.observer,ActuatorOperation,'arm/execute')
+        try:
+            self.assertTrue(client.wait_for_server(timeout_sec=1.))
+            sent=client.send_goal_async(ActuatorOperation.Goal(operation='angle',target=1.,speed=5.))
+            deadline=time.monotonic()+5
+            while not sent.done() and time.monotonic()<deadline:
+                self.spin(.02)
+            self.assertTrue(sent.done())
+            self.assertTrue(sent.result().accepted)
+            result=sent.result().get_result_async()
+            while not result.done() and time.monotonic()<deadline:
+                self.spin(.02)
+            self.assertTrue(result.done(),self.arm.reason)
+            self.assertTrue(result.result().result.success,result.result().result.message)
+            self.assertIsNone(self.arm.operation)
+            self.assertEqual(self.driver.runtime.bus.values[1][32],7)
+        finally:
+            client.destroy()
+
+    def test_contact_result_contains_measured_depth(self):
+        self.probe.action_probe_cycle=True
+        self.probe.last_probe_result=dict(contact=True,contact_depth_mm=12.3)
+        result=self.probe.action_result(True,'Probe cycle complete: CONTACT')
+        self.assertTrue(result.contact)
+        self.assertAlmostEqual(result.contact_depth_mm,12.3)
 
     def test_action_home_feedback_result_and_cancel(self):
         from rclpy.action import ActionClient
