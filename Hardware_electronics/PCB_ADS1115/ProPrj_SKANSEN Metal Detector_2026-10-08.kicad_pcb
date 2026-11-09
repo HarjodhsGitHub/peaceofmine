@@ -182,6 +182,32 @@
 				)
 			)
 		)
+		(property "JLC_3DModel_Q" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
+			(at 0 0 270)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "8e300025-48fb-42a1-b50d-1d2cdcedafab")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "JLC_3D_Size" "插件,P=2.54mm"
+			(at 0 0 270)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "48324d38-e5ca-42cb-87e7-aa2a5b912ee4")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
 		(property "Manufacturer Part" "PZ254V-11-02P"
 			(at 0 0 270)
 			(unlocked yes)
@@ -240,19 +266,6 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "9db79359-065e-4287-959d-9376921e3b36")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "3D Model" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
-			(at 0 0 270)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "8e300025-48fb-42a1-b50d-1d2cdcedafab")
 			(effects
 				(font
 					(size 1 1)
@@ -494,19 +507,6 @@
 				)
 			)
 		)
-		(property "Supplier Footprint" "插件,P=2.54mm"
-			(at 0 0 270)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "48324d38-e5ca-42cb-87e7-aa2a5b912ee4")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
 		(property "Voltage Rating (Max)" "250V"
 			(at 0 0 270)
 			(unlocked yes)
@@ -523,12 +523,6 @@
 		(path "/a82fe635-1e2f-4ed9-a861-5eb81bfb1adb")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "2")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -2.54 1.27)
@@ -767,6 +761,32 @@
 				)
 			)
 		)
+		(property "JLC_3DModel_Q" "3e31ed6b36ca484795e6a68c51b575dc|0819f05c4eef4c71ace90d822a990e87"
+			(at 0 0 90)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "a9a1529f-cf43-4e34-ab6e-d39052b38571")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "JLC_3D_Size" "-40℃~+125℃"
+			(at 0 0 90)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "11c29b66-0a0b-4d51-85e6-401854aff798")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
 		(property "Manufacturer Part" "ADS1115IDGST"
 			(at 0 0 90)
 			(unlocked yes)
@@ -825,19 +845,6 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "ee36f26f-060a-496f-ad1d-d735d5bb22a3")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "3D Model" "3e31ed6b36ca484795e6a68c51b575dc|0819f05c4eef4c71ace90d822a990e87"
-			(at 0 0 90)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "a9a1529f-cf43-4e34-ab6e-d39052b38571")
 			(effects
 				(font
 					(size 1 1)
@@ -955,19 +962,6 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "b0e7f04f-1acf-45c5-bf61-1cac599b72f6")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "Operating Temperature" "-40℃~+125℃"
-			(at 0 0 90)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "11c29b66-0a0b-4d51-85e6-401854aff798")
 			(effects
 				(font
 					(size 1 1)
@@ -1108,12 +1102,6 @@
 		(path "/9752ddb8-46a2-4af7-bbc3-5b99d5de875b")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "2" "3" "4" "5" "10" "9" "8" "7" "6")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start 12.7 -1.27)
@@ -1441,26 +1429,26 @@
 			(uuid "f51f1e7f-a8f5-4ae4-9007-908a986e82e5")
 		)
 		(pad "6" thru_hole circle
-			(at 11.43 0 90)
-			(size 1.4 1.4)
-			(drill 0.8)
-			(layers "*.Cu" "*.Mask")
-			(remove_unused_layers no)
-			(net "unconnected-(U2-AIN2-Pad6)")
-			(pinfunction "AIN2_6")
-			(pintype "unspecified+no_connect")
-			(thermal_bridge_angle 90)
-			(uuid "e9872303-02a7-4235-b3c0-bf0aa7f2be0c")
-		)
-		(pad "7" thru_hole circle
 			(at 8.89 0 90)
 			(size 1.4 1.4)
 			(drill 0.8)
 			(layers "*.Cu" "*.Mask")
 			(remove_unused_layers no)
 			(net "LW_IMP_MET_DET")
-			(pinfunction "AIN3_7")
+			(pinfunction "AIN2_6")
 			(pintype "unspecified")
+			(thermal_bridge_angle 90)
+			(uuid "e9872303-02a7-4235-b3c0-bf0aa7f2be0c")
+		)
+		(pad "7" thru_hole circle
+			(at 11.43 0 90)
+			(size 1.4 1.4)
+			(drill 0.8)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(net "unconnected-(U2-AIN3-Pad7)")
+			(pinfunction "AIN3_7")
+			(pintype "unspecified+no_connect")
 			(thermal_bridge_angle 90)
 			(uuid "b6871ba0-b34b-4391-8cab-f442d7cde796")
 		)
@@ -1565,6 +1553,32 @@
 				)
 			)
 		)
+		(property "JLC_3DModel_Q" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
+			(at 0 0 0)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "8e8386f9-9a26-4574-a969-00e92baf4426")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "JLC_3D_Size" "插件,P=2.54mm"
+			(at 0 0 0)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "aa6e8535-584d-4db1-b475-4f0c21313528")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
 		(property "Manufacturer Part" "PZ254V-11-02P"
 			(at 0 0 0)
 			(unlocked yes)
@@ -1623,19 +1637,6 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "a0996230-a555-4a1d-bece-03d449b9ead6")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "3D Model" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
-			(at 0 0 0)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "8e8386f9-9a26-4574-a969-00e92baf4426")
 			(effects
 				(font
 					(size 1 1)
@@ -1877,19 +1878,6 @@
 				)
 			)
 		)
-		(property "Supplier Footprint" "插件,P=2.54mm"
-			(at 0 0 0)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "aa6e8535-584d-4db1-b475-4f0c21313528")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
 		(property "Voltage Rating (Max)" "250V"
 			(at 0 0 0)
 			(unlocked yes)
@@ -1906,12 +1894,6 @@
 		(path "/12692ae3-d9d9-416c-a7e5-009e756161b1")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "2")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -2.54 -1.27)
@@ -2153,12 +2135,6 @@
 		(path "/4b2e5e62-654d-483c-bba0-3e132a6ce955")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "LV" "LV1" "LV2" "LV3" "LV4" "HV" "HV1" "HV2" "HV3" "HV4" "GND12")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start 6.665 8.025)
@@ -2498,6 +2474,32 @@
 				)
 			)
 		)
+		(property "JLC_3DModel_Q" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
+			(at 0 0 0)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "b7279e40-7ef7-493c-8a63-1170cc2f0d23")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "JLC_3D_Size" "插件,P=2.54mm"
+			(at 0 0 0)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "c74b1bae-779e-4ad8-b4bf-7c03f59f3398")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
 		(property "Manufacturer Part" "PZ254V-11-02P"
 			(at 0 0 0)
 			(unlocked yes)
@@ -2556,19 +2558,6 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "fb46b97c-ceea-48c3-a0c3-3d2eabba012e")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "3D Model" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
-			(at 0 0 0)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "b7279e40-7ef7-493c-8a63-1170cc2f0d23")
 			(effects
 				(font
 					(size 1 1)
@@ -2810,19 +2799,6 @@
 				)
 			)
 		)
-		(property "Supplier Footprint" "插件,P=2.54mm"
-			(at 0 0 0)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "c74b1bae-779e-4ad8-b4bf-7c03f59f3398")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
 		(property "Voltage Rating (Max)" "250V"
 			(at 0 0 0)
 			(unlocked yes)
@@ -2839,12 +2815,6 @@
 		(path "/860da294-1875-4a85-bdd8-8fd75246574e")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "2")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -2.54 -1.27)
@@ -3083,12 +3053,25 @@
 				)
 			)
 		)
-		(property "Manufacturer Part" "BIPOLAR CAPACITOR 47,0 UF"
+		(property "JLC_3DModel_Q" "BIPOLAR CAPACITOR 47,0 UF"
 			(at 0 0 270)
 			(unlocked yes)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "a851894c-3f44-42d7-9cc3-d0180bf23816")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "JLC_3D_Size" "C6868972"
+			(at 0 0 270)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "6e633ae2-371a-4a7e-a21d-58822bf76d9e")
 			(effects
 				(font
 					(size 1 1)
@@ -3102,19 +3085,6 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "fc3d5cd8-fa5b-4088-bcfe-f8349b920790")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "Supplier Part" "C6868972"
-			(at 0 0 270)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "6e633ae2-371a-4a7e-a21d-58822bf76d9e")
 			(effects
 				(font
 					(size 1 1)
@@ -3151,13 +3121,18 @@
 		(path "/923bc8dc-5593-4d8c-829d-c2e630065da6")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "2")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
+		(fp_rect
+			(start -6.805433 -1.15)
+			(end 3.65 6.805433)
+			(stroke
+				(width 0.05)
+				(type default)
+			)
+			(fill no)
+			(layer "F.CrtYd")
+			(uuid "62e1913d-d227-4d05-ba84-44d9b056fe78")
+		)
 		(fp_poly
 			(pts
 				(xy -6.444567 6.477039) (xy -6.477039 6.444567) (xy -6.522961 6.444567) (xy -6.555433 6.477039)
@@ -3303,16 +3278,22 @@
 				)
 			)
 		)
+		(property "KiLib_Generator" "connector/pin_header_socket"
+			(at 0 0 270)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "c1ff3323-c93c-40a3-80b3-79891adf2f94")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
 		(property ki_fp_filters "Connector*:*_1x??_*")
 		(path "/7650938d-6864-4bea-9191-19b4f02d84a0")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "2" "3")
-			)
-		)
 		(attr through_hole)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
@@ -3574,6 +3555,32 @@
 				)
 			)
 		)
+		(property "JLC_3DModel_Q" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
+			(at 0 0 0)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "8e804df7-9f95-41c2-b415-d41c48e5537e")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "JLC_3D_Size" "插件,P=2.54mm"
+			(at 0 0 0)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "68479f18-d749-49e7-bebf-00a4844c5462")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
 		(property "Manufacturer Part" "PZ254V-11-02P"
 			(at 0 0 0)
 			(unlocked yes)
@@ -3632,19 +3639,6 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "2cb6bde7-e012-4c9d-9f02-bc6276720aa7")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "3D Model" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
-			(at 0 0 0)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "8e804df7-9f95-41c2-b415-d41c48e5537e")
 			(effects
 				(font
 					(size 1 1)
@@ -3886,19 +3880,6 @@
 				)
 			)
 		)
-		(property "Supplier Footprint" "插件,P=2.54mm"
-			(at 0 0 0)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "68479f18-d749-49e7-bebf-00a4844c5462")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
 		(property "Voltage Rating (Max)" "250V"
 			(at 0 0 0)
 			(unlocked yes)
@@ -3915,12 +3896,6 @@
 		(path "/7ab79d73-dd95-4498-bda6-af721c5547dc")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "2")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -2.54 -1.27)
@@ -4159,12 +4134,25 @@
 				)
 			)
 		)
-		(property "Manufacturer Part" "MCP622T-E/MF"
+		(property "JLC_3DModel_Q" "MCP622T-E/MF"
 			(at 0 0 180)
 			(unlocked yes)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "79b47567-2070-4c18-83d4-b042b54ca212")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "JLC_3D_Size" "C623699"
+			(at 0 0 180)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "f21277ab-42da-4196-a65c-8c927b3c70ce")
 			(effects
 				(font
 					(size 1 1)
@@ -4178,19 +4166,6 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "badac5ae-c008-40c1-bcec-3728b426ebf1")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "Supplier Part" "C623699"
-			(at 0 0 180)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "f21277ab-42da-4196-a65c-8c927b3c70ce")
 			(effects
 				(font
 					(size 1 1)
@@ -4227,12 +4202,6 @@
 		(path "/51a991e0-49a9-4d74-ba68-8849b3f9295b")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "2" "3" "4" "8" "7" "6" "5")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start 16.089 -0.127)
@@ -4313,6 +4282,17 @@
 			)
 			(layer "F.SilkS")
 			(uuid "89d3197c-94ab-40ac-81f6-139beac614cd")
+		)
+		(fp_rect
+			(start 1.655 -11.299)
+			(end 15.657 -1.655)
+			(stroke
+				(width 0.05)
+				(type default)
+			)
+			(fill no)
+			(layer "F.CrtYd")
+			(uuid "b19844e3-fe64-46f3-a888-837c1aefd8c8")
 		)
 		(fp_text user "${REFERENCE}"
 			(at 0 0 0)
@@ -4486,6 +4466,32 @@
 				)
 			)
 		)
+		(property "JLC_3DModel_Q" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
+			(at 0 0 270)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "1d33d06a-3643-4bfd-a555-71e2a785155f")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "JLC_3D_Size" "插件,P=2.54mm"
+			(at 0 0 270)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "812d29eb-b9f1-470a-90cb-822217b5e488")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
 		(property "Manufacturer Part" "PZ254V-11-02P"
 			(at 0 0 270)
 			(unlocked yes)
@@ -4544,19 +4550,6 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "5a75f016-dc5f-4256-90e5-d1c797c8490d")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "3D Model" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
-			(at 0 0 270)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "1d33d06a-3643-4bfd-a555-71e2a785155f")
 			(effects
 				(font
 					(size 1 1)
@@ -4798,19 +4791,6 @@
 				)
 			)
 		)
-		(property "Supplier Footprint" "插件,P=2.54mm"
-			(at 0 0 270)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "812d29eb-b9f1-470a-90cb-822217b5e488")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
 		(property "Voltage Rating (Max)" "250V"
 			(at 0 0 270)
 			(unlocked yes)
@@ -4827,12 +4807,6 @@
 		(path "/9d6a6e46-282c-4cdb-a3b7-dd5fa75245bf")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "2")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -2.54 1.27)
@@ -5071,6 +5045,32 @@
 				)
 			)
 		)
+		(property "JLC_3DModel_Q" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
+			(at 0 0 270)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "fbedfbe3-9e2f-45de-8b1f-be4f390d816c")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "JLC_3D_Size" "插件,P=2.54mm"
+			(at 0 0 270)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "5ce1b206-be6a-480e-a833-10f648fa245b")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
 		(property "Manufacturer Part" "PZ254V-11-02P"
 			(at 0 0 270)
 			(unlocked yes)
@@ -5129,19 +5129,6 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "08729c64-0d52-4099-9b9b-45947b18335a")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "3D Model" "b9a02bffb1e248eabf92e8e2aa859dc0|0819f05c4eef4c71ace90d822a990e87"
-			(at 0 0 270)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "fbedfbe3-9e2f-45de-8b1f-be4f390d816c")
 			(effects
 				(font
 					(size 1 1)
@@ -5383,19 +5370,6 @@
 				)
 			)
 		)
-		(property "Supplier Footprint" "插件,P=2.54mm"
-			(at 0 0 270)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "5ce1b206-be6a-480e-a833-10f648fa245b")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
 		(property "Voltage Rating (Max)" "250V"
 			(at 0 0 270)
 			(unlocked yes)
@@ -5412,12 +5386,6 @@
 		(path "/16629116-6ce4-4bf8-9834-2325b641d27f")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "2")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -2.54 1.27)
@@ -5711,15 +5679,6 @@
 		(path "/c5db684d-24bc-4b86-8aea-ad48f559e058")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "3" "5" "7" "9" "11" "13" "15" "17" "19" "21" "23" "25" "27"
-					"29" "31" "33" "35" "37" "39" "2" "4" "6" "8" "10" "12" "14" "16" "18"
-					"20" "22" "24" "26" "28" "30" "32" "34" "36" "38" "40"
-				)
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -25.4 2.54)
@@ -6361,7 +6320,7 @@
 				(justify mirror)
 			)
 		)
-		(property "3D Model" "8c88e81f49c6409b980720ec8953afb6|0819f05c4eef4c71ace90d822a990e87"
+		(property "JLC_3DModel_Q" "8c88e81f49c6409b980720ec8953afb6|0819f05c4eef4c71ace90d822a990e87"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "B.Fab")
@@ -6375,7 +6334,7 @@
 				(justify mirror)
 			)
 		)
-		(property "3D Model Title" "C0805_L2.0-W1.3-H1.3"
+		(property "JLC_3D_Size" "C0805_L2.0-W1.3-H1.3"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "B.Fab")
@@ -6420,12 +6379,6 @@
 		(path "/36f53ae5-8f52-4373-ab52-f7e8e104b8be")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "2" "1")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -1.811 0.9035)
@@ -6743,7 +6696,7 @@
 				(justify mirror)
 			)
 		)
-		(property "3D Model" "04f48aacb8114155959811d2338bbb06|0819f05c4eef4c71ace90d822a990e87"
+		(property "JLC_3DModel_Q" "04f48aacb8114155959811d2338bbb06|0819f05c4eef4c71ace90d822a990e87"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "B.Fab")
@@ -6757,7 +6710,7 @@
 				(justify mirror)
 			)
 		)
-		(property "3D Model Title" "R1206_L3.2-W1.6-H0.6"
+		(property "JLC_3D_Size" "R1206_L3.2-W1.6-H0.6"
 			(at 0 0 90)
 			(unlocked yes)
 			(layer "B.Fab")
@@ -6802,12 +6755,6 @@
 		(path "/54e64bad-5f6c-4c30-8553-23f6a7a200a8")
 		(sheetname "/")
 		(sheetfile "ProPrj_SKANSEN Metal Detector_2026-10-08.kicad_sch")
-		(units
-			(unit
-				(name "A")
-				(pins "1" "2")
-			)
-		)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -2.311 1.079)
