@@ -15,6 +15,13 @@
   <arg name="lli_serial_device" default="/dev/serial/by-id/usb-SVEA_PX4_AUTOPILOT_0-if00"/>
   <arg name="lli_baud_rate" default="921600"/>
   <arg name="max_velocity" default="0.8"/>
+  <!-- Experimental feedback regulator; off until wheel feedback is validated. -->
+  <arg name="crawl_enabled" default="false"/>
+  <arg name="crawl_speed" default="0.1"/>
+  <arg name="crawl_max_throttle" default="0.2"/>
+  <arg name="crawl_kp" default="0.3"/>
+  <arg name="crawl_ki" default="0.2"/>
+  <arg name="crawl_feedback_topic" default="mavros/wheel_odometry/velocity"/>
 
   <!-- Localization: enable when the corresponding sensors are ready. -->
   <arg name="use_localization" default="false"/>
@@ -142,6 +149,12 @@
       <param name="twist_top" value="cmd_vel"/>
       <param name="max_velocity" value="$(var max_velocity)"/>
       <param name="cmd_timeout" value="0.25"/>
+      <param name="crawl_enabled" value="$(var crawl_enabled)" type="bool"/>
+      <param name="crawl_speed" value="$(var crawl_speed)"/>
+      <param name="crawl_max_throttle" value="$(var crawl_max_throttle)"/>
+      <param name="crawl_kp" value="$(var crawl_kp)"/>
+      <param name="crawl_ki" value="$(var crawl_ki)"/>
+      <param name="crawl_feedback_topic" value="$(var crawl_feedback_topic)"/>
     </node>
     <include if="$(var simulate_payload)" file="$(find-pkg-share peaceofmine_operator)/launch/arm_servo.launch.xml">
       <arg name="simulation" value="true"/>

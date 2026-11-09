@@ -243,6 +243,14 @@ keyEvent('keydown','KeyA',65);
 let stationarySteering=readKeyboard();resetKeyboardRamp(0);rampKeyboard(stationarySteering,50);
 assert(stationarySteering.linear===0 && stationarySteering.angular>0 && stationarySteering.deadman,'A steers without W or forward throttle');
 keyEvent('keyup','KeyA',65);
+for (const [code, sign] of [['KeyW', 1], ['KeyS', -1]]) {
+  keyEvent('keydown', code, code === 'KeyW' ? 87 : 83);
+  const input = readKeyboard();
+  assert(Math.sign(input.linear) === sign && input.deadman, `${code} generates the correct signed command`);
+  updateInputHint();
+  assert(!padEls.raw.classList.contains('hidden') && padEls.raw.textContent.includes(sign > 0 ? 'forward' : 'reverse'), 'keyboard diagnostics expose direction before hardware');
+  keyEvent('keyup', code, code === 'KeyW' ? 87 : 83);
+}
 keyEvent('keydown', 'KeyW', 87); keyEvent('keydown', 'KeyA', 65);
 assert(keys.has('KeyW') && keys.has('KeyA') && !keys.has('ShiftLeft'), 'WASD works without Shift');
 resetKeyboardRamp(0);

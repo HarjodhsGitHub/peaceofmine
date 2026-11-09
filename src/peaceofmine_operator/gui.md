@@ -61,6 +61,50 @@ Yes, if the dashboard is opened as a **secure context**:
 | `http://localhost:8080` on the SVEA itself | Works only if the pad is on the SVEA |
 | `http://<svea-ip>:8080` from the laptop | **No** — Chrome hides the Gamepad API |
 
+## Slow-driving experiment
+
+The normal drive path maps requested m/s to throttle; it does **not** regulate
+measured speed. The keyboard percentage is a command scale, not a measured-speed
+guarantee. There is no verified minimum sustainable speed for this drivetrain.
+
+An experimental speed-feedback controller is available with `crawl_enabled:=true`.
+It is **off by default**. It limits requests to `crawl_speed` (default 0.10 m/s),
+and limits throttle to `crawl_max_throttle` (default 0.20, i.e. 20% of full
+throttle, independent of the keyboard percentage). `crawl_kp` and `crawl_ki`
+are vehicle-specific tuning parameters, in throttle fraction per m/s and per
+metre respectively. The defaults are conservative starting points, not a
+calibrated guarantee of motion or safety.
+
+Validate this mode in simulation before hardware. Then check with the vehicle
+lifted and the physical RC ready:
+
+1. Verify `/<name>/mavros/wheel_odometry/velocity` publishes
+   `geometry_msgs/msg/TwistWithCovarianceStamped` with advancing, current stamps.
+   Check the speed magnitude against wheel motion; a command-derived or
+   stationary-at-all-times estimate is not suitable feedback. Low-speed encoder
+   resolution and latency must be measured before trying to crawl on the ground.
+2. Check W and S separately. The controller diagnostics show **Keys**, requested
+   m/s and direction. W must show positive/forward and S negative/reverse.
+   These are input requests, not proof of motion or delivery to ROS. If W shows
+   forward but the car does not move, inspect `/<name>/cmd_vel` and
+   `/<name>/mavros/manual_control/send` before changing browser mapping or signs.
+3. Only after validation, add `crawl_enabled:=true crawl_speed:=0.1` to the
+   existing operator launch command (keep its TLS and other options). The
+   feedback topic can be overridden with `crawl_feedback_topic`. Simulation
+   needs a suitable TwistWithCovarianceStamped feedback source; the hardware
+   topic is not produced by the default operator simulator.
+
+The regulator uses speed magnitude because a single encoder may not report
+direction. It coasts to a measured stop before allowing reversal; it does not
+apply reverse braking pulses. Missing, nonfinite, repeated or old feedback stops
+output, as do speed above 1.5 times the configured crawl limit and no wheel
+motion (below 0.02 m/s) for two seconds. Faults latch until drive input is released
+(a zero request); the normal command watchdog and RC override remain in place.
+Neutral throttle does not guarantee immediate stopping, especially on slopes.
+Do not increase throttle limits to force a stalled or obstructed vehicle to move.
+If the drivetrain cannot sustain the requested speed, gearing or an appropriate
+motor/ESC may be required rather than additional software throttle.
+
 ## Safety before hardware
 
 - Stop any other operator / sim launch first (two stacks must not share

@@ -1035,7 +1035,7 @@ function updateInputHint() {
     ? 'Click camera to drive · Esc releases keys · hold Space to sweep' : deadmanHint();
   const keyboard = preferences.input === 'keyboard';
   $('pad-visual').classList.toggle('hidden', keyboard);
-  padEls.raw.classList.toggle('hidden', keyboard);
+  padEls.raw.classList.remove('hidden');
   const lock = padEls.inputLock;
   if (lock) {
     lock.classList.toggle('hidden', !keyboard);
@@ -1073,6 +1073,10 @@ function updateInputHint() {
   if (padEls.raw) {
     if (rcOverride) {
       setText(padEls.raw, rc.fresh ? `RC PWM: ${(rc.channels || []).join(' ')}` : 'RC input stale');
+    } else if (keyboard) {
+      const held = ['KeyW', 'KeyA', 'KeyS', 'KeyD'].filter(code => keys.has(code)).map(code => code.slice(3)).join(' ') || 'none';
+      const requested = readKeyboard().linear;
+      setText(padEls.raw, `Keys: ${held} · requested ${requested.toFixed(3)} m/s · ${requested > 0 ? 'forward' : requested < 0 ? 'reverse' : 'neutral'}`);
     } else if (gamepad) {
       let axes = '';
       for (let i = 0; i < gamepad.axes.length; i++) {

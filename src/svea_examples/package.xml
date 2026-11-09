@@ -10,6 +10,8 @@
   <depend>rclpy</depend>
   <depend>joy</depend>
   <depend>svea_core</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
 
   <export>
     <build_type>ament_python</build_type>
